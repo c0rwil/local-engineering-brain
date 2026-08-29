@@ -301,6 +301,7 @@ impl SynthesisStore {
                     "memory `{id}` changed concurrently; skill promotion aborted"
                 )));
             }
+            crate::memory::refresh_compact_injection_in_transaction(transaction, id)?;
             crate::events::append_generated_in_transaction(
                 transaction,
                 &DomainEvent::MemoryStateChanged {
@@ -985,6 +986,12 @@ mod tests {
                 .promote(&procedure.id, state, false)
                 .expect("promotion");
         }
+        let procedure_compact = memories
+            .compact_injections(std::slice::from_ref(&procedure.id))
+            .expect("procedure compact projection")
+            .remove(&procedure.id)
+            .expect("procedure projection");
+        assert!(procedure_compact.text.starts_with("- PROC: "));
         let unused = synthesis
             .promote_to_skill(&procedure.id, 2)
             .expect_err("validated but unused procedures cannot become skills");
@@ -1027,6 +1034,12 @@ mod tests {
             .expect("promotion after recorded uses");
         assert_eq!(skill.kind, "skill");
         assert_eq!(skill.epistemic_state, EpistemicState::Validated);
+        let skill_compact = memories
+            .compact_injections(std::slice::from_ref(&procedure.id))
+            .expect("skill compact projection")
+            .remove(&procedure.id)
+            .expect("skill projection");
+        assert!(skill_compact.text.starts_with("- SKILL: "));
 
         let repeated = synthesis
             .promote_to_skill(&procedure.id, 2)

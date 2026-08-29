@@ -139,6 +139,9 @@ pub struct ContextConfig {
     pub max_injected_tokens: u32,
     pub stable_prefix_tokens: u32,
     pub semantic_retrieval: bool,
+    /// Render validated memories from the deterministic derived compact
+    /// projection. Disabled by default for an exact verbose-mode ablation.
+    pub compact_injection: bool,
 }
 
 /// Bounds for the optional deterministic semantic retrieval stage. The stage
@@ -290,6 +293,7 @@ impl Default for ContextConfig {
             max_injected_tokens: 6_000,
             stable_prefix_tokens: 1_800,
             semantic_retrieval: false,
+            compact_injection: false,
         }
     }
 }
@@ -837,6 +841,22 @@ mod tests {
         )
         .expect_err("scan bound below candidate bound");
         assert!(error.to_string().contains("semantic.max_candidates"));
+    }
+
+    #[test]
+    fn compact_injection_is_an_explicit_opt_in() {
+        assert!(!Config::default().context.compact_injection);
+        let temp = TempDir::new().expect("temp dir");
+        let enabled = temp.path().join("compact.toml");
+        fs::write(&enabled, "[context]\ncompact_injection = true\n").expect("config");
+        let config = Config::load_layers(
+            Some(&enabled),
+            None,
+            &ConfigOverrides::default(),
+            temp.path(),
+        )
+        .expect("compact injection is configurable");
+        assert!(config.context.compact_injection);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Evidence-gated, version-aware durable memory.
 
+use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -140,6 +141,44 @@ pub struct MemoryRecord {
     pub updated_at_ms: i64,
 }
 
+const COMPACT_RENDERER_VERSION: u32 = 1;
+const MAX_COMPACT_CLAIM_BYTES: usize = 512;
+
+/// Derived memory text used only by opt-in compact context compilation.
+/// Canonical audit text and provenance remain on [`MemoryRecord`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CompactInjection {
+    pub text: String,
+    pub token_estimate: u32,
+    renderer_version: u32,
+    source_digest: String,
+}
+
+impl CompactInjection {
+    fn derive(kind: &str, claim: &str) -> Self {
+        let source_digest = compact_source_digest(kind, claim);
+        let label = match kind.trim().to_ascii_lowercase().as_str() {
+            "procedure" => "PROC",
+            "skill" => "SKILL",
+            "preference" => "PREF",
+            "lesson" | "invariant" => "RULE",
+            _ => "MEM",
+        };
+        let compact_claim = bounded_compact_claim(claim);
+        let text = format!("- {label}: {compact_claim}\n");
+        Self {
+            token_estimate: estimate_tokens(&text),
+            text,
+            renderer_version: COMPACT_RENDERER_VERSION,
+            source_digest,
+        }
+    }
+
+    pub(crate) fn matches(&self, kind: &str, claim: &str) -> bool {
+        self == &Self::derive(kind, claim)
+    }
+}
+
 /// Outcome of one symbol-drift invalidation sweep.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DriftInvalidation {
@@ -249,6 +288,7 @@ impl MemoryStore {
                     tags_text
                 ],
             )?;
+            upsert_compact_injection_in_transaction(transaction, &id, &draft.kind, claim)?;
             crate::semantic::upsert_memory_vector(
                 transaction,
                 &id,
@@ -681,6 +721,67 @@ impl MemoryStore {
             .collect()
     }
 
+    /// Rebuild every compact injection projection from canonical memory text.
+    ///
+    /// The delete and deterministic re-render share one immediate transaction;
+    /// readers therefore observe either the old complete projection or the new
+    /// complete projection, never a partial rebuild.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for corrupt canonical identifiers or failed storage.
+    pub fn rebuild_compact_injections(&self) -> Result<u64> {
+        self.database
+            .write_immediate(rebuild_compact_injections_in_transaction)
+    }
+
+    pub(crate) fn compact_injections(
+        &self,
+        ids: &[MemoryId],
+    ) -> Result<BTreeMap<MemoryId, CompactInjection>> {
+        if ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let ids_json =
+            serde_json::to_string(&ids.iter().map(MemoryId::as_str).collect::<Vec<_>>())?;
+        self.database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT memory_id, renderer_version, source_digest, compact_text,
+                        token_estimate
+                 FROM memory_compact_injections
+                 WHERE memory_id IN (SELECT value FROM json_each(?1))
+                 ORDER BY memory_id",
+            )?;
+            let rows = statement.query_map([ids_json], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })?;
+            let mut projections = BTreeMap::new();
+            for row in rows {
+                let (id, renderer_version, source_digest, text, token_estimate) = row?;
+                projections.insert(
+                    MemoryId::parse(&id)?,
+                    CompactInjection {
+                        text,
+                        token_estimate: u32::try_from(token_estimate).map_err(|_| {
+                            Error::Config("invalid compact injection token estimate".to_owned())
+                        })?,
+                        renderer_version: u32::try_from(renderer_version).map_err(|_| {
+                            Error::Config("invalid compact injection renderer version".to_owned())
+                        })?,
+                        source_digest,
+                    },
+                );
+            }
+            Ok(projections)
+        })
+    }
+
     /// Attach newly observed evidence/episodes to a deduplicated memory.
     ///
     /// # Errors
@@ -899,6 +1000,105 @@ impl MemoryStore {
         self.get(id)?
             .ok_or_else(|| Error::Config(format!("unknown memory `{id}`")))
     }
+}
+
+pub(crate) fn rebuild_compact_injections_in_transaction(
+    transaction: &Transaction<'_>,
+) -> Result<u64> {
+    let canonical = {
+        let mut statement =
+            transaction.prepare("SELECT id, kind, claim FROM memories ORDER BY id")?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    transaction.execute("DELETE FROM memory_compact_injections", [])?;
+    for (raw_id, kind, claim) in &canonical {
+        let id = MemoryId::parse(raw_id)?;
+        upsert_compact_injection_in_transaction(transaction, &id, kind, claim)?;
+    }
+    u64::try_from(canonical.len())
+        .map_err(|_| Error::Config("compact injection rebuild count exceeds u64".to_owned()))
+}
+
+pub(crate) fn refresh_compact_injection_in_transaction(
+    transaction: &Transaction<'_>,
+    id: &MemoryId,
+) -> Result<()> {
+    let (kind, claim) = transaction.query_row(
+        "SELECT kind, claim FROM memories WHERE id = ?1",
+        [id.as_str()],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )?;
+    upsert_compact_injection_in_transaction(transaction, id, &kind, &claim)
+}
+
+fn upsert_compact_injection_in_transaction(
+    transaction: &Transaction<'_>,
+    id: &MemoryId,
+    kind: &str,
+    claim: &str,
+) -> Result<()> {
+    let compact = CompactInjection::derive(kind, claim);
+    transaction.execute(
+        "INSERT INTO memory_compact_injections
+         (memory_id, renderer_version, source_digest, compact_text, token_estimate)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(memory_id) DO UPDATE SET
+             renderer_version = excluded.renderer_version,
+             source_digest = excluded.source_digest,
+             compact_text = excluded.compact_text,
+             token_estimate = excluded.token_estimate",
+        params![
+            id.as_str(),
+            compact.renderer_version,
+            compact.source_digest,
+            compact.text,
+            compact.token_estimate,
+        ],
+    )?;
+    Ok(())
+}
+
+fn bounded_compact_claim(claim: &str) -> String {
+    let mut output = String::with_capacity(MAX_COMPACT_CLAIM_BYTES);
+    let mut whitespace = false;
+    for character in claim.chars() {
+        if character.is_whitespace() {
+            whitespace = !output.is_empty();
+            continue;
+        }
+        let safe = if character.is_control() {
+            '�'
+        } else {
+            character
+        };
+        let separator_bytes = usize::from(whitespace && !output.is_empty());
+        if output
+            .len()
+            .saturating_add(separator_bytes)
+            .saturating_add(safe.len_utf8())
+            > MAX_COMPACT_CLAIM_BYTES
+        {
+            break;
+        }
+        if separator_bytes == 1 {
+            output.push(' ');
+        }
+        output.push(safe);
+        whitespace = false;
+    }
+    output
+}
+
+fn compact_source_digest(kind: &str, claim: &str) -> String {
+    let source = format!("{}:{kind}{claim}", kind.len());
+    sha256(source.as_bytes())
 }
 
 fn validate_draft(project_id: &ProjectId, draft: &MemoryDraft) -> Result<()> {
@@ -1334,6 +1534,76 @@ mod tests {
             })
             .expect("counts");
         assert_eq!(counts, (0, 0, 1));
+    }
+
+    #[test]
+    fn compact_projection_is_bounded_rebuildable_and_transactional() {
+        let (_temp, database, project) = fixture();
+        let memories = MemoryStore::new(database.clone());
+        let mut source = draft(&project, Vec::new());
+        source.claim = format!(
+            "Preserve CaseSensitiveName\n\t{}\u{0001}",
+            "boundary ".repeat(100)
+        );
+        let memory = memories
+            .create_candidate(&project, &source)
+            .expect("memory");
+        let original = memories
+            .compact_injections(std::slice::from_ref(&memory.id))
+            .expect("projection")
+            .remove(&memory.id)
+            .expect("created transactionally");
+        assert!(original.matches(&memory.kind, &memory.claim));
+        assert!(
+            original
+                .text
+                .starts_with("- RULE: Preserve CaseSensitiveName ")
+        );
+        assert!(original.text.ends_with('\n'));
+        assert_eq!(original.text.matches('\n').count(), 1);
+        assert!(!original.text.contains('\t'));
+        assert!(original.text.len() <= 522);
+        assert_eq!(original.token_estimate, estimate_tokens(&original.text));
+
+        let rollback: Result<()> = database.write_immediate(|transaction| {
+            transaction.execute(
+                "UPDATE memories SET kind = 'skill' WHERE id = ?1",
+                [memory.id.as_str()],
+            )?;
+            refresh_compact_injection_in_transaction(transaction, &memory.id)?;
+            Err(Error::Config("force rollback".to_owned()))
+        });
+        assert!(rollback.is_err());
+        assert_eq!(
+            memories.get(&memory.id).expect("get").expect("memory").kind,
+            "lesson"
+        );
+        assert_eq!(
+            memories
+                .compact_injections(std::slice::from_ref(&memory.id))
+                .expect("projection after rollback")
+                .remove(&memory.id),
+            Some(original.clone())
+        );
+
+        database
+            .write_immediate(|transaction| {
+                transaction.execute(
+                    "UPDATE memory_compact_injections
+                     SET source_digest = ?2, compact_text = '- BAD\n', token_estimate = 2
+                     WHERE memory_id = ?1",
+                    params![memory.id.as_str(), "0".repeat(64)],
+                )?;
+                Ok(())
+            })
+            .expect("tamper derived row");
+        assert_eq!(memories.rebuild_compact_injections().expect("rebuild"), 1);
+        let rebuilt = memories
+            .compact_injections(std::slice::from_ref(&memory.id))
+            .expect("rebuilt projection")
+            .remove(&memory.id)
+            .expect("rebuilt row");
+        assert_eq!(rebuilt, original);
     }
 
     #[test]

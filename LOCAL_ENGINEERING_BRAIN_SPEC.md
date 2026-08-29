@@ -1180,6 +1180,7 @@ raw_transcript_retention_days = 14
 max_injected_tokens = 6000
 stable_prefix_tokens = 1800
 semantic_retrieval = true
+compact_injection = false
 
 [storage]
 db_path = "~/.leb/brain.sqlite"

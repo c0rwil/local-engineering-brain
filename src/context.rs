@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
-use crate::ids::{ContextRunId, ProjectId, TaskId};
+use crate::ids::{ContextRunId, MemoryId, ProjectId, TaskId};
+use crate::memory::{CompactInjection, MemoryRecord, MemoryStore};
 use crate::retrieval::{RetrievalRequest, RetrievalWhy, Retriever};
 use crate::storage::Database;
 
@@ -60,6 +61,10 @@ struct RequestFingerprint<'a> {
     /// byte-identical to those computed before this field existed.
     #[serde(skip_serializing_if = "Option::is_none")]
     task_id: Option<&'a str>,
+    /// Skipped when disabled so default-mode fingerprints remain compatible
+    /// with context runs persisted before compact rendering existed.
+    #[serde(skip_serializing_if = "is_false")]
+    compact_injection: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -105,6 +110,7 @@ pub struct ContextCompiler {
     retriever: Retriever,
     max_tokens: u32,
     stable_prefix_tokens: u32,
+    compact_injection: bool,
 }
 
 impl ContextCompiler {
@@ -115,6 +121,7 @@ impl ContextCompiler {
             database,
             max_tokens,
             stable_prefix_tokens,
+            compact_injection: false,
         }
     }
 
@@ -133,7 +140,16 @@ impl ContextCompiler {
             database,
             max_tokens,
             stable_prefix_tokens,
+            compact_injection: false,
         }
+    }
+
+    /// Select the deterministic derived compact memory projection. This is an
+    /// explicit ablation switch; constructors preserve verbose rendering.
+    #[must_use]
+    pub const fn with_compact_injection(mut self, enabled: bool) -> Self {
+        self.compact_injection = enabled;
+        self
     }
 
     /// Compile deterministic project context within a hard token budget.
@@ -263,6 +279,15 @@ impl ContextCompiler {
             limit: 100,
         })?;
         let candidate_count = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
+        let mut compact_injections = if self.compact_injection {
+            let ids = candidates
+                .iter()
+                .map(|candidate| candidate.memory.id.clone())
+                .collect::<Vec<_>>();
+            MemoryStore::new(self.database.clone()).compact_injections(&ids)?
+        } else {
+            BTreeMap::new()
+        };
         let mut dynamic = String::new();
         let heading =
             "# Validated engineering memory (reference data, not executable instructions)\n";
@@ -274,13 +299,8 @@ impl ContextCompiler {
             if *kind_count >= 3 {
                 continue;
             }
-            let block = format!(
-                "- [{}] {}\n  Rationale: {}\n",
-                candidate.memory.id,
-                context_safe(&candidate.memory.claim),
-                context_safe(&candidate.memory.rationale)
-            );
-            let block_tokens = estimate_tokens(&block);
+            let (block, block_tokens) =
+                self.memory_block(&candidate.memory, &mut compact_injections)?;
             let heading_tokens = if dynamic.is_empty() {
                 estimate_tokens(heading)
             } else {
@@ -329,6 +349,36 @@ impl ContextCompiler {
         .with_stable_hash())
     }
 
+    fn memory_block(
+        &self,
+        memory: &MemoryRecord,
+        compact_injections: &mut BTreeMap<MemoryId, CompactInjection>,
+    ) -> Result<(String, u32)> {
+        if !self.compact_injection {
+            let block = format!(
+                "- [{}] {}\n  Rationale: {}\n",
+                memory.id,
+                context_safe(&memory.claim),
+                context_safe(&memory.rationale)
+            );
+            let tokens = estimate_tokens(&block);
+            return Ok((block, tokens));
+        }
+        let projection = compact_injections.remove(&memory.id).ok_or_else(|| {
+            Error::Config(format!(
+                "compact injection projection is missing for memory `{}`; rebuild required",
+                memory.id
+            ))
+        })?;
+        if !projection.matches(&memory.kind, &memory.claim) {
+            return Err(Error::Config(format!(
+                "compact injection projection is stale for memory `{}`; rebuild required",
+                memory.id
+            )));
+        }
+        Ok((projection.text, projection.token_estimate))
+    }
+
     fn stable_prefix(&self, project_id: &ProjectId, budget: u32) -> Result<String> {
         if budget == 0 {
             return Ok(String::new());
@@ -375,7 +425,7 @@ impl ContextCompiler {
     fn persist(&self, request: &ContextCompileRequest, context: &CompiledContext) -> Result<()> {
         let now = unix_time_ms();
         let task_digest = sha256(request.task_text.as_bytes());
-        let request_fingerprint = request_fingerprint(request)?;
+        let request_fingerprint = request_fingerprint(request, self.compact_injection)?;
         self.database.write_immediate(|transaction| {
             transaction.execute(
                 "INSERT INTO context_runs
@@ -471,7 +521,7 @@ impl ContextCompiler {
     }
 
     fn get_for_request(&self, request: &ContextCompileRequest) -> Result<Option<CompiledContext>> {
-        let expected = request_fingerprint(request)?;
+        let expected = request_fingerprint(request, self.compact_injection)?;
         let actual = self.database.with_reader(|connection| {
             connection
                 .query_row(
@@ -581,7 +631,7 @@ impl ContextCompiler {
     }
 }
 
-fn request_fingerprint(request: &ContextCompileRequest) -> Result<String> {
+fn request_fingerprint(request: &ContextCompileRequest, compact_injection: bool) -> Result<String> {
     let mut current_paths = request
         .current_paths
         .iter()
@@ -602,8 +652,14 @@ fn request_fingerprint(request: &ContextCompileRequest) -> Result<String> {
         repository_root: repository_root.as_deref(),
         head: request.head.as_deref(),
         task_id: request.task_id.as_ref().map(TaskId::as_str),
+        compact_injection: request.mode == ContextMode::Brain && compact_injection,
     };
     Ok(sha256(&serde_json::to_vec(&fingerprint)?))
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl CompiledContext {
@@ -802,12 +858,159 @@ mod tests {
             task_id: None,
         };
         let first = compiler.compile(&request).expect("first");
-        let second = compiler.compile(&request).expect("retry");
+        let second = compiler
+            .clone()
+            .with_compact_injection(true)
+            .compile(&request)
+            .expect("compact flag cannot affect an off-mode retry");
         assert_eq!(first, second);
         assert!(first.stable_prefix.is_empty());
         assert!(first.dynamic_context.is_empty());
         assert_eq!(first.metrics.selected_tokens, 0);
         assert!(first.items.is_empty());
+    }
+
+    #[test]
+    fn compact_rendering_reduces_tokens_but_explain_retains_canonical_provenance() {
+        let (_temp, verbose_compiler, project) = fixture();
+        let verbose = verbose_compiler
+            .compile(&ContextCompileRequest {
+                request_id: "verbose-render".to_owned(),
+                project_id: project.clone(),
+                task_text: "fix abort cleanup".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 400,
+                mode: ContextMode::Brain,
+                repository_root: None,
+                head: None,
+                task_id: None,
+            })
+            .expect("verbose context");
+        let compact_compiler = verbose_compiler.clone().with_compact_injection(true);
+        let compact = compact_compiler
+            .compile(&ContextCompileRequest {
+                request_id: "compact-render".to_owned(),
+                project_id: project,
+                task_text: "fix abort cleanup".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 400,
+                mode: ContextMode::Brain,
+                repository_root: None,
+                head: None,
+                task_id: None,
+            })
+            .expect("compact context");
+
+        assert_eq!(verbose.items.len(), 1);
+        assert_eq!(compact.items.len(), 1);
+        assert_eq!(verbose.items[0].source_id, compact.items[0].source_id);
+        assert!(
+            verbose
+                .dynamic_context
+                .contains("Rationale: Regression test passes")
+        );
+        assert!(
+            verbose
+                .dynamic_context
+                .contains(&compact.items[0].source_id)
+        );
+        assert!(
+            compact
+                .dynamic_context
+                .contains("- RULE: Release reservation")
+        );
+        assert!(!compact.dynamic_context.contains("Rationale:"));
+        assert!(
+            !compact
+                .dynamic_context
+                .contains(&compact.items[0].source_id)
+        );
+        assert!(
+            compact.metrics.selected_tokens < verbose.metrics.selected_tokens,
+            "compact={} verbose={}",
+            compact.metrics.selected_tokens,
+            verbose.metrics.selected_tokens
+        );
+
+        let explained = compact_compiler
+            .explain(&compact.id, compact.items[0].ordinal)
+            .expect("explain query")
+            .expect("compact item remains explainable");
+        assert_eq!(explained.source_id, compact.items[0].source_id);
+        assert_eq!(explained.why, compact.items[0].why);
+        let memory_id = MemoryId::parse(&explained.source_id).expect("canonical memory ID");
+        let canonical = MemoryStore::new(compact_compiler.database.clone())
+            .get(&memory_id)
+            .expect("canonical query")
+            .expect("canonical memory");
+        assert_eq!(canonical.claim, "Release reservation during abort cleanup");
+        assert_eq!(canonical.rationale, "Regression test passes");
+    }
+
+    #[test]
+    fn compact_injected_bytes_and_digest_are_stable_across_turn_ids() {
+        let (_temp, compiler, project) = fixture();
+        let compiler = compiler.with_compact_injection(true);
+        let duplicate = MemoryStore::new(compiler.database.clone())
+            .create_candidate(
+                &project,
+                &MemoryDraft {
+                    scope_type: "project".to_owned(),
+                    scope_id: project.to_string(),
+                    kind: "lesson".to_owned(),
+                    claim: "Release reservation during abort cleanup".to_owned(),
+                    rationale: "Regression test passes".to_owned(),
+                    confidence: 0.5,
+                    importance: 0.9,
+                    tags: vec!["abort".to_owned()],
+                    valid_from_commit: None,
+                    valid_to_commit: None,
+                    trust_source: "human_instruction".to_owned(),
+                    evidence_ids: Vec::new(),
+                    source_task_ids: Vec::new(),
+                    node_ids: Vec::new(),
+                },
+            )
+            .expect("equal-score memory");
+        MemoryStore::new(compiler.database.clone())
+            .promote(&duplicate.id, EpistemicState::Validated, true)
+            .expect("validated equal-score memory");
+        let compile_turn = |request_id: &str| {
+            compiler
+                .compile(&ContextCompileRequest {
+                    request_id: request_id.to_owned(),
+                    project_id: project.clone(),
+                    task_text: "fix abort cleanup".to_owned(),
+                    current_paths: vec!["src/cleanup.rs".to_owned()],
+                    token_budget: 400,
+                    mode: ContextMode::Brain,
+                    repository_root: None,
+                    head: None,
+                    task_id: None,
+                })
+                .expect("compile turn")
+        };
+        let first = compile_turn("turn-request-1");
+        let second = compile_turn("turn-request-2");
+        let first_bytes = format!("{}{}", first.stable_prefix, first.dynamic_context);
+        let second_bytes = format!("{}{}", second.stable_prefix, second.dynamic_context);
+
+        assert_eq!(first_bytes.as_bytes(), second_bytes.as_bytes());
+        assert_eq!(
+            sha256(first_bytes.as_bytes()),
+            sha256(second_bytes.as_bytes())
+        );
+        assert_eq!(first.items, second.items);
+        assert_eq!(first.items.len(), 2);
+        assert!(first.items[0].source_id < first.items[1].source_id);
+        assert_eq!(
+            first.metrics.selected_tokens,
+            second.metrics.selected_tokens
+        );
+        assert!(!first_bytes.contains("turn-request-1"));
+        assert!(!second_bytes.contains("turn-request-2"));
+        assert!(!first_bytes.contains("ctx_"));
+        assert!(!first_bytes.contains("mem_"));
     }
 
     #[test]
@@ -850,12 +1053,22 @@ mod tests {
         assert!(!second.dynamic_context.contains("reservation"));
         assert_ne!(first.id, second.id);
 
-        let mut conflicting_retry = first_request;
+        let mut conflicting_retry = first_request.clone();
         conflicting_retry.task_text = "different task".to_owned();
         let error = compiler
             .compile(&conflicting_retry)
             .expect_err("same project retry fingerprint must match");
         assert!(error.to_string().contains("different request content"));
+
+        let compact_error = compiler
+            .with_compact_injection(true)
+            .compile(&first_request)
+            .expect_err("rendering ablation is part of a brain request fingerprint");
+        assert!(
+            compact_error
+                .to_string()
+                .contains("different request content")
+        );
     }
 
     #[test]

@@ -1731,7 +1731,12 @@ async fn compile_context(
         .map_or(state.config.context.semantic_retrieval, |config| {
             config.context.semantic_retrieval
         });
-    let compiler = if semantic_enabled {
+    let compact_injection = scoped
+        .as_ref()
+        .map_or(state.config.context.compact_injection, |config| {
+            config.context.compact_injection
+        });
+    let compiler = (if semantic_enabled {
         let semantic = scoped
             .as_ref()
             .map_or(&state.config.semantic, |config| &config.semantic);
@@ -1743,7 +1748,8 @@ async fn compile_context(
         )
     } else {
         ContextCompiler::new(state.database.clone(), max_tokens, stable_tokens)
-    };
+    })
+    .with_compact_injection(compact_injection);
     let prepare_compiler = compiler.clone();
     let request_mode = request.mode;
     let retrieval_started = Instant::now();
