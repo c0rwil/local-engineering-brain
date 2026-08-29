@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 120107c99eab56ac9bb2b39fbc683287e68c75c8b9b7f9529cec98ed82e15ab4 # shrinks to bytes = [77, 32, 32, 46, 47, 46, 108, 101, 98, 47, 112, 114, 111, 106, 101, 99, 116, 46, 116, 111, 109, 108, 0]
+cc 22b6493f1e6814e86adb6d960d705cfc8b054a4e17429d6e9f746489771b1d69 # shrinks to claims = ["cactus ember"], task_text = "cactus", token_budget = 47
