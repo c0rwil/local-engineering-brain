@@ -81,11 +81,18 @@ allow_remote = false
 default_enforcement = "warn"
 
 [network]
+# Keep all configured providers on this machine. A remote proxy runtime needs
+# this set to false AND proxy.allow_remote_runtime set to true.
 local_only = true
 
 [proxy]
+# The proxy listener itself always remains loopback-only.
 bind = "127.0.0.1:11435"
 runtime_url = "http://127.0.0.1:8000"
+# Second, proxy-specific opt-in for sending model requests off-machine. Remote
+# URLs must use HTTPS and must not contain credentials, a query, or a fragment.
+# Authentication belongs in client request headers, which the proxy forwards.
+allow_remote_runtime = false
 failure_mode = "fail_open"
 
 [security]

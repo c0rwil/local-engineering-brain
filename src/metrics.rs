@@ -421,6 +421,9 @@ pub struct MetricsSnapshot {
 pub struct ProxyMetrics {
     forwarded: AtomicU64,
     injected: AtomicU64,
+    injected_bytes: AtomicU64,
+    session_cache_hits: AtomicU64,
+    session_cache_misses: AtomicU64,
     degraded: AtomicU64,
     refused: AtomicU64,
 }
@@ -432,8 +435,18 @@ impl ProxyMetrics {
     }
 
     /// Count a request forwarded with compiled context injected.
-    pub fn count_injected(&self) {
+    pub fn count_injected(&self, bytes: u64, session_cache_hit: Option<bool>) {
         self.injected.fetch_add(1, Ordering::Relaxed);
+        self.injected_bytes.fetch_add(bytes, Ordering::Relaxed);
+        match session_cache_hit {
+            Some(true) => {
+                self.session_cache_hits.fetch_add(1, Ordering::Relaxed);
+            }
+            Some(false) => {
+                self.session_cache_misses.fetch_add(1, Ordering::Relaxed);
+            }
+            None => {}
+        }
     }
 
     /// Count a fail-open request forwarded without available context.
@@ -452,6 +465,9 @@ impl ProxyMetrics {
         ProxyMetricsSnapshot {
             forwarded: self.forwarded.load(Ordering::Relaxed),
             injected: self.injected.load(Ordering::Relaxed),
+            injected_bytes: self.injected_bytes.load(Ordering::Relaxed),
+            session_cache_hits: self.session_cache_hits.load(Ordering::Relaxed),
+            session_cache_misses: self.session_cache_misses.load(Ordering::Relaxed),
             degraded: self.degraded.load(Ordering::Relaxed),
             refused: self.refused.load(Ordering::Relaxed),
         }
@@ -464,6 +480,9 @@ impl ProxyMetrics {
 pub struct ProxyMetricsSnapshot {
     pub forwarded: u64,
     pub injected: u64,
+    pub injected_bytes: u64,
+    pub session_cache_hits: u64,
+    pub session_cache_misses: u64,
     pub degraded: u64,
     pub refused: u64,
 }

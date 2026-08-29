@@ -223,6 +223,9 @@ pub struct NetworkConfig {
 pub struct ProxyConfig {
     pub bind: String,
     pub runtime_url: String,
+    /// Permit a non-loopback runtime only when `network.local_only` is also
+    /// disabled. Remote runtimes must use HTTPS and may not embed credentials.
+    pub allow_remote_runtime: bool,
     pub failure_mode: ProxyFailureMode,
 }
 
@@ -347,6 +350,7 @@ impl Default for ProxyConfig {
         Self {
             bind: "127.0.0.1:11435".to_owned(),
             runtime_url: "http://127.0.0.1:8000".to_owned(),
+            allow_remote_runtime: false,
             failure_mode: ProxyFailureMode::FailOpen,
         }
     }
@@ -654,16 +658,33 @@ fn validate_proxy_network(config: &Config) -> Result<()> {
             "proxy.runtime_url must not embed credentials".to_owned(),
         ));
     }
-    if config.network.local_only {
-        let local = runtime.host_str().is_some_and(|host| {
-            host.eq_ignore_ascii_case("localhost")
-                || host
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|address| address.is_loopback())
-        });
-        if !local {
+    let host = runtime
+        .host()
+        .ok_or_else(|| Error::Config("proxy.runtime_url must include a host".to_owned()))?;
+    if runtime.query().is_some() || runtime.fragment().is_some() {
+        return Err(Error::Config(
+            "proxy.runtime_url must not include a query or fragment".to_owned(),
+        ));
+    }
+    let local = match host {
+        url::Host::Domain(host) => host.eq_ignore_ascii_case("localhost"),
+        url::Host::Ipv4(address) => address.is_loopback(),
+        url::Host::Ipv6(address) => address.is_loopback(),
+    };
+    if !local {
+        if !config.proxy.allow_remote_runtime {
             return Err(Error::Config(
-                "local-only mode requires a loopback proxy.runtime_url".to_owned(),
+                "remote proxy.runtime_url requires proxy.allow_remote_runtime = true".to_owned(),
+            ));
+        }
+        if config.network.local_only {
+            return Err(Error::Config(
+                "remote proxy.runtime_url requires network.local_only = false".to_owned(),
+            ));
+        }
+        if runtime.scheme() != "https" {
+            return Err(Error::Config(
+                "remote proxy.runtime_url must use https".to_owned(),
             ));
         }
     }
@@ -987,6 +1008,68 @@ mod tests {
         let mut config = Config::default();
         config.proxy.runtime_url = "https://runtime.example.com".to_owned();
         let error = config.validate().expect_err("remote runtime must fail");
-        assert!(error.to_string().contains("loopback proxy.runtime_url"));
+        assert!(error.to_string().contains("allow_remote_runtime"));
+    }
+
+    #[test]
+    fn remote_runtime_requires_both_explicit_network_opt_ins() {
+        let mut config = Config::default();
+        config.proxy.runtime_url = "https://runtime.example.com".to_owned();
+        config.proxy.allow_remote_runtime = true;
+        let error = config
+            .validate()
+            .expect_err("proxy opt-in alone must not disable local-only mode");
+        assert!(error.to_string().contains("network.local_only = false"));
+
+        config.proxy.allow_remote_runtime = false;
+        config.network.local_only = false;
+        let error = config
+            .validate()
+            .expect_err("network opt-in alone must not enable remote proxying");
+        assert!(error.to_string().contains("allow_remote_runtime"));
+
+        config.proxy.allow_remote_runtime = true;
+        config
+            .validate()
+            .expect("both explicit opt-ins allow HTTPS");
+    }
+
+    #[test]
+    fn remote_runtime_rejects_insecure_or_credentialed_urls() {
+        let mut config = Config::default();
+        config.network.local_only = false;
+        config.proxy.allow_remote_runtime = true;
+
+        config.proxy.runtime_url = "http://runtime.example.com".to_owned();
+        let error = config
+            .validate()
+            .expect_err("remote plaintext HTTP must fail");
+        assert!(error.to_string().contains("must use https"));
+
+        config.proxy.runtime_url = "https://token@runtime.example.com".to_owned();
+        let error = config.validate().expect_err("URL credentials must fail");
+        assert!(error.to_string().contains("must not embed credentials"));
+
+        config.proxy.runtime_url = "https://runtime.example.com?token=secret".to_owned();
+        let error = config
+            .validate()
+            .expect_err("URL query credentials must not be accepted");
+        assert!(error.to_string().contains("query or fragment"));
+    }
+
+    #[test]
+    fn loopback_runtime_behavior_is_unchanged() {
+        for runtime_url in [
+            "http://127.0.0.1:8000",
+            "http://[::1]:8000",
+            "http://localhost:8000",
+            "https://localhost:8000",
+        ] {
+            let mut config = Config::default();
+            config.proxy.runtime_url = runtime_url.to_owned();
+            config
+                .validate()
+                .unwrap_or_else(|error| panic!("{runtime_url} should remain valid: {error}"));
+        }
     }
 }

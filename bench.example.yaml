@@ -10,6 +10,12 @@ artifact_dir: bench-artifacts
 runtime_config:
   temperature: 0
   top_p: 1
+# Optional credential names copied from the parent environment into the agent
+# phase only, identically for both arms. The strict allowlist is
+# ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN; requested values must be set.
+# This grants benchmarked agent code access to the named secret. Keep empty for
+# untrusted/private repositories; use only with an approved synthetic fixture.
+pass_env: []
 # The runner also sets isolated LEB_DB_PATH, LEB_SOCKET_PATH, LEB_STATE_DIR,
 # LEB_PROXY_PORT, and LEB_BRAIN_SNAPSHOT_HASH for every arm.
 # Configure your agent or proxy to honor LEB_MODE.

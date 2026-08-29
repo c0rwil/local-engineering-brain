@@ -26,7 +26,7 @@ Claude Code / agent / OpenAI client
           +-- Git, tree-sitter, optional Graphify export
           |
           v
- local Anthropic/OpenAI runtime (MTPLX, Ollama, llama.cpp, vLLM, MLX)
+ Anthropic/OpenAI runtime (local by default; remote only by explicit opt-in)
 ```
 
 SQLite is deliberate for the single-user local product: one daemon owns mutation ordering, WAL
@@ -101,9 +101,58 @@ pass through end-to-end. If the brain daemon is temporarily unavailable, the def
 forwards unchanged and adds `x-leb-degraded: context_unavailable`; set
 `proxy.failure_mode = "fail_closed"` for policy-sensitive or controlled evaluation use.
 
+When a brain-mode request carries Claude Code's `x-claude-code-session-id`, the proxy pins the
+first compiled LEB context block for that session, resolved project, and effective token budget in
+an 8 MiB byte-bounded process-local cache. Later turns reuse those exact UTF-8 bytes; off mode never
+reads or populates this cache. Each injected response reports `x-leb-injection-sha256`,
+`x-leb-injection-bytes`, and `x-leb-session-cache` (`hit`, `miss`, or `disabled`), while
+`GET /leb/metrics` exposes aggregate injected bytes and session-cache hit/miss counts. No context
+content is logged by this telemetry.
+
+This stability intentionally snapshots LEB guidance for the life of the Claude Code session.
+Project resolution and freshness checks still run, but new or invalidated memories and changed
+source-derived guidance do not alter the already-pinned injection. Start a new Claude Code session
+after material source, configuration, or memory changes when freshness is more important than
+within-session prefix identity.
+
 MTPLX/Claude Code setup is documented in [`docs/CLAUDE_CODE_MTPLX.md`](docs/CLAUDE_CODE_MTPLX.md).
 The installed launchers are `claude-mtplx` for Optimized Speed and `claude-mtplx-quality` for the
 Q8/Optimized Quality variant recommended on M3-and-newer Macs.
+
+### Explicit remote-runtime opt-in
+
+Remote runtimes are disabled by default. Enabling one requires two independent settings in the
+user or project configuration; turning off the broad local-only policy by itself is not enough:
+
+```toml
+[network]
+local_only = false
+
+[proxy]
+runtime_url = "https://api.anthropic.com"
+allow_remote_runtime = true
+```
+
+The proxy still binds only to a loopback address. A remote runtime URL must use HTTPS and cannot
+contain URL credentials, a query, or a fragment. Supply credentials through the normal client
+headers instead: `Authorization`, `x-api-key`, `anthropic-version`, and other provider headers are
+forwarded unchanged. LEB strips its private `x-leb-*` control headers and hop-by-hop transport
+headers before forwarding. Request tools and streaming response content pass through without
+translation; brain-off mode also preserves the request's model, messages, system content, tool
+schemas, streaming flag, and other runtime parameters semantically unchanged.
+
+Remote use sends the model request, including any prompt or injected repository context, to that
+provider. Enable it only for repositories and data that are approved for that provider. Put the
+settings in `~/.config/leb/config.toml`, or opt in for one process without changing global config:
+
+```bash
+leb-proxy --runtime https://api.anthropic.com \
+  --allow-remote-runtime --no-local-only \
+  --bind 127.0.0.1:11435
+```
+
+The two flags are intentionally independent and must both be present for a remote CLI-selected
+runtime. Keep secrets out of the URL.
 
 ## MCP
 
@@ -158,6 +207,19 @@ socket, state root, and proxy port; process-group cleanup prevents child agents/
 into another arm. Order alternates. The snapshot hash is folded into the configuration hash and
 recorded on every run. The runner emits `runs.jsonl`, `comparison.json`, and `comparison.md`; it
 never claims improvement unless the measured report does.
+
+For an approved synthetic frontier-model fixture, a benchmark config may request credential
+passthrough by name:
+
+```yaml
+pass_env: [ANTHROPIC_API_KEY]
+```
+
+The default is empty. Only `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are accepted, a requested
+value must exist in the runner's environment, and the value is supplied identically to the agent
+phase of both arms without being written to configuration hashes or reports. `pass_env` gives the
+benchmarked agent—and processes it launches—access to that secret. Never enable it for untrusted
+code or private repositories; keep cloud evaluation confined to an approved synthetic fixture.
 
 ## Configuration and resource model
 

@@ -22,6 +22,7 @@ const MAX_CONFIG_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAX_METRICS_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAX_COPY_FILES: usize = 1_000_000;
 const MAX_COPY_BYTES: u64 = 100 * 1_024 * 1_024 * 1_024;
+const ALLOWED_PASSTHROUGH_ENV: [&str; 2] = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,6 +57,10 @@ pub struct BenchmarkConfig {
     pub brain_snapshot: Option<PathBuf>,
     #[serde(default)]
     pub runtime_config: Value,
+    /// Credential environment variable names copied into the agent command
+    /// only. Values are resolved at launch and never enter config artifacts.
+    #[serde(default)]
+    pub pass_env: Vec<String>,
     pub tasks: Vec<BenchmarkTask>,
 }
 
@@ -189,87 +194,98 @@ impl EvaluationRunner {
     /// Returns an error for unsafe configuration, isolation failures, command
     /// launch failures, artifact failures, or an incomplete pair.
     pub fn run(config_path: &Path, output_override: Option<&Path>) -> Result<EvaluationArtifacts> {
-        let (config, raw_config_hash) = load_config(config_path)?;
-        validate_config(&config)?;
-        let base = config_path.parent().unwrap_or_else(|| Path::new("."));
-        let artifact_dir = output_override.map_or_else(
-            || resolve_existing_or_relative(base, &config.artifact_dir),
-            Path::to_path_buf,
-        );
-        prepare_artifact_dir(&artifact_dir)?;
-        let jsonl_path = artifact_dir.join("runs.jsonl");
-        let mut jsonl = create_private_file(&jsonl_path, true)?;
-        let isolation = tempfile::Builder::new()
-            .prefix("leb-eval-")
-            .tempdir()
-            .map_err(|source| io_error(std::env::temp_dir(), source))?;
-        let (baseline, brain_snapshot_hash) =
-            prepare_brain_baseline(&config, base, isolation.path())?;
-        let config_hash =
-            sha256(format!("{raw_config_hash}\0brain-snapshot\0{brain_snapshot_hash}").as_bytes());
-        let mut records = Vec::new();
-        let mut ordinal = 0_u64;
-
-        for (task_index, task) in config.tasks.iter().enumerate() {
-            for (seed_index, seed) in config.seeds.iter().copied().enumerate() {
-                let order = if (task_index + seed_index) % 2 == 0 {
-                    [EvaluationMode::Off, EvaluationMode::Brain]
-                } else {
-                    [EvaluationMode::Brain, EvaluationMode::Off]
-                };
-                for mode in order {
-                    ordinal = ordinal.saturating_add(1);
-                    let record = run_one(
-                        &config,
-                        &config_hash,
-                        base,
-                        task,
-                        seed,
-                        mode,
-                        ordinal,
-                        isolation.path(),
-                        &artifact_dir,
-                        &baseline,
-                        &brain_snapshot_hash,
-                    )?;
-                    serde_json::to_writer(&mut jsonl, &record)?;
-                    jsonl
-                        .write_all(b"\n")
-                        .map_err(|source| io_error(&jsonl_path, source))?;
-                    jsonl
-                        .flush()
-                        .map_err(|source| io_error(&jsonl_path, source))?;
-                    records.push(record);
-                }
-            }
-        }
-        jsonl
-            .sync_all()
-            .map_err(|source| io_error(&jsonl_path, source))?;
-        let comparison = compare_records(
-            &config.benchmark_id,
-            &config.model_hash,
-            &config_hash,
-            &records,
-        )?;
-        let comparison_json_path = artifact_dir.join("comparison.json");
-        write_atomic(
-            &comparison_json_path,
-            &serde_json::to_vec_pretty(&comparison)?,
-        )?;
-        let comparison_markdown_path = artifact_dir.join("comparison.md");
-        write_atomic(
-            &comparison_markdown_path,
-            comparison_markdown(&comparison).as_bytes(),
-        )?;
-        Ok(EvaluationArtifacts {
-            jsonl_path,
-            comparison_json_path,
-            comparison_markdown_path,
-            records,
-            comparison,
+        run_with_environment_lookup(config_path, output_override, |name| {
+            std::env::var(name).ok()
         })
     }
+}
+
+fn run_with_environment_lookup(
+    config_path: &Path,
+    output_override: Option<&Path>,
+    environment_value: impl Fn(&str) -> Option<String>,
+) -> Result<EvaluationArtifacts> {
+    let (config, raw_config_hash) = load_config(config_path)?;
+    validate_config(&config)?;
+    let pass_environment = resolve_pass_environment_with(&config.pass_env, environment_value)?;
+    let base = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let artifact_dir = output_override.map_or_else(
+        || resolve_existing_or_relative(base, &config.artifact_dir),
+        Path::to_path_buf,
+    );
+    prepare_artifact_dir(&artifact_dir)?;
+    let jsonl_path = artifact_dir.join("runs.jsonl");
+    let mut jsonl = create_private_file(&jsonl_path, true)?;
+    let isolation = tempfile::Builder::new()
+        .prefix("leb-eval-")
+        .tempdir()
+        .map_err(|source| io_error(std::env::temp_dir(), source))?;
+    let (baseline, brain_snapshot_hash) = prepare_brain_baseline(&config, base, isolation.path())?;
+    let config_hash =
+        sha256(format!("{raw_config_hash}\0brain-snapshot\0{brain_snapshot_hash}").as_bytes());
+    let mut records = Vec::new();
+    let mut ordinal = 0_u64;
+
+    for (task_index, task) in config.tasks.iter().enumerate() {
+        for (seed_index, seed) in config.seeds.iter().copied().enumerate() {
+            let order = if (task_index + seed_index) % 2 == 0 {
+                [EvaluationMode::Off, EvaluationMode::Brain]
+            } else {
+                [EvaluationMode::Brain, EvaluationMode::Off]
+            };
+            for mode in order {
+                ordinal = ordinal.saturating_add(1);
+                let record = run_one(
+                    &config,
+                    &config_hash,
+                    base,
+                    task,
+                    seed,
+                    mode,
+                    ordinal,
+                    isolation.path(),
+                    &artifact_dir,
+                    &baseline,
+                    &brain_snapshot_hash,
+                    &pass_environment,
+                )?;
+                serde_json::to_writer(&mut jsonl, &record)?;
+                jsonl
+                    .write_all(b"\n")
+                    .map_err(|source| io_error(&jsonl_path, source))?;
+                jsonl
+                    .flush()
+                    .map_err(|source| io_error(&jsonl_path, source))?;
+                records.push(record);
+            }
+        }
+    }
+    jsonl
+        .sync_all()
+        .map_err(|source| io_error(&jsonl_path, source))?;
+    let comparison = compare_records(
+        &config.benchmark_id,
+        &config.model_hash,
+        &config_hash,
+        &records,
+    )?;
+    let comparison_json_path = artifact_dir.join("comparison.json");
+    write_atomic(
+        &comparison_json_path,
+        &serde_json::to_vec_pretty(&comparison)?,
+    )?;
+    let comparison_markdown_path = artifact_dir.join("comparison.md");
+    write_atomic(
+        &comparison_markdown_path,
+        comparison_markdown(&comparison).as_bytes(),
+    )?;
+    Ok(EvaluationArtifacts {
+        jsonl_path,
+        comparison_json_path,
+        comparison_markdown_path,
+        records,
+        comparison,
+    })
 }
 
 fn prepare_brain_baseline(
@@ -330,6 +346,7 @@ fn run_one(
     artifact_dir: &Path,
     brain_baseline: &Path,
     brain_snapshot_hash: &str,
+    pass_environment: &[(String, String)],
 ) -> Result<EvaluationRecord> {
     let source_repo = canonical_required(base, &task.repo)?;
     let prompt_path = canonical_required(base, &task.prompt_file)?;
@@ -370,15 +387,27 @@ fn run_one(
     );
     let started = Instant::now();
     let environment = vec![
-        ("LEB_MODE", mode.as_str().to_owned()),
-        ("LEB_SEED", seed.to_string()),
-        ("LEB_TASK_ID", task.id.clone()),
-        ("LEB_BENCHMARK_ID", config.benchmark_id.clone()),
-        ("LEB_DB_PATH", arm_database.to_string_lossy().into_owned()),
-        ("LEB_SOCKET_PATH", arm_socket.to_string_lossy().into_owned()),
-        ("LEB_STATE_DIR", state_root.to_string_lossy().into_owned()),
-        ("LEB_PROXY_PORT", proxy_port.to_string()),
-        ("LEB_BRAIN_SNAPSHOT_HASH", brain_snapshot_hash.to_owned()),
+        ("LEB_MODE".to_owned(), mode.as_str().to_owned()),
+        ("LEB_SEED".to_owned(), seed.to_string()),
+        ("LEB_TASK_ID".to_owned(), task.id.clone()),
+        ("LEB_BENCHMARK_ID".to_owned(), config.benchmark_id.clone()),
+        (
+            "LEB_DB_PATH".to_owned(),
+            arm_database.to_string_lossy().into_owned(),
+        ),
+        (
+            "LEB_SOCKET_PATH".to_owned(),
+            arm_socket.to_string_lossy().into_owned(),
+        ),
+        (
+            "LEB_STATE_DIR".to_owned(),
+            state_root.to_string_lossy().into_owned(),
+        ),
+        ("LEB_PROXY_PORT".to_owned(), proxy_port.to_string()),
+        (
+            "LEB_BRAIN_SNAPSHOT_HASH".to_owned(),
+            brain_snapshot_hash.to_owned(),
+        ),
     ];
     let setup = task
         .setup
@@ -398,10 +427,12 @@ fn run_one(
     let mut timed_out = setup.as_ref().is_some_and(|result| result.timed_out);
     let setup_ok = setup.as_ref().is_none_or(|result| result.status.success());
     let agent = if setup_ok && !timed_out {
+        let mut agent_environment = environment.clone();
+        agent_environment.extend_from_slice(pass_environment);
         Some(run_command(
             &task.agent.command,
             &worktree,
-            &environment,
+            &agent_environment,
             remaining(timeout, started),
             &run_artifacts.join("agent.stdout"),
             &run_artifacts.join("agent.stderr"),
@@ -469,7 +500,7 @@ struct CommandResult {
 fn run_command(
     command: &str,
     cwd: &Path,
-    environment: &[(impl AsRef<std::ffi::OsStr>, String)],
+    environment: &[(String, String)],
     timeout: Duration,
     stdout_path: &Path,
     stderr_path: &Path,
@@ -651,6 +682,20 @@ fn validate_config(config: &BenchmarkConfig) -> Result<()> {
             "evaluation needs positive wall_seconds, tasks, and seeds".to_owned(),
         ));
     }
+    let mut pass_env_names = std::collections::BTreeSet::new();
+    for name in &config.pass_env {
+        if !ALLOWED_PASSTHROUGH_ENV.contains(&name.as_str()) {
+            return Err(Error::Config(format!(
+                "pass_env may contain only {}",
+                ALLOWED_PASSTHROUGH_ENV.join(" or ")
+            )));
+        }
+        if !pass_env_names.insert(name) {
+            return Err(Error::Config(format!(
+                "pass_env contains duplicate variable name {name}"
+            )));
+        }
+    }
     let modes = config
         .modes
         .iter()
@@ -681,6 +726,25 @@ fn validate_config(config: &BenchmarkConfig) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn resolve_pass_environment_with(
+    names: &[String],
+    environment_value: impl Fn(&str) -> Option<String>,
+) -> Result<Vec<(String, String)>> {
+    names
+        .iter()
+        .map(|name| {
+            let value = environment_value(name)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    Error::Config(format!(
+                        "pass_env requested {name}, but it is missing, empty, or not Unicode"
+                    ))
+                })?;
+            Ok((name.clone(), value))
+        })
+        .collect()
 }
 
 fn validate_id(kind: &str, value: &str) -> Result<()> {
@@ -1023,8 +1087,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_incomplete_control_modes_and_escaping_metrics() {
-        let config = BenchmarkConfig {
+    fn rejects_incomplete_control_modes_escaping_metrics_and_unsafe_env() {
+        let mut config = BenchmarkConfig {
             benchmark_id: "safe".to_owned(),
             model_hash: "model".to_owned(),
             modes: vec![EvaluationMode::Brain],
@@ -1033,6 +1097,7 @@ mod tests {
             artifact_dir: PathBuf::from("out"),
             brain_snapshot: None,
             runtime_config: Value::Null,
+            pass_env: Vec::new(),
             tasks: vec![BenchmarkTask {
                 id: "task".to_owned(),
                 repo: PathBuf::from("repo"),
@@ -1049,6 +1114,85 @@ mod tests {
             }],
         };
         assert!(validate_config(&config).is_err());
+
+        config.modes = vec![EvaluationMode::Off, EvaluationMode::Brain];
+        config.tasks[0].metrics_file = None;
+        config.pass_env = vec!["PATH".to_owned()];
+        let error = validate_config(&config).expect_err("arbitrary environment access must fail");
+        assert!(error.to_string().contains("pass_env may contain only"));
+
+        config.pass_env = vec![
+            "ANTHROPIC_API_KEY".to_owned(),
+            "ANTHROPIC_API_KEY".to_owned(),
+        ];
+        let error = validate_config(&config).expect_err("duplicate names must fail");
+        assert!(error.to_string().contains("duplicate variable name"));
+    }
+
+    #[test]
+    fn pass_env_defaults_empty_and_requires_a_present_value() {
+        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("bench.smoke.yaml");
+        let (config, _) = load_config(&example).expect("shipped benchmark config");
+        assert!(config.pass_env.is_empty());
+
+        let names = vec!["ANTHROPIC_AUTH_TOKEN".to_owned()];
+        let error = resolve_pass_environment_with(&names, |_| None)
+            .expect_err("requested credential must be present");
+        assert!(error.to_string().contains("ANTHROPIC_AUTH_TOKEN"));
+
+        let resolved = resolve_pass_environment_with(&names, |name| {
+            (name == "ANTHROPIC_AUTH_TOKEN").then(|| "fixture-secret".to_owned())
+        })
+        .expect("allowed credential");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].0, "ANTHROPIC_AUTH_TOKEN");
+        assert_eq!(resolved[0].1, "fixture-secret");
+    }
+
+    #[test]
+    fn pass_env_reaches_both_agents_but_not_other_phases_or_artifacts() {
+        let temp = TempDir::new().expect("temp");
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).expect("repo");
+        let prompt = temp.path().join("prompt.txt");
+        fs::write(&prompt, "do the task").expect("prompt");
+        let config_path = temp.path().join("bench.yaml");
+        fs::write(
+            &config_path,
+            format!(
+                "benchmark_id: pass-env\nmodel_hash: fixture\nmodes: [off, brain]\nseeds: [1]\nwall_seconds: 5\nartifact_dir: artifacts\npass_env: [ANTHROPIC_API_KEY]\ntasks:\n  - id: task\n    repo: {}\n    prompt_file: {}\n    setup:\n      command: 'test -z \"${{ANTHROPIC_API_KEY+x}}\"'\n    agent:\n      command: 'test -n \"$ANTHROPIC_API_KEY\" && printf ''{{\"secret_present\":true}}'' > metrics.json'\n    success:\n      command: 'test -z \"${{ANTHROPIC_API_KEY+x}}\" && test -s metrics.json'\n    metrics_file: metrics.json\n",
+                repo.display(),
+                prompt.display()
+            ),
+        )
+        .expect("config");
+        let secret = "frontier-fixture-secret";
+        let artifacts = run_with_environment_lookup(&config_path, None, |name| {
+            (name == "ANTHROPIC_API_KEY").then(|| secret.to_owned())
+        })
+        .expect("paired run");
+        assert_eq!(artifacts.records.len(), 2);
+        assert!(artifacts.records.iter().all(|record| record.success));
+        assert!(
+            artifacts
+                .records
+                .iter()
+                .all(|record| { record.metrics["secret_present"].as_bool() == Some(true) })
+        );
+
+        for entry in WalkBuilder::new(temp.path().join("artifacts")).build() {
+            let entry = entry.expect("artifact entry");
+            if entry.file_type().is_some_and(|kind| kind.is_file()) {
+                let bytes = fs::read(entry.path()).expect("artifact file");
+                assert!(
+                    !bytes
+                        .windows(secret.len())
+                        .any(|window| window == secret.as_bytes()),
+                    "credential value leaked into {}",
+                    entry.path().display()
+                );
+            }
+        }
     }
 
     #[cfg(unix)]
@@ -1060,7 +1204,7 @@ mod tests {
         let result = run_command(
             "sleep 30 & echo $! > child.pid",
             temp.path(),
-            &[] as &[(String, String)],
+            &[],
             Duration::from_secs(2),
             &temp.path().join("stdout"),
             &temp.path().join("stderr"),
