@@ -591,6 +591,29 @@ fn diff_fingerprint(root: &Path, status: &[u8], has_head: bool) -> Result<String
     Ok(hex_digest(hasher.finalize().as_slice()))
 }
 
+/// Test seam exposing the private porcelain-z status parser to the
+/// property-based suite in `tests/properties.rs` (same pattern as
+/// [`crate::events::EventStore::hold_uncommitted_test_append`]).
+///
+/// # Errors
+///
+/// Propagates the parser's own validation errors.
+#[doc(hidden)]
+pub fn parse_changed_paths_for_tests(status: &[u8]) -> Result<Vec<PathBuf>> {
+    parse_changed_paths(status)
+}
+
+/// Test seam exposing the private `--name-status -z` parser to the
+/// property-based suite in `tests/properties.rs`.
+///
+/// # Errors
+///
+/// Propagates the parser's own validation errors.
+#[doc(hidden)]
+pub fn parse_name_status_paths_for_tests(output: &[u8]) -> Result<Vec<PathBuf>> {
+    parse_name_status_paths(output)
+}
+
 fn parse_changed_paths(status: &[u8]) -> Result<Vec<PathBuf>> {
     let fields = status
         .split(|byte| *byte == 0)
@@ -663,14 +686,15 @@ fn push_changed_path(paths: &mut Vec<PathBuf>, raw: &[u8]) -> Result<()> {
         )));
     }
     let path = path_from_git_bytes(raw);
+    // Every component must be a normal segment: this rejects absolute paths,
+    // `..` traversal, and `./`-prefixed paths. A leading `./` (which Git never
+    // emits) would otherwise defeat the `.git`/`.leb` prefix filter below,
+    // because `Path::starts_with(".git")` does not match `./.git/...`.
     if path.as_os_str().is_empty()
         || path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
     {
         return Err(Error::Git("unsafe path in Git status output".to_owned()));
     }
