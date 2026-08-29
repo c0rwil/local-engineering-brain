@@ -45,13 +45,6 @@ claude-mtplx --stop-server       # required before changing a running model
 claude-mtplx-quality
 ```
 
-The exact FP16-tensor sibling is an explicit third option:
-
-```bash
-claude-mtplx --stop-server       # required before changing a running model
-claude-mtplx-quality-fp16
-```
-
 Useful controls:
 
 ```bash
@@ -79,18 +72,11 @@ The downloaded Q8 model is `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality`. It i
 using Quality.
 Use `claude-mtplx-quality` to run it; `claude-mtplx` remains the faster default.
 
-## Optimized Quality FP16-tensor sibling
-
-`claude-mtplx-quality-fp16` selects
-`Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality-FP16` exactly. Despite the repository suffix, its
-weight matrices remain dynamically quantized at 8-bit; FP16 is used for the remaining floating
-tensors. The artifact is approximately 29.4 GB and its published parent-model peak is 32.7 GB, so
-it fits a 48 GB machine with reasonable application headroom.
-
-This sibling exists for M1/M2 Macs, whose hardware does not run BF16 well. On M3 and newer Macs,
-including M5, use `claude-mtplx-quality` for the native parent unless you specifically need to test
-the FP16-tensor conversion. The launcher remains available for reproducibility and never starts on
-`--help` or `--version`.
+The upstream `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality-FP16` sibling exists for M1/M2 Macs,
+whose hardware does not run BF16 well; despite the repository suffix, its weight matrices remain
+8-bit. On M3 and newer Macs, including M5, it offers no quality gain over
+`claude-mtplx-quality`, so no launcher is shipped for it. If it is ever needed, pull it with
+`mtplx pull` and run it through `mtplx serve` directly.
 
 ## Privacy boundary
 

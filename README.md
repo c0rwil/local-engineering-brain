@@ -100,9 +100,8 @@ forwards unchanged and adds `x-leb-degraded: context_unavailable`; set
 `proxy.failure_mode = "fail_closed"` for policy-sensitive or controlled evaluation use.
 
 MTPLX/Claude Code setup is documented in [`docs/CLAUDE_CODE_MTPLX.md`](docs/CLAUDE_CODE_MTPLX.md).
-The installed launchers are `claude-mtplx` for Optimized Speed, `claude-mtplx-quality` for the
-Q8/Optimized Quality variant recommended on M3-and-newer Macs, and
-`claude-mtplx-quality-fp16` for its M1/M2-compatible FP16-tensor sibling.
+The installed launchers are `claude-mtplx` for Optimized Speed and `claude-mtplx-quality` for the
+Q8/Optimized Quality variant recommended on M3-and-newer Macs.
 
 ## MCP
 

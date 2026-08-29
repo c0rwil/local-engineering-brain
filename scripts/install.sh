@@ -49,7 +49,7 @@ for binary in leb lebd leb-proxy leb-mcp; do
   cp "${PROJECT_ROOT}/target/release/${binary}" "${STAGING_DIR}/bin/${binary}"
   chmod 755 "${STAGING_DIR}/bin/${binary}"
 done
-for launcher in claude-mtplx claude-mtplx-quality claude-mtplx-quality-fp16; do
+for launcher in claude-mtplx claude-mtplx-quality; do
   cp "${PROJECT_ROOT}/scripts/${launcher}" "${STAGING_DIR}/bin/${launcher}"
   chmod 755 "${STAGING_DIR}/bin/${launcher}"
 done
@@ -60,7 +60,7 @@ else
   mv "${STAGING_DIR}" "${RELEASE_DIR}"
 fi
 
-for binary in leb lebd leb-proxy leb-mcp claude-mtplx claude-mtplx-quality claude-mtplx-quality-fp16; do
+for binary in leb lebd leb-proxy leb-mcp claude-mtplx claude-mtplx-quality; do
   temporary="${INSTALL_BIN_DIR}/.${binary}.new.$$"
   ln -s "${RELEASE_DIR}/bin/${binary}" "${temporary}"
   mv -f "${temporary}" "${INSTALL_BIN_DIR}/${binary}"
@@ -71,7 +71,7 @@ MANIFEST_TMP="${INSTALL_STATE_DIR}/.install-manifest.json.$$"
   printf '{\n  "version": "0.1.0",\n  "source_hash": "%s",\n' "${SOURCE_HASH}"
   printf '  "release_dir": "%s",\n  "sha256": {\n' "${RELEASE_DIR}"
   first=1
-  for binary in leb lebd leb-proxy leb-mcp claude-mtplx claude-mtplx-quality claude-mtplx-quality-fp16; do
+  for binary in leb lebd leb-proxy leb-mcp claude-mtplx claude-mtplx-quality; do
     digest=$(shasum -a 256 "${RELEASE_DIR}/bin/${binary}" | awk '{print $1}')
     if [ "${first}" -eq 0 ]; then
       printf ',\n'
