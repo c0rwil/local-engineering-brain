@@ -38,11 +38,11 @@ use crate::doctor::DoctorReport;
 use crate::error::{Error, Result, io_error};
 use crate::evaluation::{EvaluationRecord, EvaluationStore};
 use crate::experience::{
-    AttemptOutcome, AttemptRecord, EvidenceRecord, EvidenceStrength, ExperienceStore, PastFailure,
-    TaskOutcome, TaskRecord,
+    AttemptOutcome, AttemptRecord, DEFAULT_BLOB_THRESHOLD_BYTES, EvidenceRecord, EvidenceStrength,
+    ExperienceStore, PastFailure, TaskOutcome, TaskRecord,
 };
 use crate::export::{ExportReport, export_project};
-use crate::ids::{AttemptId, ContextRunId, MemoryId, NodeId, ProjectId, TaskId};
+use crate::ids::{AttemptId, ContextRunId, EvidenceId, MemoryId, NodeId, ProjectId, TaskId};
 use crate::learning::{DistillationRequest, DistillationResult, LearningStore};
 use crate::memory::{EpistemicState, MemoryDraft, MemoryRecord, MemoryStore};
 use crate::projects::{ProjectRegistry, ResolvedProject};
@@ -695,13 +695,25 @@ impl DaemonClient {
         .await
     }
 
-    /// Record provenance-bearing evidence without persisting raw artifact text.
+    /// Record provenance-bearing evidence. Artifact text is redacted before it
+    /// is persisted, and large artifacts move to the content-addressed blob
+    /// store behind a digest reference.
     ///
     /// # Errors
     ///
     /// Returns transport, scope-validation, overload, or storage errors.
     pub async fn record_evidence(&self, request: &EvidenceCreateRequest) -> Result<EvidenceRecord> {
         self.request(hyper::Method::POST, API_EVIDENCE, Some(request))
+            .await
+    }
+
+    /// Fetch one evidence record with its artifact text fully resolved.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport, ID, blob-resolution, or storage errors.
+    pub async fn get_evidence(&self, id: &EvidenceId) -> Result<Option<EvidenceRecord>> {
+        self.request::<(), _>(hyper::Method::GET, &format!("{API_EVIDENCE}/{id}"), None)
             .await
     }
 
@@ -945,6 +957,7 @@ where
         .route("/api/v1/tasks/{id}/attempts", post(record_attempt))
         .route("/api/v1/tasks/{id}/finish", post(finish_task))
         .route(API_EVIDENCE, post(record_evidence))
+        .route("/api/v1/evidence/{id}", get(get_evidence))
         .route(API_PAST_FAILURES, post(past_failures))
         .route(API_EVALUATION_RUNS, post(record_evaluation))
         .route(API_LEARNING_DISTILL, post(distill))
@@ -1540,7 +1553,7 @@ async fn record_evidence(
     State(state): State<DaemonState>,
     Json(request): Json<EvidenceCreateRequest>,
 ) -> std::result::Result<Json<EvidenceRecord>, ApiError> {
-    let store = ExperienceStore::with_redactor(state.database.clone(), state.redactor.clone());
+    let store = evidence_store(&state);
     let handle = state
         .scheduler
         .submit(MutationPriority::EvidenceVerification, move || {
@@ -1559,6 +1572,24 @@ async fn record_evidence(
         })
         .map_err(|error| ApiError::from_core(&error))?;
     Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
+async fn get_evidence(
+    State(state): State<DaemonState>,
+    AxumPath(id): AxumPath<String>,
+) -> std::result::Result<Json<Option<EvidenceRecord>>, ApiError> {
+    let id = EvidenceId::parse(&id).map_err(|error| ApiError::from_core(&error))?;
+    let store = evidence_store(&state);
+    let evidence = run_blocking(&state, move || store.get_evidence(&id)).await?;
+    Ok(Json(evidence))
+}
+
+/// Experience store configured with this daemon's redaction and blob routing.
+fn evidence_store(state: &DaemonState) -> ExperienceStore {
+    let threshold = usize::try_from(state.config.storage.blob_threshold_bytes)
+        .unwrap_or(DEFAULT_BLOB_THRESHOLD_BYTES);
+    ExperienceStore::with_redactor(state.database.clone(), state.redactor.clone())
+        .with_blob_threshold(threshold)
 }
 
 async fn finish_task(

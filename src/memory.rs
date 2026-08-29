@@ -6,6 +6,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::blobs::BlobStore;
 use crate::error::{Error, Result};
 use crate::events::{DomainEvent, append_generated_in_transaction};
 use crate::ids::{EvidenceId, MemoryId, NodeId, ProjectId, TaskId};
@@ -426,12 +427,17 @@ impl MemoryStore {
     /// Irreversibly remove memory content and all retrieval/link projections.
     /// The immutable purge audit event contains only typed IDs, never the claim.
     ///
+    /// Evidence supported only by this memory also loses its stored artifact:
+    /// the blob reference is released inside the transaction and the file is
+    /// unlinked after it commits. Retries stay idempotent.
+    ///
     /// # Errors
     ///
-    /// Returns an error for unknown memory or failed canonical transaction.
+    /// Returns an error for unknown memory, a failed canonical transaction, or
+    /// an unlink failure other than an already-missing file.
     pub fn purge(&self, id: &MemoryId) -> Result<()> {
         let now = unix_time_ms();
-        self.database.write_immediate(|transaction| {
+        let orphaned = self.database.write_immediate(|transaction| {
             let existing_project = transaction
                 .query_row(
                     "SELECT project_id FROM memories WHERE id = ?1",
@@ -450,7 +456,7 @@ impl MemoryStore {
                     |row| row.get(0),
                 )?;
                 if already_purged {
-                    return Ok(());
+                    return Ok(Vec::new());
                 }
                 return Err(Error::Config(format!("unknown memory `{id}`")));
             };
@@ -470,6 +476,40 @@ impl MemoryStore {
                  )",
                 [id.as_str()],
             )?;
+            // Evidence supported only by this memory loses its stored artifact
+            // with it: purge deletes canonical content and blobs, while the
+            // provenance row itself stays auditable.
+            let owned = {
+                let mut statement = transaction.prepare(
+                    "SELECT e.id, e.artifact_blob_digest
+                     FROM evidence e
+                     JOIN memory_evidence link ON link.evidence_id = e.id
+                     WHERE link.memory_id = ?1
+                       AND NOT EXISTS (
+                           SELECT 1 FROM memory_evidence other
+                           WHERE other.evidence_id = e.id AND other.memory_id <> ?1
+                       )",
+                )?;
+                let rows = statement.query_map([id.as_str()], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                })?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()?
+            };
+            let mut orphaned = Vec::new();
+            for (evidence_id, blob_digest) in owned {
+                transaction.execute(
+                    "UPDATE evidence
+                     SET artifact_text = NULL, artifact_excerpt = NULL,
+                         artifact_blob_digest = NULL, artifact_size_bytes = NULL
+                     WHERE id = ?1",
+                    [evidence_id.as_str()],
+                )?;
+                if let Some(digest) = blob_digest
+                    && BlobStore::release_in_transaction(transaction, &digest)?.removes_file()
+                {
+                    orphaned.push(digest);
+                }
+            }
             let deleted =
                 transaction.execute("DELETE FROM memories WHERE id = ?1", [id.as_str()])?;
             if deleted != 1 {
@@ -482,8 +522,16 @@ impl MemoryStore {
                     memory_id: id.clone(),
                 },
                 now,
-            )
-        })
+            )?;
+            Ok(orphaned)
+        })?;
+        // Files are unlinked only after the canonical transaction commits, so a
+        // rollback can never leave a metadata row without its bytes.
+        let blobs = BlobStore::new(self.database.clone());
+        for digest in orphaned {
+            blobs.remove_file(&digest)?;
+        }
+        Ok(())
     }
 
     /// Fetch one non-purged memory.
@@ -1232,6 +1280,55 @@ mod tests {
             })
             .expect("counts");
         assert_eq!(counts, (0, 0, 1));
+    }
+
+    #[test]
+    fn purging_a_memory_deletes_the_blob_backing_its_own_evidence() {
+        let (_temp, database, project) = fixture();
+        let memories = MemoryStore::new(database.clone());
+        let experience = ExperienceStore::new(database.clone()).with_blob_threshold(64);
+        let artifact = "supporting artifact line\n".repeat(64);
+        let evidence = experience
+            .record_evidence(
+                &project,
+                None,
+                None,
+                "log",
+                EvidenceStrength::Observational,
+                None,
+                None,
+                None,
+                artifact.as_bytes(),
+                &serde_json::json!({}),
+            )
+            .expect("evidence");
+        let digest = evidence
+            .artifact_blob_digest
+            .clone()
+            .expect("artifact must be blob backed");
+        let path = experience.blobs().path_for(&digest).expect("path");
+        assert!(path.exists());
+
+        let memory = memories
+            .create_candidate(&project, &draft(&project, vec![evidence.id.clone()]))
+            .expect("memory");
+        memories.purge(&memory.id).expect("purge");
+        assert!(!path.exists(), "purge must delete the owned blob file");
+        assert_eq!(
+            experience.blobs().refcount(&digest).expect("refcount"),
+            None
+        );
+        let resolved = experience
+            .get_evidence(&evidence.id)
+            .expect("fetch")
+            .expect("provenance row survives");
+        assert!(
+            resolved.artifact_text.is_empty(),
+            "purged artifact content must be gone"
+        );
+        assert!(resolved.artifact_blob_digest.is_none());
+
+        memories.purge(&memory.id).expect("idempotent purge");
     }
 
     #[test]

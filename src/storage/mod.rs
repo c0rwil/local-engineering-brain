@@ -32,9 +32,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "scan_changed_paths",
         include_str!("migrations/0004_scan_changed_paths.sql"),
     ),
+    (
+        5,
+        "blob_store",
+        include_str!("migrations/0005_blob_store.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 4;
+pub const LATEST_MIGRATION_VERSION: i64 = 5;
 
 /// Reopenable handle to the canonical database.
 ///
@@ -571,7 +576,7 @@ pub(crate) fn immediate_transaction<T>(
 }
 
 #[cfg(unix)]
-fn restrict_directory(path: &Path) -> Result<()> {
+pub(crate) fn restrict_directory(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let mut permissions = fs::metadata(path)
@@ -582,12 +587,12 @@ fn restrict_directory(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn restrict_directory(_path: &Path) -> Result<()> {
+pub(crate) fn restrict_directory(_path: &Path) -> Result<()> {
     Ok(())
 }
 
 #[cfg(unix)]
-fn restrict_file(path: &Path) -> Result<()> {
+pub(crate) fn restrict_file(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let mut permissions = fs::metadata(path)
@@ -611,7 +616,7 @@ fn restrict_database_files(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn restrict_file(_path: &Path) -> Result<()> {
+pub(crate) fn restrict_file(_path: &Path) -> Result<()> {
     Ok(())
 }
 

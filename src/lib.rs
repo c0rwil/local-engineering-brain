@@ -5,6 +5,7 @@
 
 #[doc(hidden)]
 pub mod autostart;
+pub mod blobs;
 pub mod cache;
 pub mod config;
 pub mod context;

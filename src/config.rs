@@ -86,6 +86,9 @@ pub struct ContextConfig {
 pub struct StorageConfig {
     pub db_path: PathBuf,
     pub blob_budget_gb: u32,
+    /// Redacted evidence artifacts larger than this move from the canonical row
+    /// into the content-addressed filesystem blob store.
+    pub blob_threshold_bytes: u32,
     pub vector_backend: String,
 }
 
@@ -211,6 +214,7 @@ impl Default for StorageConfig {
         Self {
             db_path: PathBuf::from("~/.leb/brain.sqlite"),
             blob_budget_gb: 0,
+            blob_threshold_bytes: 16_384,
             vector_backend: "disabled".to_owned(),
         }
     }
@@ -428,6 +432,13 @@ impl Config {
         if self.structural.provider == "graphify" && self.structural.graphify_export.is_none() {
             return Err(Error::Config(
                 "structural.graphify_export is required for the graphify provider".to_owned(),
+            ));
+        }
+        if self.storage.blob_threshold_bytes < 1_024
+            || self.storage.blob_threshold_bytes > 1_048_576
+        {
+            return Err(Error::Config(
+                "storage.blob_threshold_bytes must be between 1024 and 1048576".to_owned(),
             ));
         }
         crate::security::Redactor::new(&self.security.custom_redaction_patterns)?;
