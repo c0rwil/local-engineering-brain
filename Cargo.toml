@@ -35,7 +35,7 @@ hyper = { version = "1.11.1", features = ["client", "http1"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 ignore = "0.4.25"
 moka = { version = "0.12.16", features = ["sync"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls"] }
 regex = "1.12.3"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
