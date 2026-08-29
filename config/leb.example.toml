@@ -77,3 +77,22 @@ custom_redaction_patterns = []
 
 [evaluation]
 record_trajectory_metrics = false
+
+[synthesis]
+# Episode-to-procedure synthesis (spec 16.3-16.5). A procedure draft (typed
+# memory, kind "procedure") is created only when this many distinct successful
+# episodes share one normalized strategy signature, each backed by verified
+# deterministic/observational evidence, with overlapping touched files.
+# Allowed range: 2..=64.
+min_supporting_episodes = 3
+# Distinct successfully-served tasks a validated procedure must have been
+# injected for (via an explicitly declared context task_id) before it can be
+# promoted to the "skill" kind. Allowed range: 1..=10000.
+min_distinct_uses = 3
+# Run a bounded synthesis pass automatically after each successful task
+# finish. Off by default: V1 keeps learning explicit (spec P9).
+auto = false
+# Allow procedures validated in OTHER projects to enter this project as
+# explicitly marked hypothesis memories (tags: hypothesis, cross_project)
+# when local evidence exists but is below the threshold. Off by default.
+cross_project_hypotheses = false

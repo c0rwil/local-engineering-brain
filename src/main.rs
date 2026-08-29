@@ -9,8 +9,8 @@ use leb::config::{Config, ConfigOverrides};
 use leb::context::{ContextCompileRequest, ContextMode};
 use leb::daemon::{
     AttemptCreateRequest, EvidenceCreateRequest, MemoryCreateRequest, MemoryListRequest,
-    MemoryPromoteRequest, ProjectExportRequest, SemanticRebuildRequest, TaskFinishRequest,
-    TaskStartRequest, WorldSearchRequest,
+    MemoryPromoteRequest, ProjectExportRequest, SemanticRebuildRequest, SynthesisRunRequest,
+    TaskFinishRequest, TaskStartRequest, WorldSearchRequest,
 };
 use leb::daemon::{DaemonClient, ProjectStatus};
 use leb::doctor::DoctorReport;
@@ -142,6 +142,14 @@ enum Commands {
         rationale: String,
         #[arg(long)]
         tag: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Synthesize procedures from repeated evidence-backed successful episodes.
+    Synthesize {
+        #[arg(default_value = ".")]
+        path: PathBuf,
         #[arg(long)]
         json: bool,
     },
@@ -350,6 +358,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run(cli: Cli) -> Result<bool> {
     let overrides = ConfigOverrides {
         db_path: cli.db,
@@ -432,6 +441,9 @@ fn run(cli: Cli) -> Result<bool> {
             &tag,
             json,
         ),
+        Commands::Synthesize { path, json } => {
+            run_synthesize(&overrides, socket_override.as_deref(), &path, json)
+        }
         Commands::Backup { action } => run_backup(&overrides, socket_override.as_deref(), &action),
         Commands::Export {
             destination,
@@ -582,6 +594,52 @@ fn run_learn(
             result.memory.id,
             result.memory.claim
         );
+    }
+    Ok(true)
+}
+
+fn run_synthesize(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    path: &Path,
+    json: bool,
+) -> Result<bool> {
+    let root = discover_project_root(path)?;
+    let config = load_daemon_config(overrides, socket, Some(&root))?;
+    let client = client(&config);
+    let report = block_on(client.run_synthesis(&SynthesisRunRequest {
+        path: path.to_path_buf(),
+    }))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "Examined {} successful evidence-backed episodes in {}",
+            report.examined_episodes, report.project_id
+        );
+        if report.procedures.is_empty() {
+            println!("No procedure met the synthesis threshold.");
+        }
+        for procedure in &report.procedures {
+            println!(
+                "{} {} [{} episodes{}] {}",
+                if procedure.reused_existing {
+                    "Extended"
+                } else if procedure.cross_project_hypothesis {
+                    "Hypothesis"
+                } else {
+                    "Created"
+                },
+                procedure.memory.id,
+                procedure.supporting_episodes.len(),
+                if procedure.cross_project_hypothesis {
+                    ", cross-project"
+                } else {
+                    ""
+                },
+                procedure.memory.claim
+            );
+        }
     }
     Ok(true)
 }
@@ -846,6 +904,7 @@ fn run_context(
         },
         repository_root: Some(status.resolved.root),
         head: status.resolved.git.and_then(|git| git.head),
+        task_id: None,
     }))?;
     if json {
         println!("{}", serde_json::to_string_pretty(&context)?);

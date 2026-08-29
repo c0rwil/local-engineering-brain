@@ -63,6 +63,7 @@ fn warmed_context_compile_stays_under_hard_v1_ceiling() {
                 mode: ContextMode::Brain,
                 repository_root: Some(root.clone()),
                 head: None,
+                task_id: None,
             })
             .expect("compile");
         assert!(context.metrics.selected_tokens <= 2_000);
@@ -128,6 +129,7 @@ async fn medium_daemon_concurrency_stays_within_latency_rss_and_token_bounds() {
                     mode: ContextMode::Brain,
                     repository_root: Some(root),
                     head: None,
+                    task_id: None,
                 })
                 .await
                 .expect("context");

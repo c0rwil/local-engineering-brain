@@ -336,6 +336,11 @@ fn recall_request(arguments: &Value) -> Result<ContextCompileRequest> {
         mode: ContextMode::Brain,
         repository_root: None,
         head: None,
+        task_id: arguments
+            .get("task_id")
+            .and_then(Value::as_str)
+            .map(TaskId::parse)
+            .transpose()?,
     })
 }
 
@@ -411,11 +416,12 @@ fn tool_catalog() -> Value {
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
                 }, "required": ["project_id", "query"], "additionalProperties": false
             })),
-            tool("leb_recall", "Compile relevant validated context with explanations", &json!({
+            tool("leb_recall", "Compile relevant validated context with explanations. Passing the open task_id records truthful usage provenance for procedure-to-skill promotion", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"}, "task": {"type": "string"},
                     "current_paths": {"type": "array", "items": {"type": "string"}},
-                    "token_budget": {"type": "integer", "minimum": 1}
+                    "token_budget": {"type": "integer", "minimum": 1},
+                    "task_id": {"type": "string"}
                 }, "required": ["project_id", "task"], "additionalProperties": false
             })),
             tool("leb_explain_context", "Explain one selected item from a durable context run", &json!({
@@ -441,7 +447,7 @@ fn tool_catalog() -> Value {
                     "valid_from_commit": {"type": "string"}
                 }, "required": ["project_id", "claim"], "additionalProperties": false
             })),
-            tool("leb_get_skill", "Inspect a typed skill or procedure memory", &json!({
+            tool("leb_get_skill", "Inspect a typed skill or procedure memory. Procedures are synthesized from repeated evidence-backed episodes; their rationale carries a procedure_json payload (steps, preconditions, source episodes). Skills are procedures promoted after validation plus repeated successful use", &json!({
                 "type": "object", "properties": {"memory_id": {"type": "string"}},
                 "required": ["memory_id"], "additionalProperties": false
             })),

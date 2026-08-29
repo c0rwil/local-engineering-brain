@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
-use crate::ids::{ContextRunId, ProjectId};
+use crate::ids::{ContextRunId, ProjectId, TaskId};
 use crate::retrieval::{RetrievalRequest, RetrievalWhy, Retriever};
 use crate::storage::Database;
 
@@ -40,6 +40,11 @@ pub struct ContextCompileRequest {
     pub mode: ContextMode,
     pub repository_root: Option<PathBuf>,
     pub head: Option<String>,
+    /// Open task this compilation serves, when the caller knows it. Declaring
+    /// it records truthful usage linkage: injected memories are attributed to
+    /// this task, and the task's eventual outcome closes those usage records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
 }
 
 #[derive(Serialize)]
@@ -51,6 +56,10 @@ struct RequestFingerprint<'a> {
     mode: &'static str,
     repository_root: Option<&'a str>,
     head: Option<&'a str>,
+    /// Skipped when absent so fingerprints of task-less requests stay
+    /// byte-identical to those computed before this field existed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task_id: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -414,7 +423,48 @@ impl ContextCompiler {
                          WHERE id = ?1",
                         params![item.source_id, now],
                     )?;
+                    // Truthful usage provenance: this memory was injected into
+                    // exactly this compiled run. Outcome linkage is recorded
+                    // separately, only when the caller declared a served task.
+                    transaction.execute(
+                        "INSERT INTO usage_events
+                         (id, source_type, source_id, context_run_id, usage_kind,
+                          outcome, created_at_ms)
+                         VALUES (?1, 'memory', ?2, ?3, 'injected', NULL, ?4)",
+                        params![
+                            format!("use_{}", uuid::Uuid::new_v4()),
+                            item.source_id,
+                            context.id.as_str(),
+                            now
+                        ],
+                    )?;
                 }
+            }
+            if context.mode == ContextMode::Brain
+                && let Some(task_id) = &request.task_id
+            {
+                let in_project: bool = transaction.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ?1 AND project_id = ?2)",
+                    params![task_id.as_str(), request.project_id.as_str()],
+                    |row| row.get(0),
+                )?;
+                if !in_project {
+                    return Err(Error::Config(format!(
+                        "context task `{task_id}` does not belong to the requested project"
+                    )));
+                }
+                transaction.execute(
+                    "INSERT INTO usage_events
+                     (id, source_type, source_id, context_run_id, usage_kind,
+                      outcome, created_at_ms)
+                     VALUES (?1, 'task', ?2, ?3, 'context_served', NULL, ?4)",
+                    params![
+                        format!("use_{}", uuid::Uuid::new_v4()),
+                        task_id.as_str(),
+                        context.id.as_str(),
+                        now
+                    ],
+                )?;
             }
             Ok(())
         })
@@ -551,6 +601,7 @@ fn request_fingerprint(request: &ContextCompileRequest) -> Result<String> {
         mode: request.mode.as_str(),
         repository_root: repository_root.as_deref(),
         head: request.head.as_deref(),
+        task_id: request.task_id.as_ref().map(TaskId::as_str),
     };
     Ok(sha256(&serde_json::to_vec(&fingerprint)?))
 }
@@ -716,6 +767,7 @@ mod tests {
                 mode: ContextMode::Brain,
                 repository_root: None,
                 head: None,
+                task_id: None,
             })
             .expect("compile");
         assert!(context.metrics.selected_tokens <= 80);
@@ -747,6 +799,7 @@ mod tests {
             mode: ContextMode::Off,
             repository_root: None,
             head: None,
+            task_id: None,
         };
         let first = compiler.compile(&request).expect("first");
         let second = compiler.compile(&request).expect("retry");
@@ -776,6 +829,7 @@ mod tests {
             mode: ContextMode::Brain,
             repository_root: None,
             head: Some("first-head".to_owned()),
+            task_id: None,
         };
         let first = compiler.compile(&first_request).expect("first context");
         assert!(first.dynamic_context.contains("reservation"));
@@ -790,6 +844,7 @@ mod tests {
                 mode: ContextMode::Brain,
                 repository_root: None,
                 head: None,
+                task_id: None,
             })
             .expect("same caller id in another project is independent");
         assert!(!second.dynamic_context.contains("reservation"));
@@ -815,6 +870,7 @@ mod tests {
             mode: ContextMode::Brain,
             repository_root: None,
             head: None,
+            task_id: None,
         };
         let context = compiler.compile(&request).expect("compile");
         assert!(context.dynamic_context.contains("reservation"));

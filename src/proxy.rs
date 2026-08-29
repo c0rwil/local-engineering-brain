@@ -258,6 +258,7 @@ async fn augment_request(
             mode,
             repository_root: root,
             head,
+            task_id: None,
         })
         .await
         .map_err(|error| ProxyError::upstream(format!("context compilation failed: {error}")))?;

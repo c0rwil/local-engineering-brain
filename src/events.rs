@@ -101,6 +101,13 @@ pub enum DomainEvent {
         source_task_ids: Vec<TaskId>,
         reused_existing: bool,
     },
+    ProcedureSynthesized {
+        project_id: ProjectId,
+        memory_id: MemoryId,
+        signature: String,
+        source_task_ids: Vec<TaskId>,
+        cross_project_hypothesis: bool,
+    },
 }
 
 impl DomainEvent {
@@ -120,6 +127,7 @@ impl DomainEvent {
             Self::MemoryStateChanged { .. } => "MEMORY_STATE_CHANGED",
             Self::MemoryPurged { .. } => "MEMORY_PURGED",
             Self::LearningDistilled { .. } => "LEARNING_DISTILLED",
+            Self::ProcedureSynthesized { .. } => "PROCEDURE_SYNTHESIZED",
         }
     }
 
@@ -138,7 +146,8 @@ impl DomainEvent {
             | Self::MemoryCreated { project_id, .. }
             | Self::MemoryStateChanged { project_id, .. }
             | Self::MemoryPurged { project_id, .. }
-            | Self::LearningDistilled { project_id, .. } => project_id,
+            | Self::LearningDistilled { project_id, .. }
+            | Self::ProcedureSynthesized { project_id, .. } => project_id,
         }
     }
 
@@ -165,7 +174,8 @@ impl DomainEvent {
             | "MEMORY_CREATED"
             | "MEMORY_STATE_CHANGED"
             | "MEMORY_PURGED"
-            | "LEARNING_DISTILLED" => {
+            | "LEARNING_DISTILLED"
+            | "PROCEDURE_SYNTHESIZED" => {
                 let event: Self = serde_json::from_str(payload)?;
                 if event.event_type() != event_type {
                     return Err(Error::UnknownEventType {
@@ -458,7 +468,8 @@ impl EventStore {
                 | DomainEvent::MemoryCreated { .. }
                 | DomainEvent::MemoryStateChanged { .. }
                 | DomainEvent::MemoryPurged { .. }
-                | DomainEvent::LearningDistilled { .. } => {}
+                | DomainEvent::LearningDistilled { .. }
+                | DomainEvent::ProcedureSynthesized { .. } => {}
             }
         }
         Ok(projection)
@@ -561,7 +572,8 @@ fn apply_project_projection(
         | DomainEvent::MemoryCreated { .. }
         | DomainEvent::MemoryStateChanged { .. }
         | DomainEvent::MemoryPurged { .. }
-        | DomainEvent::LearningDistilled { .. } => {}
+        | DomainEvent::LearningDistilled { .. }
+        | DomainEvent::ProcedureSynthesized { .. } => {}
     }
     Ok(())
 }
