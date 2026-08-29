@@ -51,7 +51,9 @@ all three MTPLX launchers, and writes checksums plus a source identity to
 `~/.local/share/leb/install-manifest.json`. CLI commands that
 need the canonical writer and both edge binaries health-check and auto-start their sibling daemon.
 Defaults are `~/.leb/brain.sqlite`, `~/.leb/lebd.sock`, and a loopback-only proxy at
-`127.0.0.1:11435`.
+`127.0.0.1:11435`. Evidence artifacts larger than `storage.blob_threshold_bytes` (16 KiB by
+default) are redacted and then stored content-addressed under `~/.leb/blobs/`; reads, exports,
+and purges resolve them transparently, and `leb doctor` reports blob-store health.
 
 ## Core workflow
 

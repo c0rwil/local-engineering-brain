@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::blobs::BlobStore;
 use crate::config::Config;
 use crate::storage::{Database, LATEST_MIGRATION_VERSION};
 
@@ -92,6 +93,7 @@ impl DoctorReport {
                 detail: error.to_string(),
             }),
         }
+        report.checks.push(blob_store_check(database));
         report.finish()
     }
 
@@ -128,11 +130,98 @@ impl DoctorReport {
     }
 }
 
+/// Report content-addressed blob-store health without touching any file.
+///
+/// A file with no metadata row wastes space but never loses data, so it is a
+/// warning. A metadata row with no file means unreadable canonical content and
+/// fails the check.
+fn blob_store_check(database: &Database) -> DoctorCheck {
+    match BlobStore::new(database.clone()).health() {
+        Ok(health) => {
+            let status = if health.missing_files > 0 {
+                CheckStatus::Fail
+            } else if health.orphan_files > 0 {
+                CheckStatus::Warning
+            } else {
+                CheckStatus::Pass
+            };
+            DoctorCheck {
+                name: "blob_store".to_owned(),
+                status,
+                detail: format!(
+                    "blobs={} bytes={} orphan_files={} missing_files={} root={}",
+                    health.blob_count,
+                    health.total_bytes,
+                    health.orphan_files,
+                    health.missing_files,
+                    health.root.display()
+                ),
+            }
+        }
+        Err(error) => DoctorCheck {
+            name: "blob_store".to_owned(),
+            status: CheckStatus::Fail,
+            detail: error.to_string(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    use crate::blobs::digest_hex;
+
+    fn blob_check(report: &DoctorReport) -> DoctorCheck {
+        report
+            .checks
+            .iter()
+            .find(|check| check.name == "blob_store")
+            .expect("blob_store check")
+            .clone()
+    }
+
+    #[test]
+    fn blob_store_health_reports_files_without_rows_and_rows_without_files() {
+        let temp = TempDir::new().expect("temp dir");
+        let mut config = Config::default();
+        config.storage.db_path = temp.path().join("brain.sqlite");
+        let database = Database::open(&config.storage.db_path).expect("database");
+
+        let healthy = blob_check(&DoctorReport::run_with_database(&config, &database));
+        assert_eq!(healthy.status, CheckStatus::Pass);
+        assert!(healthy.detail.contains("blobs=0"), "{healthy:?}");
+
+        // A file with no metadata row wastes space but loses nothing.
+        BlobStore::new(database.clone())
+            .put(b"orphan artifact")
+            .expect("orphan blob");
+        let report = DoctorReport::run_with_database(&config, &database);
+        let orphaned = blob_check(&report);
+        assert_eq!(orphaned.status, CheckStatus::Warning);
+        assert!(orphaned.detail.contains("orphan_files=1"), "{orphaned:?}");
+        assert!(report.ok, "an orphan file must not fail the report");
+
+        // A metadata row with no file means unreadable canonical content.
+        let missing = digest_hex(b"never written to disk");
+        database
+            .write_immediate(|transaction| {
+                transaction.execute(
+                    "INSERT INTO blobs(digest, size_bytes, content_type, created_at_ms, refcount)
+                     VALUES (?1, 21, 'text/plain', 0, 1)",
+                    [missing.as_str()],
+                )?;
+                Ok(())
+            })
+            .expect("insert blob row");
+        let report = DoctorReport::run_with_database(&config, &database);
+        let broken = blob_check(&report);
+        assert_eq!(broken.status, CheckStatus::Fail);
+        assert!(broken.detail.contains("missing_files=1"), "{broken:?}");
+        assert!(broken.detail.contains("orphan_files=1"), "{broken:?}");
+        assert!(!report.ok);
+    }
 
     #[test]
     fn healthy_local_configuration_passes() {

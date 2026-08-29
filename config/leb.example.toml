@@ -27,6 +27,10 @@ rss_hard_limit_mb = 900
 [storage]
 db_path = "~/.leb/brain.sqlite"
 blob_budget_gb = 0
+# Redacted evidence artifacts larger than this move out of the canonical row
+# into `blobs/` beside the database; the row keeps a digest and a head excerpt.
+# Allowed range: 1024..=1048576 bytes.
+blob_threshold_bytes = 16384
 vector_backend = "disabled"
 
 [structural]

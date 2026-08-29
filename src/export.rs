@@ -8,6 +8,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::blobs::BlobStore;
 use crate::error::{Error, Result, io_error};
 use crate::ids::ProjectId;
 use crate::storage::Database;
@@ -22,10 +23,14 @@ pub struct ExportReport {
 
 /// Export canonical project state as versioned NDJSON without materializing it in RAM.
 ///
+/// Evidence artifacts are exported in full: blob-backed artifacts are resolved
+/// through the blob store so the NDJSON file stays self-contained.
+///
 /// # Errors
 ///
 /// Returns an error if the destination exists, the project is unknown, storage
-/// is corrupt, or the atomic output cannot be completed.
+/// is corrupt, a referenced blob is missing, or the atomic output cannot be
+/// completed.
 pub fn export_project(
     database: &Database,
     project_id: &ProjectId,
@@ -51,6 +56,7 @@ pub fn export_project(
     restrict_file(&temporary)?;
     let mut writer = BufWriter::new(file);
     let mut records = 0_u64;
+    let blobs = BlobStore::new(database.clone());
     database.with_reader(|connection| {
         let project: String = connection
             .query_row(
@@ -73,6 +79,25 @@ pub fn export_project(
         records += 1;
         for (kind, query) in export_queries() {
             let mut statement = connection.prepare(query)?;
+            if *kind == EVIDENCE_KIND {
+                // Evidence rows carry either inline artifact text or a blob
+                // reference. Resolve the blob here: an export must never depend
+                // on files outside the NDJSON it produced.
+                let rows = statement.query_map(params![project_id.as_str()], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                })?;
+                for row in rows {
+                    let (raw_json, blob_digest) = row?;
+                    let mut data: serde_json::Value = serde_json::from_str(&raw_json)?;
+                    if let Some(digest) = blob_digest {
+                        data["artifact_text"] =
+                            serde_json::Value::String(blobs.read_text(&digest)?);
+                    }
+                    write_value_envelope(&mut writer, kind, &data)?;
+                    records = records.saturating_add(1);
+                }
+                continue;
+            }
             let rows =
                 statement.query_map(params![project_id.as_str()], |row| row.get::<_, String>(0))?;
             for row in rows {
@@ -107,6 +132,14 @@ pub fn export_project(
 
 fn write_envelope(writer: &mut impl Write, kind: &str, raw_json: &str) -> Result<()> {
     let data: serde_json::Value = serde_json::from_str(raw_json)?;
+    write_value_envelope(writer, kind, &data)
+}
+
+fn write_value_envelope(
+    writer: &mut impl Write,
+    kind: &str,
+    data: &serde_json::Value,
+) -> Result<()> {
     serde_json::to_writer(
         &mut *writer,
         &json!({"format": "leb-project-ndjson-v1", "type": kind, "data": data}),
@@ -116,6 +149,9 @@ fn write_envelope(writer: &mut impl Write, kind: &str, raw_json: &str) -> Result
         source,
     })
 }
+
+/// Export kind whose artifact payload may live in the blob store.
+const EVIDENCE_KIND: &str = "evidence";
 
 fn export_queries() -> &'static [(&'static str, &'static str)] {
     &[
@@ -140,8 +176,8 @@ fn export_queries() -> &'static [(&'static str, &'static str)] {
             "SELECT json_object('id',a.id,'task_id',a.task_id,'ordinal',a.ordinal,'strategy_summary',a.strategy_summary,'outcome',a.outcome,'files',json(a.files_json),'created_at_ms',a.created_at_ms) FROM attempts a JOIN tasks t ON t.id=a.task_id WHERE t.project_id=?1 ORDER BY a.created_at_ms,a.id",
         ),
         (
-            "evidence",
-            "SELECT json_object('id',id,'task_id',task_id,'attempt_id',attempt_id,'kind',kind,'strength',strength,'commit_hash',commit_hash,'command',command,'exit_code',exit_code,'artifact_digest',artifact_digest,'metadata',json(metadata_json),'observed_at_ms',observed_at_ms) FROM evidence WHERE project_id=?1 ORDER BY observed_at_ms,id",
+            EVIDENCE_KIND,
+            "SELECT json_object('id',id,'task_id',task_id,'attempt_id',attempt_id,'kind',kind,'strength',strength,'commit_hash',commit_hash,'command',command,'exit_code',exit_code,'artifact_digest',artifact_digest,'artifact_text',COALESCE(artifact_text,''),'metadata',json(metadata_json),'observed_at_ms',observed_at_ms), artifact_blob_digest FROM evidence WHERE project_id=?1 ORDER BY observed_at_ms,id",
         ),
         (
             "memory",
@@ -171,6 +207,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    use crate::experience::{EvidenceStrength, ExperienceStore};
     use crate::projects::ProjectRegistry;
 
     #[test]
@@ -190,5 +227,62 @@ mod tests {
             assert_eq!(value["format"], "leb-project-ndjson-v1");
         }
         assert!(export_project(&database, &project.project.id, &path).is_err());
+    }
+
+    #[test]
+    fn exported_evidence_carries_full_artifact_text_from_the_blob_store() {
+        let temp = TempDir::new().expect("temp");
+        let root = temp.path().join("project");
+        fs::create_dir(&root).expect("project");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let project = ProjectRegistry::new(database.clone())
+            .resolve_or_register(&root)
+            .expect("project")
+            .project
+            .id;
+        let experience = ExperienceStore::new(database.clone()).with_blob_threshold(64);
+        let inline_text = "short artifact";
+        let blob_text = "exported artifact line\n".repeat(64);
+        for artifact in [inline_text, blob_text.as_str()] {
+            experience
+                .record_evidence(
+                    &project,
+                    None,
+                    None,
+                    "log",
+                    EvidenceStrength::Observational,
+                    None,
+                    None,
+                    None,
+                    artifact.as_bytes(),
+                    &serde_json::json!({}),
+                )
+                .expect("evidence");
+        }
+
+        let path = temp.path().join("export.ndjson");
+        export_project(&database, &project, &path).expect("export");
+        let exported: Vec<String> = fs::read_to_string(&path)
+            .expect("read")
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        let artifacts: Vec<String> = exported
+            .iter()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON line"))
+            .filter(|value| value["type"] == "evidence")
+            .map(|value| {
+                value["data"]["artifact_text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(artifacts.len(), 2);
+        assert!(artifacts.contains(&inline_text.to_owned()));
+        assert!(
+            artifacts.contains(&blob_text),
+            "export must resolve blob-backed artifacts in full"
+        );
     }
 }
