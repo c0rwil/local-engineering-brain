@@ -22,7 +22,7 @@ Claude Code / agent / OpenAI client
         lebd  -- one bounded priority writer, bounded reader pool
           |
           +-- SQLite WAL/FULL (canonical events, graph, evidence, memory, metrics)
-          +-- rebuildable indexes (optional cache integration is disabled in V1)
+          +-- rebuildable indexes and byte-bounded, generation-invalidated read caches
           +-- Git, tree-sitter, optional Graphify export
           |
           v
@@ -33,8 +33,8 @@ SQLite is deliberate for the single-user local product: one daemon owns mutation
 supports concurrent readers, transactions keep events and projections coherent, and there is no
 second database service consuming RAM. PostgreSQL is the planned team/distributed boundary, not a
 faster default for a Mac-local workload. Redis is unnecessary because canonical state and request
-projections are already local to one daemon; the bounded cache primitive remains disabled until
-generation invalidation is wired end to end. See the ADRs in [`docs/adr`](docs/adr).
+projections are already local to one daemon; the daemon's own byte-bounded read caches are
+invalidated by canonical storage generations. See the ADRs in [`docs/adr`](docs/adr).
 
 ## Install
 
