@@ -141,4 +141,5 @@ domain_id!(MemoryId, "mem", "memory");
 domain_id!(NodeId, "nod", "node");
 domain_id!(EdgeId, "edg", "edge");
 domain_id!(ContextRunId, "ctx", "context run");
+domain_id!(JobId, "job", "job");
 domain_id!(EvaluationRunId, "eval", "evaluation run");

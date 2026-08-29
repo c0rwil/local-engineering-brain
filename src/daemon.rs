@@ -42,7 +42,8 @@ use crate::experience::{
     ExperienceStore, PastFailure, TaskOutcome, TaskRecord,
 };
 use crate::export::{ExportReport, export_project};
-use crate::ids::{AttemptId, ContextRunId, EvidenceId, MemoryId, NodeId, ProjectId, TaskId};
+use crate::ids::{AttemptId, ContextRunId, EvidenceId, JobId, MemoryId, NodeId, ProjectId, TaskId};
+use crate::jobs::{EnqueueJob, JobExecutor, JobQueue, JobRecord, JobRunner, JobStatus, JobType};
 use crate::learning::{DistillationRequest, DistillationResult, LearningStore};
 use crate::memory::{EpistemicState, MemoryDraft, MemoryRecord, MemoryStore};
 use crate::projects::{ProjectRegistry, ResolvedProject};
@@ -75,6 +76,8 @@ const API_BACKUP_CREATE: &str = "/api/v1/admin/backups";
 const API_BACKUP_VERIFY: &str = "/api/v1/admin/backups/verify";
 const API_PROJECT_EXPORT: &str = "/api/v1/admin/export";
 const API_SEMANTIC_REBUILD: &str = "/api/v1/semantic/rebuild";
+const API_JOBS: &str = "/api/v1/jobs";
+const API_JOBS_LIST: &str = "/api/v1/jobs/list";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -356,6 +359,28 @@ pub struct SemanticRebuildResponse {
     pub project_id: ProjectId,
     /// Number of derived vectors rewritten from canonical memories.
     pub vectors: u64,
+}
+
+/// Enqueue one allowlisted background job. Unknown types are rejected during
+/// deserialization, so the allowlist is enforced at the API boundary.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct JobEnqueueRequest {
+    pub job_type: JobType,
+    #[serde(default)]
+    pub project_id: Option<ProjectId>,
+    #[serde(default)]
+    pub payload: Option<serde_json::Value>,
+    /// Enqueue is idempotent by `(job_type, dedupe_key)`; omitting the key
+    /// makes every request a distinct job.
+    #[serde(default)]
+    pub dedupe_key: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct JobListRequest {
+    #[serde(default)]
+    pub status: Option<JobStatus>,
+    pub limit: usize,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -834,6 +859,36 @@ impl DaemonClient {
             .await
     }
 
+    /// Idempotently enqueue one allowlisted background job.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport, validation, overload, or storage errors.
+    pub async fn enqueue_job(&self, request: &JobEnqueueRequest) -> Result<JobRecord> {
+        self.request(hyper::Method::POST, API_JOBS, Some(request))
+            .await
+    }
+
+    /// List newest background jobs, optionally filtered by status.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport, validation, or storage errors.
+    pub async fn list_jobs(&self, request: &JobListRequest) -> Result<Vec<JobRecord>> {
+        self.request(hyper::Method::POST, API_JOBS_LIST, Some(request))
+            .await
+    }
+
+    /// Fetch one background job by typed ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport, ID, or storage errors.
+    pub async fn get_job(&self, id: &JobId) -> Result<Option<JobRecord>> {
+        self.request::<(), _>(hyper::Method::GET, &format!("{API_JOBS}/{id}"), None)
+            .await
+    }
+
     async fn request<B, R>(&self, method: hyper::Method, path: &str, body: Option<&B>) -> Result<R>
     where
         B: Serialize + ?Sized,
@@ -916,6 +971,7 @@ fn requires_terminal_ack(method: &hyper::Method, path: &str) -> bool {
         || path == API_BACKUP_CREATE
         || path == API_PROJECT_EXPORT
         || path == API_SEMANTIC_REBUILD
+        || path == API_JOBS
 }
 
 /// Serve the local API until `shutdown` resolves.
@@ -990,23 +1046,139 @@ where
         .route(API_EVALUATION_RUNS, post(record_evaluation))
         .route(API_LEARNING_DISTILL, post(distill))
         .route(API_SEMANTIC_REBUILD, post(rebuild_semantic_index))
+        .route(API_JOBS, post(enqueue_job))
+        .route(API_JOBS_LIST, post(list_jobs))
+        .route("/api/v1/jobs/{id}", get(get_job))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
         ))
-        .with_state(state);
+        .with_state(state.clone());
+
+    let (jobs_stop_sender, jobs_handle) = start_job_system(&state, &config).await?;
 
     let shutdown_signal = async move {
         tokio::select! {
             () = external_shutdown => {}
             () = local_shutdown.notified() => {}
         }
+        let _ = jobs_stop_sender.send(true);
     };
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal)
         .await
         .map_err(|source| io_error(&config.daemon.socket_path, source))?;
+    if let Some(handle) = jobs_handle {
+        handle
+            .await
+            .map_err(|error| Error::Daemon(format!("job runner exited abnormally: {error}")))?;
+    }
     Ok(())
+}
+
+/// Recover crashed jobs, then start the daemon-owned background job loop.
+///
+/// Crash recovery (spec section 27.5): the daemon is the only executor, so any
+/// `running` job at startup means the previous process died mid-run. The reset
+/// happens before the runner or any client can observe the queue, and runs
+/// even when the runner is disabled so the queue never lies about liveness.
+///
+/// `Notify::notify_one` wakes only a single waiter, so daemon shutdown is
+/// fanned out to the job loop through the returned watch sender instead of
+/// adding a second competing waiter on the shutdown notify.
+async fn start_job_system(
+    state: &DaemonState,
+    config: &Config,
+) -> Result<(
+    tokio::sync::watch::Sender<bool>,
+    Option<tokio::task::JoinHandle<()>>,
+)> {
+    let recovery_queue = JobQueue::new(state.database.clone());
+    let recovery = state
+        .scheduler
+        .submit(MutationPriority::CorrectnessCritical, move || {
+            recovery_queue.recover_running(job_time_ms())
+        })?;
+    tokio::task::spawn_blocking(move || recovery.wait())
+        .await
+        .map_err(|error| Error::Daemon(format!("job recovery task failed: {error}")))??;
+
+    let (stop_sender, stop_receiver) = tokio::sync::watch::channel(false);
+    let handle = if config.jobs.enabled {
+        let executor = JobExecutor::new(
+            state.database.clone(),
+            state.scheduler.clone(),
+            state.redactor.clone(),
+            config.jobs.clone(),
+            usize::try_from(config.semantic.max_scanned).unwrap_or(usize::MAX),
+        );
+        let runner = JobRunner::new(
+            executor,
+            state.scheduler.clone(),
+            Arc::clone(&state.background_slots),
+            config.jobs.clone(),
+            mebibytes_to_bytes(config.daemon.rss_hard_limit_mb),
+            Arc::new(current_rss_bytes),
+        );
+        Some(runner.spawn(stop_receiver))
+    } else {
+        drop(stop_receiver);
+        None
+    };
+    Ok((stop_sender, handle))
+}
+
+/// Wall-clock milliseconds for durable job rows.
+fn job_time_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+        })
+}
+
+async fn enqueue_job(
+    State(state): State<DaemonState>,
+    Json(request): Json<JobEnqueueRequest>,
+) -> std::result::Result<Json<JobRecord>, ApiError> {
+    admit_work(&state, MutationPriority::BackgroundLearning)?;
+    let queue = JobQueue::new(state.database.clone());
+    let enqueue = EnqueueJob {
+        job_type: request.job_type,
+        project_id: request.project_id,
+        payload: request.payload.unwrap_or_else(|| serde_json::json!({})),
+        dedupe_key: request
+            .dedupe_key
+            .unwrap_or_else(|| JobId::new().to_string()),
+        max_attempts: state.config.jobs.max_attempts,
+    };
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::BackgroundLearning, move || {
+            queue.enqueue(&enqueue, job_time_ms())
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
+async fn list_jobs(
+    State(state): State<DaemonState>,
+    Json(request): Json<JobListRequest>,
+) -> std::result::Result<Json<Vec<JobRecord>>, ApiError> {
+    let queue = JobQueue::new(state.database.clone());
+    let jobs = run_blocking(&state, move || queue.list(request.status, request.limit)).await?;
+    Ok(Json(jobs))
+}
+
+async fn get_job(
+    State(state): State<DaemonState>,
+    AxumPath(id): AxumPath<String>,
+) -> std::result::Result<Json<Option<JobRecord>>, ApiError> {
+    let id = JobId::parse(&id).map_err(|error| ApiError::from_core(&error))?;
+    let queue = JobQueue::new(state.database.clone());
+    let job = run_blocking(&state, move || queue.get(&id)).await?;
+    Ok(Json(job))
 }
 
 async fn health(State(state): State<DaemonState>) -> Json<HealthResponse> {
@@ -2357,6 +2529,158 @@ mod tests {
             compiled.items[0].why.semantic > 0.0,
             "project-scoped semantic retrieval must populate the semantic score"
         );
+
+        client.shutdown().await.expect("shutdown request");
+        drop(shutdown_sender);
+        server.await.expect("server task").expect("server result");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn background_jobs_are_enqueued_over_the_api_and_executed_by_the_daemon() {
+        let temp = TempDir::new().expect("temp dir");
+        let mut config = test_config(&temp);
+        config.jobs.poll_interval_ms = 25;
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+
+        // A project-scoped type without a project is rejected at the boundary.
+        let error = client
+            .enqueue_job(&JobEnqueueRequest {
+                job_type: JobType::SemanticRebuild,
+                project_id: None,
+                payload: None,
+                dedupe_key: None,
+            })
+            .await
+            .expect_err("project scope required");
+        assert!(error.to_string().contains("requires a project scope"));
+
+        let job = client
+            .enqueue_job(&JobEnqueueRequest {
+                job_type: JobType::FtsIntegrity,
+                project_id: None,
+                payload: None,
+                dedupe_key: Some("api-test".to_owned()),
+            })
+            .await
+            .expect("enqueue");
+        assert_eq!(job.status, JobStatus::Pending);
+
+        // Idempotent by (type, dedupe_key).
+        let duplicate = client
+            .enqueue_job(&JobEnqueueRequest {
+                job_type: JobType::FtsIntegrity,
+                project_id: None,
+                payload: None,
+                dedupe_key: Some("api-test".to_owned()),
+            })
+            .await
+            .expect("duplicate enqueue");
+        assert_eq!(duplicate.id, job.id);
+
+        // The daemon-owned loop picks the job up on its fixed poll interval.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let executed = loop {
+            let current = client
+                .get_job(&job.id)
+                .await
+                .expect("get job")
+                .expect("job exists");
+            if current.status == JobStatus::Succeeded {
+                break current;
+            }
+            assert!(Instant::now() < deadline, "job never executed: {current:?}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        let result = executed.result.expect("recorded result");
+        assert_eq!(result["integrity"], "ok");
+
+        let listed = client
+            .list_jobs(&JobListRequest {
+                status: Some(JobStatus::Succeeded),
+                limit: 10,
+            })
+            .await
+            .expect("list jobs");
+        assert!(listed.iter().any(|listed| listed.id == job.id));
+
+        // The daily maintenance jobs self-enqueued (dedupe-keyed by day).
+        let all = client
+            .list_jobs(&JobListRequest {
+                status: None,
+                limit: 50,
+            })
+            .await
+            .expect("list all");
+        assert!(
+            all.iter()
+                .any(|listed| listed.job_type == JobType::ConsolidationGc),
+            "daily consolidation_gc must self-enqueue: {all:?}"
+        );
+        assert_eq!(
+            all.iter()
+                .filter(|listed| listed.job_type == JobType::ConsolidationGc)
+                .count(),
+            1,
+            "daily self-enqueue is deduped by day"
+        );
+
+        client.shutdown().await.expect("shutdown request");
+        drop(shutdown_sender);
+        server.await.expect("server task").expect("server result");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn running_jobs_are_reset_to_pending_when_daemon_state_reopens() {
+        let temp = TempDir::new().expect("temp dir");
+        let mut config = test_config(&temp);
+        // The runner stays off so the recovered row is observable as pending.
+        config.jobs.enabled = false;
+
+        // Simulate a daemon that crashed mid-job: the row stays `running`.
+        let crashed_id = {
+            let database = Database::open(&config.storage.db_path).expect("database");
+            let queue = JobQueue::new(database);
+            let job = queue
+                .enqueue(
+                    &EnqueueJob {
+                        job_type: JobType::FtsIntegrity,
+                        project_id: None,
+                        payload: serde_json::json!({}),
+                        dedupe_key: "crashed".to_owned(),
+                        max_attempts: 3,
+                    },
+                    0,
+                )
+                .expect("enqueue");
+            queue.claim_due(1).expect("claim").expect("running job");
+            job.id
+        };
+
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+
+        let recovered = client
+            .get_job(&crashed_id)
+            .await
+            .expect("get job")
+            .expect("job survives restart");
+        assert_eq!(
+            recovered.status,
+            JobStatus::Pending,
+            "spec 27.5: a running row after restart means a crash and is reset"
+        );
+        assert_eq!(recovered.attempts, 1, "the consumed attempt is kept");
 
         client.shutdown().await.expect("shutdown request");
         drop(shutdown_sender);

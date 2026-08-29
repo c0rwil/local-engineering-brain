@@ -27,6 +27,24 @@ background_concurrency = 2
 rss_soft_limit_mb = 600
 rss_hard_limit_mb = 900
 
+[jobs]
+# Durable daemon-owned background jobs over the canonical `jobs` table.
+# The daemon is the only executor: a single loop polls on a fixed interval,
+# runs at most `daemon.background_concurrency` jobs at once, and starts no new
+# job under hard RSS pressure. `consolidation_gc` and `fts_integrity`
+# self-enqueue daily (dedupe-keyed by day); `semantic_rebuild` and
+# `evidence_reverify` are enqueued on demand (`leb jobs enqueue ...`).
+# Note: `evidence_reverify` never re-executes stored commands - repository-
+# supplied commands are untrusted (spec 26.4); it only marks stale evidence.
+enabled = true
+poll_interval_ms = 5000
+# Failing jobs retry with exponential backoff recorded in the row, then die.
+# Allowed range: 1..=20.
+max_attempts = 5
+# context_runs/context_items older than this are deleted by the daily
+# consolidation_gc job in bounded batches. Allowed range: 1..=3650 days.
+context_run_retention_days = 90
+
 [semantic]
 # Bounds for the derived vector sidecar; the embedding dimension is a
 # compile-time constant. The sidecar is rebuildable: `leb semantic rebuild .`
