@@ -109,6 +109,24 @@ impl ContextCompiler {
         }
     }
 
+    /// Compile with the optional deterministic semantic retrieval stage
+    /// enabled. [`Self::new`] keeps semantic scoring at exactly `0.0` so
+    /// ablation controls stay valid.
+    #[must_use]
+    pub fn with_semantic(
+        database: Database,
+        max_tokens: u32,
+        stable_prefix_tokens: u32,
+        options: crate::semantic::SemanticOptions,
+    ) -> Self {
+        Self {
+            retriever: Retriever::with_semantic(database.clone(), options),
+            database,
+            max_tokens,
+            stable_prefix_tokens,
+        }
+    }
+
     /// Compile deterministic project context within a hard token budget.
     ///
     /// `Off` mode records the paired control request but performs no retrieval

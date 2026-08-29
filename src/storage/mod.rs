@@ -37,9 +37,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "blob_store",
         include_str!("migrations/0005_blob_store.sql"),
     ),
+    (
+        6,
+        "semantic_index",
+        include_str!("migrations/0006_semantic_index.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 5;
+pub const LATEST_MIGRATION_VERSION: i64 = 6;
 
 /// Reopenable handle to the canonical database.
 ///

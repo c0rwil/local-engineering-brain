@@ -25,6 +25,7 @@ pub mod proxy;
 pub mod retrieval;
 pub mod scheduler;
 pub mod security;
+pub mod semantic;
 pub mod storage;
 pub mod world;
 

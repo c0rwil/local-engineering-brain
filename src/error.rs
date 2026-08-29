@@ -18,6 +18,9 @@ pub enum Error {
     #[error("structural analysis failed: {0}")]
     Structural(String),
 
+    #[error("semantic index error: {0}")]
+    Semantic(String),
+
     #[error("event `{0}` already exists with different content")]
     DuplicateEvent(String),
 

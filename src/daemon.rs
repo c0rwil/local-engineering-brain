@@ -48,6 +48,7 @@ use crate::memory::{EpistemicState, MemoryDraft, MemoryRecord, MemoryStore};
 use crate::projects::{ProjectRegistry, ResolvedProject};
 use crate::scheduler::{MutationPriority, MutationScheduler, SchedulerStats};
 use crate::security::Redactor;
+use crate::semantic::{SemanticOptions, SqliteVectorIndex, VectorIndex as _};
 use crate::storage::{Database, IntegrityReport, ReadPoolStats};
 use crate::world::{
     GitHistory, GitIngestReport, GraphNode, GraphSlice, GraphifyProvider, IndexReport,
@@ -73,6 +74,7 @@ const API_PAST_FAILURES: &str = "/api/v1/experience/failures";
 const API_BACKUP_CREATE: &str = "/api/v1/admin/backups";
 const API_BACKUP_VERIFY: &str = "/api/v1/admin/backups/verify";
 const API_PROJECT_EXPORT: &str = "/api/v1/admin/export";
+const API_SEMANTIC_REBUILD: &str = "/api/v1/semantic/rebuild";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -342,6 +344,18 @@ pub struct BackupVerifyRequest {
 pub struct ProjectExportRequest {
     pub project_id: ProjectId,
     pub destination: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SemanticRebuildRequest {
+    pub project_id: ProjectId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SemanticRebuildResponse {
+    pub project_id: ProjectId,
+    /// Number of derived vectors rewritten from canonical memories.
+    pub vectors: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -807,6 +821,19 @@ impl DaemonClient {
             .await
     }
 
+    /// Rebuild the derived semantic vector sidecar from canonical memories.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport, overload, or canonical storage errors.
+    pub async fn rebuild_semantic_index(
+        &self,
+        request: &SemanticRebuildRequest,
+    ) -> Result<SemanticRebuildResponse> {
+        self.request(hyper::Method::POST, API_SEMANTIC_REBUILD, Some(request))
+            .await
+    }
+
     async fn request<B, R>(&self, method: hyper::Method, path: &str, body: Option<&B>) -> Result<R>
     where
         B: Serialize + ?Sized,
@@ -888,6 +915,7 @@ fn requires_terminal_ack(method: &hyper::Method, path: &str) -> bool {
         || path == API_LEARNING_DISTILL
         || path == API_BACKUP_CREATE
         || path == API_PROJECT_EXPORT
+        || path == API_SEMANTIC_REBUILD
 }
 
 /// Serve the local API until `shutdown` resolves.
@@ -961,6 +989,7 @@ where
         .route(API_PAST_FAILURES, post(past_failures))
         .route(API_EVALUATION_RUNS, post(record_evaluation))
         .route(API_LEARNING_DISTILL, post(distill))
+        .route(API_SEMANTIC_REBUILD, post(rebuild_semantic_index))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -1389,7 +1418,24 @@ async fn compile_context(
                     .min(state.config.context.stable_prefix_tokens)
                     .min(max_tokens)
             });
-    let compiler = ContextCompiler::new(state.database.clone(), max_tokens, stable_tokens);
+    let semantic_enabled = scoped
+        .as_ref()
+        .map_or(state.config.context.semantic_retrieval, |config| {
+            config.context.semantic_retrieval
+        });
+    let compiler = if semantic_enabled {
+        let semantic = scoped
+            .as_ref()
+            .map_or(&state.config.semantic, |config| &config.semantic);
+        ContextCompiler::with_semantic(
+            state.database.clone(),
+            max_tokens,
+            stable_tokens,
+            semantic_options(semantic),
+        )
+    } else {
+        ContextCompiler::new(state.database.clone(), max_tokens, stable_tokens)
+    };
     let prepare_compiler = compiler.clone();
     let prepared = run_blocking(&state, move || prepare_compiler.prepare(&request)).await?;
     let handle = state
@@ -1399,6 +1445,36 @@ async fn compile_context(
         })
         .map_err(|error| ApiError::from_core(&error))?;
     Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
+fn semantic_options(config: &crate::config::SemanticConfig) -> SemanticOptions {
+    SemanticOptions {
+        max_candidates: usize::try_from(config.max_candidates).unwrap_or(usize::MAX),
+        max_scanned: usize::try_from(config.max_scanned).unwrap_or(usize::MAX),
+    }
+}
+
+async fn rebuild_semantic_index(
+    State(state): State<DaemonState>,
+    Json(request): Json<SemanticRebuildRequest>,
+) -> std::result::Result<Json<SemanticRebuildResponse>, ApiError> {
+    admit_work(&state, MutationPriority::BackgroundLearning)?;
+    let project_id = request.project_id.clone();
+    let index = SqliteVectorIndex::new(
+        state.database.clone(),
+        usize::try_from(state.config.semantic.max_scanned).unwrap_or(usize::MAX),
+    );
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::BackgroundLearning, move || {
+            index.rebuild(Some(&request.project_id))
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    let vectors = wait_for_mutation(&state, handle).await?;
+    Ok(Json(SemanticRebuildResponse {
+        project_id,
+        vectors,
+    }))
 }
 
 fn scoped_config(state: &DaemonState, root: &Path) -> Result<Config> {
@@ -2198,6 +2274,93 @@ mod tests {
         drop(shutdown_sender);
         server.await.expect("server task").expect("server result");
         assert!(!socket_path.exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn semantic_rebuild_and_scoped_semantic_context_compile_work() {
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(project.join(".leb")).expect("project dir");
+        std::fs::write(
+            project.join(".leb/config.toml"),
+            "[context]\nsemantic_retrieval = true\n",
+        )
+        .expect("project config");
+        let config = test_config(&temp);
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+
+        let status = client.resolve_project(&project).await.expect("resolve");
+        let project_id = status.resolved.project.id.clone();
+        let memory = client
+            .create_memory(&MemoryCreateRequest {
+                project_id: project_id.clone(),
+                memory: MemoryDraft {
+                    scope_type: "project".to_owned(),
+                    scope_id: project_id.to_string(),
+                    kind: "lesson".to_owned(),
+                    claim: "Engine cleanup must release reservations".to_owned(),
+                    rationale: "Explicitly approved local rule".to_owned(),
+                    confidence: 0.5,
+                    importance: 0.9,
+                    tags: vec!["cleanup".to_owned()],
+                    valid_from_commit: None,
+                    valid_to_commit: None,
+                    trust_source: "human_instruction".to_owned(),
+                    evidence_ids: Vec::new(),
+                    source_task_ids: Vec::new(),
+                    node_ids: Vec::new(),
+                },
+            })
+            .await
+            .expect("create memory");
+        client
+            .promote_memory(
+                &memory.id,
+                &MemoryPromoteRequest {
+                    target: EpistemicState::Validated,
+                    human_override: true,
+                },
+            )
+            .await
+            .expect("human validation");
+
+        let rebuilt = client
+            .rebuild_semantic_index(&SemanticRebuildRequest {
+                project_id: project_id.clone(),
+            })
+            .await
+            .expect("semantic rebuild");
+        assert_eq!(rebuilt.vectors, 1);
+        assert_eq!(rebuilt.project_id, project_id);
+
+        let compiled = client
+            .compile_context(&ContextCompileRequest {
+                request_id: "daemon-semantic-context".to_owned(),
+                project_id,
+                task_text: "engine cleanup must release reservations".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 400,
+                mode: crate::context::ContextMode::Brain,
+                repository_root: Some(project.clone()),
+                head: None,
+            })
+            .await
+            .expect("semantic context compile");
+        assert_eq!(compiled.items.len(), 1);
+        assert!(
+            compiled.items[0].why.semantic > 0.0,
+            "project-scoped semantic retrieval must populate the semantic score"
+        );
+
+        client.shutdown().await.expect("shutdown request");
+        drop(shutdown_sender);
+        server.await.expect("server task").expect("server result");
     }
 
     #[tokio::test]
