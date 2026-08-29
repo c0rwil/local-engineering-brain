@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,7 +13,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use moka::sync::Cache;
 use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
 
 use crate::config::{Config, ConfigOverrides, ProxyFailureMode};
 use crate::context::{ContextCompileRequest, ContextMode};
@@ -23,15 +25,72 @@ use crate::ids::ProjectId;
 use crate::metrics::ProxyMetrics;
 use crate::projects::GitState;
 
+const SESSION_INJECTION_CACHE_BYTES: u64 = 8 * 1_024 * 1_024;
+
 #[derive(Clone)]
 struct ProxyState {
     config: Arc<Config>,
     daemon: DaemonClient,
     runtime: reqwest::Client,
     runtime_base: String,
+    /// Byte-bounded process-local snapshot of the first compiled LEB block in
+    /// each Claude Code session. Canonical memory remains daemon-owned.
+    session_injections: Cache<SessionInjectionKey, CachedInjection>,
     /// Process-lifetime outcome counters; the proxy runs in its own process,
     /// so it serves them itself from `GET /leb/metrics` on this listener.
     metrics: Arc<ProxyMetrics>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct SessionInjectionKey {
+    session_id: String,
+    project_id: String,
+    token_budget: u32,
+}
+
+#[derive(Clone, Debug)]
+struct CachedInjection {
+    content: Arc<str>,
+    sha256: String,
+    bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SessionCacheStatus {
+    Disabled,
+    Hit,
+    Miss,
+}
+
+impl SessionCacheStatus {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Hit => "hit",
+            Self::Miss => "miss",
+        }
+    }
+
+    const fn hit(self) -> Option<bool> {
+        match self {
+            Self::Disabled => None,
+            Self::Hit => Some(true),
+            Self::Miss => Some(false),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct InjectionTelemetry {
+    sha256: String,
+    bytes: u64,
+    session_cache: SessionCacheStatus,
+}
+
+#[derive(Debug)]
+enum Augmentation {
+    Forwarded,
+    Injected(InjectionTelemetry),
 }
 
 #[derive(Debug)]
@@ -108,6 +167,12 @@ where
         .connect_timeout(Duration::from_secs(5))
         .build()
         .map_err(|error| Error::Daemon(format!("could not build runtime client: {error}")))?;
+    let session_injections = Cache::builder()
+        .max_capacity(SESSION_INJECTION_CACHE_BYTES)
+        .weigher(|_key: &SessionInjectionKey, value: &CachedInjection| {
+            u32::try_from(value.content.len()).unwrap_or(u32::MAX)
+        })
+        .build();
     let state = ProxyState {
         daemon: DaemonClient::new(
             &config.daemon.socket_path,
@@ -115,6 +180,7 @@ where
         ),
         runtime,
         runtime_base: config.proxy.runtime_url.trim_end_matches('/').to_owned(),
+        session_injections,
         config: Arc::new(config),
         metrics: Arc::new(ProxyMetrics::default()),
     };
@@ -183,9 +249,10 @@ async fn proxy_request(
     flavor: ApiFlavor,
     runtime_path: &str,
 ) -> std::result::Result<Response, ProxyError> {
-    // `Some(injected)` when augmentation ran; `None` when it degraded open.
-    let injected = match augment_request(state, headers, body, flavor).await {
-        Ok(injected) => Some(injected),
+    // `Some(augmentation)` when augmentation was available; `None` when it
+    // degraded open.
+    let augmentation = match augment_request(state, headers, body, flavor).await {
+        Ok(augmentation) => Some(augmentation),
         Err(error)
             if error.degradable
                 && state.config.proxy.failure_mode == ProxyFailureMode::FailOpen =>
@@ -204,7 +271,7 @@ async fn proxy_request(
             return Err(error);
         }
     };
-    match injected {
+    match augmentation {
         None => {
             state.metrics.count_degraded();
             response.headers_mut().insert(
@@ -212,50 +279,43 @@ async fn proxy_request(
                 axum::http::HeaderValue::from_static("context_unavailable"),
             );
         }
-        Some(true) => state.metrics.count_injected(),
-        Some(false) => state.metrics.count_forwarded(),
+        Some(Augmentation::Injected(telemetry)) => {
+            state
+                .metrics
+                .count_injected(telemetry.bytes, telemetry.session_cache.hit());
+            insert_injection_telemetry(&mut response, &telemetry)?;
+        }
+        Some(Augmentation::Forwarded) => state.metrics.count_forwarded(),
     }
     Ok(response)
 }
 
-/// Compile and inject bounded context; `Ok(true)` means content was injected.
-async fn augment_request(
+fn insert_injection_telemetry(
+    response: &mut Response,
+    telemetry: &InjectionTelemetry,
+) -> std::result::Result<(), ProxyError> {
+    let bytes = telemetry.bytes.to_string();
+    for (name, value) in [
+        ("x-leb-injection-sha256", telemetry.sha256.as_str()),
+        ("x-leb-injection-bytes", bytes.as_str()),
+        ("x-leb-session-cache", telemetry.session_cache.as_str()),
+    ] {
+        let value = axum::http::HeaderValue::from_str(value).map_err(|error| {
+            ProxyError::upstream(format!("invalid injection telemetry header: {error}"))
+        })?;
+        response.headers_mut().insert(name, value);
+    }
+    Ok(())
+}
+
+/// Resolve the effective injection budget: an explicit header wins, otherwise
+/// the project-scoped configured budget capped by the proxy's own ceiling.
+fn resolve_token_budget(
     state: &ProxyState,
     headers: &HeaderMap,
-    body: &mut Value,
-    flavor: ApiFlavor,
-) -> std::result::Result<bool, ProxyError> {
-    let mode = match header_text(headers, "x-leb-mode")? {
-        None | Some("brain" | "on") => ContextMode::Brain,
-        Some("off") => ContextMode::Off,
-        Some(other) => {
-            return Err(ProxyError::bad_request(format!(
-                "unsupported x-leb-mode `{other}`"
-            )));
-        }
-    };
-    if mode == ContextMode::Off && !has_project_scope(headers) {
-        return Ok(false);
-    }
-    let current_paths = header_text(headers, "x-leb-current-paths")?
-        .map(|paths| {
-            paths
-                .split(',')
-                .map(str::trim)
-                .filter(|path| !path.is_empty())
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let (project_id, root, head) = resolve_scope(state, headers, mode, &current_paths).await?;
-    let Some(task_text) = extract_task(body, flavor)? else {
-        // No user turn carries text (a degenerate but protocol-valid
-        // conversation): there is no task to compile context for, so forward
-        // the request unchanged in either mode.
-        return Ok(false);
-    };
+    root: Option<&Path>,
+) -> std::result::Result<u32, ProxyError> {
     let default_token_budget = root
-        .as_deref()
         .map(|root| {
             Config::load_for(
                 Some(root),
@@ -273,11 +333,61 @@ async fn augment_request(
                 .max_injected_tokens
                 .min(state.config.context.max_injected_tokens)
         });
-    let token_budget = header_text(headers, "x-leb-token-budget")?
+    header_text(headers, "x-leb-token-budget")?
         .map(str::parse::<u32>)
         .transpose()
-        .map_err(|_| ProxyError::bad_request("x-leb-token-budget must be an integer"))?
-        .unwrap_or(default_token_budget);
+        .map_err(|_| ProxyError::bad_request("x-leb-token-budget must be an integer"))
+        .map(|budget| budget.unwrap_or(default_token_budget))
+}
+
+/// Compile and inject bounded context.
+async fn augment_request(
+    state: &ProxyState,
+    headers: &HeaderMap,
+    body: &mut Value,
+    flavor: ApiFlavor,
+) -> std::result::Result<Augmentation, ProxyError> {
+    let mode = match header_text(headers, "x-leb-mode")? {
+        None | Some("brain" | "on") => ContextMode::Brain,
+        Some("off") => ContextMode::Off,
+        Some(other) => {
+            return Err(ProxyError::bad_request(format!(
+                "unsupported x-leb-mode `{other}`"
+            )));
+        }
+    };
+    if mode == ContextMode::Off && !has_project_scope(headers) {
+        return Ok(Augmentation::Forwarded);
+    }
+    let current_paths = header_text(headers, "x-leb-current-paths")?
+        .map(|paths| {
+            paths
+                .split(',')
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let (project_id, root, head) = resolve_scope(state, headers, mode, &current_paths).await?;
+    let Some(task_text) = extract_task(body, flavor)? else {
+        // No user turn carries text (a degenerate but protocol-valid
+        // conversation): there is no task to compile context for, so forward
+        // the request unchanged in either mode.
+        return Ok(Augmentation::Forwarded);
+    };
+    let token_budget = resolve_token_budget(state, headers, root.as_deref())?;
+    let session_key = session_injection_key(headers, mode, &project_id, token_budget)?;
+    if let Some(key) = &session_key
+        && let Some(cached) = state.session_injections.get(key)
+    {
+        inject_for_flavor(body, flavor, &cached.content)?;
+        return Ok(Augmentation::Injected(InjectionTelemetry {
+            sha256: cached.sha256,
+            bytes: cached.bytes,
+            session_cache: SessionCacheStatus::Hit,
+        }));
+    }
     let request_id = header_text(headers, "x-request-id")?
         .map_or_else(|| format!("proxy_{}", uuid::Uuid::new_v4()), str::to_owned);
     let context = state
@@ -296,17 +406,44 @@ async fn augment_request(
         .await
         .map_err(|error| ProxyError::upstream(format!("context compilation failed: {error}")))?;
     if mode == ContextMode::Off {
-        return Ok(false);
+        return Ok(Augmentation::Forwarded);
     }
     let injected = format!("{}{}", context.stable_prefix, context.dynamic_context);
     if injected.is_empty() {
-        return Ok(false);
+        return Ok(Augmentation::Forwarded);
     }
+    inject_for_flavor(body, flavor, &injected)?;
+    let bytes = u64::try_from(injected.len()).unwrap_or(u64::MAX);
+    let sha256 = sha256(injected.as_bytes());
+    let session_cache = if let Some(key) = session_key {
+        state.session_injections.insert(
+            key,
+            CachedInjection {
+                content: Arc::from(injected),
+                sha256: sha256.clone(),
+                bytes,
+            },
+        );
+        SessionCacheStatus::Miss
+    } else {
+        SessionCacheStatus::Disabled
+    };
+    Ok(Augmentation::Injected(InjectionTelemetry {
+        sha256,
+        bytes,
+        session_cache,
+    }))
+}
+
+fn inject_for_flavor(
+    body: &mut Value,
+    flavor: ApiFlavor,
+    context: &str,
+) -> std::result::Result<(), ProxyError> {
     match flavor {
-        ApiFlavor::OpenAi => inject_openai(body, &injected)?,
-        ApiFlavor::Anthropic => inject_anthropic(body, &injected)?,
+        ApiFlavor::OpenAi => inject_openai(body, context),
+        ApiFlavor::Anthropic => inject_anthropic(body, context),
     }
-    Ok(true)
 }
 
 async fn resolve_scope(
@@ -434,18 +571,25 @@ fn inject_anthropic(body: &mut Value, context: &str) -> std::result::Result<(), 
     let object = body
         .as_object_mut()
         .ok_or_else(|| ProxyError::bad_request("request body must be an object"))?;
+    let context_block = || json!({"type": "text", "text": context});
     match object.remove("system") {
         None => {
-            object.insert("system".to_owned(), Value::String(context.to_owned()));
+            object.insert("system".to_owned(), Value::Array(vec![context_block()]));
         }
         Some(Value::String(existing)) => {
             object.insert(
                 "system".to_owned(),
-                Value::String(format!("{context}\n{existing}")),
+                Value::Array(vec![
+                    json!({"type": "text", "text": existing}),
+                    context_block(),
+                ]),
             );
         }
         Some(Value::Array(mut blocks)) => {
-            blocks.insert(0, json!({"type": "text", "text": context}));
+            // Claude gateways assign protocol and cache semantics to the
+            // caller's leading blocks. Preserve their content and ordering,
+            // then append LEB as an independent block.
+            blocks.push(context_block());
             object.insert("system".to_owned(), Value::Array(blocks));
         }
         Some(_) => {
@@ -508,6 +652,33 @@ fn has_project_scope(headers: &HeaderMap) -> bool {
     headers.contains_key("x-leb-project-path") || headers.contains_key("x-leb-project-id")
 }
 
+fn session_injection_key(
+    headers: &HeaderMap,
+    mode: ContextMode,
+    project_id: &ProjectId,
+    token_budget: u32,
+) -> std::result::Result<Option<SessionInjectionKey>, ProxyError> {
+    if mode == ContextMode::Off {
+        return Ok(None);
+    }
+    let Some(session_id) = header_text(headers, "x-claude-code-session-id")? else {
+        return Ok(None);
+    };
+    if session_id.is_empty()
+        || session_id.len() > 256
+        || !session_id.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        return Err(ProxyError::bad_request(
+            "x-claude-code-session-id must be 1..=256 visible ASCII bytes",
+        ));
+    }
+    Ok(Some(SessionInjectionKey {
+        session_id: session_id.to_owned(),
+        project_id: project_id.to_string(),
+        token_budget,
+    }))
+}
+
 fn header_text<'a>(
     headers: &'a HeaderMap,
     name: &str,
@@ -537,6 +708,16 @@ fn is_hop_or_leb_header(name: &str) -> bool {
                 | "transfer-encoding"
                 | "upgrade"
         )
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
 }
 
 #[cfg(test)]
@@ -580,14 +761,45 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_injection_preserves_existing_system_blocks() {
+    fn anthropic_injection_preserves_system_prefix_order_and_cache_control() {
         let mut body = json!({
-            "system": [{"type": "text", "text": "existing"}],
+            "system": [
+                {
+                    "type": "text",
+                    "text": "Claude Code attribution",
+                    "cache_control": {"type": "ephemeral"}
+                },
+                {"type": "text", "text": "existing instructions"}
+            ],
+            "messages": [{"role": "user", "content": "fix it"}]
+        });
+        let original = body["system"].clone();
+        inject_anthropic(&mut body, "leb").expect("inject");
+        let system = body["system"].as_array().expect("system blocks");
+        assert_eq!(
+            &system[..original.as_array().expect("original").len()],
+            original.as_array().expect("original")
+        );
+        assert_eq!(system[0]["text"], "Claude Code attribution");
+        assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(system[1]["text"], "existing instructions");
+        assert_eq!(system[2], json!({"type": "text", "text": "leb"}));
+    }
+
+    #[test]
+    fn anthropic_injection_appends_after_string_system() {
+        let mut body = json!({
+            "system": "existing instructions",
             "messages": [{"role": "user", "content": "fix it"}]
         });
         inject_anthropic(&mut body, "leb").expect("inject");
-        assert_eq!(body["system"][0]["text"], "leb");
-        assert_eq!(body["system"][1]["text"], "existing");
+        assert_eq!(
+            body["system"],
+            json!([
+                {"type": "text", "text": "existing instructions"},
+                {"type": "text", "text": "leb"}
+            ])
+        );
     }
 
     #[test]
@@ -634,6 +846,130 @@ mod tests {
             extract_task(&no_text, ApiFlavor::Anthropic).expect("none"),
             None
         );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn anthropic_off_mode_preserves_auth_tools_and_streaming_content() {
+        let temp = TempDir::new().expect("temp");
+        let captured = Arc::new(Mutex::new(None::<(HeaderMap, Value)>));
+        let runtime_capture = Arc::clone(&captured);
+        let stream = concat!(
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"name\":\"read_file\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"src/lib.rs\\\"}\"}}\n\n",
+        );
+        let runtime_router = Router::new().route(
+            "/v1/messages",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let capture = Arc::clone(&runtime_capture);
+                async move {
+                    *capture.lock().expect("capture lock") = Some((headers, body));
+                    (
+                        StatusCode::OK,
+                        [("content-type", "text/event-stream")],
+                        stream,
+                    )
+                }
+            }),
+        );
+        let runtime_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("runtime bind");
+        let runtime_address = runtime_listener.local_addr().expect("runtime address");
+        let (runtime_stop_tx, runtime_stop_rx) = oneshot::channel::<()>();
+        let runtime_server = tokio::spawn(async move {
+            axum::serve(runtime_listener, runtime_router)
+                .with_graceful_shutdown(async move {
+                    let _ = runtime_stop_rx.await;
+                })
+                .await
+                .expect("runtime server");
+        });
+
+        let mut config = Config::default();
+        config.storage.db_path = temp.path().join("brain.sqlite");
+        config.daemon.socket_path = temp.path().join("lebd.sock");
+        config.proxy.runtime_url = format!("http://{runtime_address}");
+        let proxy_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("proxy bind");
+        let proxy_address = proxy_listener.local_addr().expect("proxy address");
+        let (proxy_stop_tx, proxy_stop_rx) = oneshot::channel::<()>();
+        let proxy_server = tokio::spawn(serve_on_listener(config, proxy_listener, async move {
+            let _ = proxy_stop_rx.await;
+        }));
+
+        let request = json!({
+            "model": "frontier-test",
+            "max_tokens": 128,
+            "stream": true,
+            "system": [{"type": "text", "text": "keep this system block exact"}],
+            "messages": [
+                {"role": "user", "content": "inspect the file"},
+                {"role": "assistant", "content": [{
+                    "type": "tool_use",
+                    "id": "tool_1",
+                    "name": "read_file",
+                    "input": {"path": "src/lib.rs"}
+                }]},
+                {"role": "user", "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "tool_1",
+                    "content": "pub fn answer() -> u8 { 42 }"
+                }]}
+            ],
+            "tools": [{
+                "name": "read_file",
+                "description": "Read one file",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"]
+                }
+            }]
+        });
+        let response = reqwest::Client::new()
+            .post(format!("http://{proxy_address}/v1/messages"))
+            .header("authorization", "Bearer frontier-test")
+            .header("x-api-key", "key-test")
+            .header("anthropic-version", "2023-06-01")
+            .header("anthropic-beta", "tools-test")
+            .header("x-leb-mode", "off")
+            .header("x-leb-private-control", "must-not-leak")
+            .header("connection", "close")
+            .json(&request)
+            .send()
+            .await
+            .expect("proxy request");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .expect("content type"),
+            "text/event-stream"
+        );
+        assert_eq!(response.text().await.expect("stream body"), stream);
+
+        {
+            let captured = captured.lock().expect("capture lock");
+            let (headers, body) = captured.as_ref().expect("runtime capture");
+            assert_eq!(body, &request, "off mode must preserve request semantics");
+            assert_eq!(headers["authorization"], "Bearer frontier-test");
+            assert_eq!(headers["x-api-key"], "key-test");
+            assert_eq!(headers["anthropic-version"], "2023-06-01");
+            assert_eq!(headers["anthropic-beta"], "tools-test");
+            assert!(!headers.contains_key("x-leb-mode"));
+            assert!(!headers.contains_key("x-leb-private-control"));
+            assert!(!headers.contains_key("connection"));
+        }
+
+        proxy_stop_tx.send(()).expect("proxy stop");
+        runtime_stop_tx.send(()).expect("runtime stop");
+        proxy_server.await.expect("proxy task").expect("proxy");
+        runtime_server.await.expect("runtime task");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -749,6 +1085,7 @@ mod tests {
             .post(format!("http://{proxy_address}/v1/chat/completions"))
             .header("x-leb-project-path", project.to_string_lossy().as_ref())
             .header("x-leb-mode", "brain")
+            .header("x-claude-code-session-id", "session-stable-1")
             .header("authorization", "Bearer local-test")
             .json(&request)
             .send()
@@ -766,24 +1103,61 @@ mod tests {
                 .expect("request id"),
             "runtime-123"
         );
+        assert_eq!(response.headers()["x-leb-session-cache"], "miss");
+        let injection_hash = response.headers()["x-leb-injection-sha256"].clone();
+        let injection_bytes = response.headers()["x-leb-injection-bytes"].clone();
         assert_eq!(
             response.text().await.expect("stream body"),
             "data: {\"delta\":\"ok\"}\n\ndata: [DONE]\n\n"
         );
 
-        reqwest::Client::new()
+        let followup_request = json!({
+            "model": "local",
+            "stream": true,
+            "messages": [{"role": "user", "content": "now inspect a different file"}],
+            "tools": [{"type": "function", "function": {"name": "list_files"}}]
+        });
+        let followup = reqwest::Client::new()
+            .post(format!("http://{proxy_address}/v1/chat/completions"))
+            .header("x-leb-project-path", project.to_string_lossy().as_ref())
+            .header("x-leb-mode", "brain")
+            .header("x-claude-code-session-id", "session-stable-1")
+            .json(&followup_request)
+            .send()
+            .await
+            .expect("follow-up request");
+        assert_eq!(followup.status(), StatusCode::OK);
+        assert_eq!(followup.headers()["x-leb-session-cache"], "hit");
+        assert_eq!(followup.headers()["x-leb-injection-sha256"], injection_hash);
+        assert_eq!(followup.headers()["x-leb-injection-bytes"], injection_bytes);
+        let _ = followup.text().await.expect("follow-up body");
+
+        let off = reqwest::Client::new()
             .post(format!("http://{proxy_address}/v1/chat/completions"))
             .header("x-leb-mode", "off")
+            .header("x-claude-code-session-id", "session-stable-1")
             .json(&request)
             .send()
             .await
             .expect("off request");
+        assert_eq!(off.status(), StatusCode::OK);
+        assert!(!off.headers().contains_key("x-leb-session-cache"));
+        let _ = off.text().await.expect("off response body");
         {
             let captured = captured.lock().expect("capture lock");
-            assert_eq!(captured.len(), 2);
+            assert_eq!(captured.len(), 3);
             assert_eq!(captured[0].1["tools"], request["tools"]);
             assert_eq!(captured[0].1["messages"][0]["role"], "system");
-            assert_eq!(captured[1].1, request);
+            assert_eq!(
+                captured[0].1["messages"][0], captured[1].1["messages"][0],
+                "session turns must reuse byte-identical injected context"
+            );
+            assert_eq!(captured[1].1["tools"], followup_request["tools"]);
+            assert_eq!(
+                captured[1].1["messages"][1],
+                followup_request["messages"][0]
+            );
+            assert_eq!(captured[2].1, request);
             assert!(!captured[0].0.contains_key("x-leb-project-path"));
         }
 
@@ -804,7 +1178,7 @@ mod tests {
         );
         let _ = degraded.text().await.expect("degraded response body");
         assert_eq!(
-            captured.lock().expect("capture lock")[2].1,
+            captured.lock().expect("capture lock")[3].1,
             request,
             "fail-open must forward the original semantic request"
         );
@@ -817,7 +1191,9 @@ mod tests {
             .json()
             .await
             .expect("proxy metrics body");
-        assert_eq!(outcomes.injected, 1, "{outcomes:?}");
+        assert_eq!(outcomes.injected, 2, "{outcomes:?}");
+        assert_eq!(outcomes.session_cache_misses, 1, "{outcomes:?}");
+        assert_eq!(outcomes.session_cache_hits, 1, "{outcomes:?}");
         assert_eq!(outcomes.forwarded, 1, "{outcomes:?}");
         assert_eq!(outcomes.degraded, 1, "{outcomes:?}");
         assert_eq!(outcomes.refused, 0, "{outcomes:?}");

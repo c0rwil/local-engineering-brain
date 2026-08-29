@@ -11,4 +11,7 @@ and wall limit, and retain per-arm artifacts. Freeze one verified standalone bra
 empty migrated baseline), copy it separately for every arm, and assign distinct database, Unix
 socket, state-root, and proxy-port environment values. Include the snapshot digest in the effective
 configuration hash. Launch commands in isolated process groups and terminate descendants after each
-phase. Reports expose raw JSONL and do not reinterpret failed targets after the fact.
+phase. The default command environment contains no API credentials. An explicit names-only
+`pass_env` may copy only approved Anthropic credential variables into the agent phase, identically
+for both arms; values are required at launch and never enter reports. Reports expose raw JSONL and
+do not reinterpret failed targets after the fact.
