@@ -31,6 +31,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+use crate::cache::{CacheStats, PartitionedCache};
 use crate::config::{Config, ConfigOverrides};
 use crate::context::{CompiledContext, ContextCompileRequest, ContextCompiler, ContextItem};
 use crate::doctor::DoctorReport;
@@ -81,8 +82,98 @@ struct DaemonState {
     scheduler: MutationScheduler,
     blocking_slots: Arc<Semaphore>,
     background_slots: Arc<Semaphore>,
+    world_cache: Option<Arc<WorldReadCache>>,
     shutdown: Arc<tokio::sync::Notify>,
     started: Instant,
+}
+
+/// Bounded derived cache over graph read endpoints. Values are never
+/// canonical: keys carry a per-project generation that graph mutations bump
+/// before their response returns, so a stale entry can never be served after
+/// the write that superseded it completes.
+struct WorldReadCache {
+    search: PartitionedCache<(String, usize), Vec<GraphNode>>,
+    neighbors: PartitionedCache<(NodeId, usize, usize), GraphSlice>,
+    generations: std::sync::Mutex<std::collections::HashMap<ProjectId, u64>>,
+    hits: std::sync::atomic::AtomicU64,
+    misses: std::sync::atomic::AtomicU64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorldCacheHealth {
+    pub search: CacheStats,
+    pub neighbors: CacheStats,
+    pub hits: u64,
+    pub misses: u64,
+}
+
+impl WorldReadCache {
+    fn from_config(cache: &crate::config::CacheConfig) -> Option<Arc<Self>> {
+        if !cache.enabled {
+            return None;
+        }
+        // Each endpoint cache receives half of the configured global budget.
+        let half_budget = cache.total_budget_mb.saturating_mul(1024 * 1024) / 2;
+        let projects = usize::from(cache.max_active_projects.max(1));
+        let max_item = cache.max_item_kb.saturating_mul(1024);
+        Some(Arc::new(Self {
+            search: PartitionedCache::new(half_budget.max(1), projects, max_item),
+            neighbors: PartitionedCache::new(half_budget.max(1), projects, max_item),
+            generations: std::sync::Mutex::new(std::collections::HashMap::new()),
+            hits: std::sync::atomic::AtomicU64::new(0),
+            misses: std::sync::atomic::AtomicU64::new(0),
+        }))
+    }
+
+    fn generation(&self, project_id: &ProjectId) -> u64 {
+        self.generations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(project_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Invalidate all cached reads for a project by advancing its generation.
+    /// Called after a graph mutation commits and before its response returns.
+    fn bump(&self, project_id: &ProjectId) {
+        let mut generations = self
+            .generations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let entry = generations.entry(project_id.clone()).or_insert(0);
+        *entry = entry.wrapping_add(1);
+        // Superseded generations are unreachable; drop their bytes eagerly so
+        // the partition budget is available to the live generation.
+        self.search.invalidate_project(project_id);
+        self.neighbors.invalidate_project(project_id);
+    }
+
+    fn record_hit(&self) {
+        self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn record_miss(&self) {
+        self.misses
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn health(&self) -> WorldCacheHealth {
+        WorldCacheHealth {
+            search: self.search.stats(),
+            neighbors: self.neighbors.stats(),
+            hits: self.hits.load(std::sync::atomic::Ordering::Relaxed),
+            misses: self.misses.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
+
+/// Estimated resident weight of a cached value, from its serialized size.
+/// Over the item bound (or unserializable) means the value bypasses the cache.
+fn cache_weight<T: Serialize>(value: &T) -> u32 {
+    serde_json::to_vec(value).map_or(u32::MAX, |bytes| {
+        u32::try_from(bytes.len()).unwrap_or(u32::MAX)
+    })
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -108,6 +199,9 @@ pub struct HealthResponse {
     pub rss_soft_limit_bytes: u64,
     pub rss_hard_limit_bytes: u64,
     pub memory_pressure: MemoryPressure,
+    /// Absent when derived caching is disabled or the daemon predates it.
+    #[serde(default)]
+    pub cache: Option<WorldCacheHealth>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -822,6 +916,7 @@ where
         background_slots: Arc::new(Semaphore::new(usize::from(
             config.daemon.background_concurrency,
         ))),
+        world_cache: WorldReadCache::from_config(&config.cache),
         shutdown: Arc::clone(&local_shutdown),
         started: Instant::now(),
     };
@@ -889,6 +984,7 @@ async fn health(State(state): State<DaemonState>) -> Json<HealthResponse> {
         rss_soft_limit_bytes: soft,
         rss_hard_limit_bytes: hard,
         memory_pressure: classify_memory_pressure(rss_bytes, soft, hard),
+        cache: state.world_cache.as_ref().map(|cache| cache.health()),
     })
 }
 
@@ -1121,6 +1217,9 @@ async fn index_project(
         })
         .map_err(|error| ApiError::from_core(&error))?;
     let (index, git, invalidated_memories) = wait_for_mutation(&state, apply).await?;
+    if let Some(cache) = &state.world_cache {
+        cache.bump(&resolved.project.id);
+    }
     Ok(Json(ProjectIndexResponse {
         resolved,
         index,
@@ -1179,11 +1278,31 @@ async fn search_world(
     State(state): State<DaemonState>,
     Json(request): Json<WorldSearchRequest>,
 ) -> std::result::Result<Json<Vec<GraphNode>>, ApiError> {
+    let cache_key = (request.query.clone(), request.limit);
+    let generation = state.world_cache.as_ref().map(|cache| {
+        (
+            cache.generation(&request.project_id),
+            request.project_id.clone(),
+        )
+    });
+    if let (Some(cache), Some((generation, project_id))) = (&state.world_cache, &generation) {
+        if let Some(nodes) = cache.search.get(project_id, *generation, &cache_key) {
+            cache.record_hit();
+            return Ok(Json((*nodes).clone()));
+        }
+        cache.record_miss();
+    }
     let world = WorldModel::new(state.database.clone());
     let nodes = run_blocking(&state, move || {
         world.search_symbols(&request.project_id, &request.query, request.limit)
     })
     .await?;
+    if let (Some(cache), Some((generation, project_id))) = (&state.world_cache, &generation) {
+        let weight = cache_weight(&nodes);
+        cache
+            .search
+            .insert(project_id, *generation, cache_key, nodes.clone(), weight);
+    }
     Ok(Json(nodes))
 }
 
@@ -1191,6 +1310,24 @@ async fn world_neighbors(
     State(state): State<DaemonState>,
     Json(request): Json<WorldNeighborsRequest>,
 ) -> std::result::Result<Json<GraphSlice>, ApiError> {
+    let cache_key = (
+        request.node_id.clone(),
+        request.max_depth,
+        request.max_nodes,
+    );
+    let generation = state.world_cache.as_ref().map(|cache| {
+        (
+            cache.generation(&request.project_id),
+            request.project_id.clone(),
+        )
+    });
+    if let (Some(cache), Some((generation, project_id))) = (&state.world_cache, &generation) {
+        if let Some(slice) = cache.neighbors.get(project_id, *generation, &cache_key) {
+            cache.record_hit();
+            return Ok(Json((*slice).clone()));
+        }
+        cache.record_miss();
+    }
     let world = WorldModel::new(state.database.clone());
     let slice = run_blocking(&state, move || {
         world.neighbors(
@@ -1201,6 +1338,12 @@ async fn world_neighbors(
         )
     })
     .await?;
+    if let (Some(cache), Some((generation, project_id))) = (&state.world_cache, &generation) {
+        let weight = cache_weight(&slice);
+        cache
+            .neighbors
+            .insert(project_id, *generation, cache_key, slice.clone(), weight);
+    }
     Ok(Json(slice))
 }
 
@@ -2043,6 +2186,57 @@ mod tests {
         };
         assert!(error.to_string().contains("non-socket"));
         assert_eq!(std::fs::read(&regular).expect("preserved"), b"keep");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn world_read_cache_serves_hits_and_invalidates_on_reindex() {
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        std::fs::write(project.join("lib.rs"), "pub fn cached_original() {}\n").expect("source");
+
+        let config = test_config(&temp);
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+
+        let indexed = client
+            .index_project_with_provider(&project, None, Some("tree_sitter".to_owned()), None)
+            .await
+            .expect("initial index");
+        let project_id = indexed.resolved.project.id.clone();
+
+        let first = search_labels(&client, &project_id, "cached_original").await;
+        assert_eq!(first, ["cached_original"]);
+        let second = search_labels(&client, &project_id, "cached_original").await;
+        assert_eq!(second, first);
+        let health = client.health().await.expect("health");
+        let cache = health.cache.expect("cache enabled by default");
+        assert!(cache.hits >= 1, "repeat query must hit: {cache:?}");
+        assert!(cache.misses >= 1);
+
+        // A graph mutation must invalidate before its response returns.
+        std::fs::write(project.join("lib.rs"), "pub fn cached_renamed() {}\n").expect("rename");
+        client
+            .index_project_with_provider(&project, None, Some("tree_sitter".to_owned()), None)
+            .await
+            .expect("reindex");
+        assert_eq!(
+            search_labels(&client, &project_id, "cached_original").await,
+            Vec::<String>::new(),
+            "stale cached read survived a reindex"
+        );
+        assert_eq!(
+            search_labels(&client, &project_id, "cached_renamed").await,
+            ["cached_renamed"]
+        );
+
+        drop(shutdown_sender);
+        let _ = server.await;
     }
 
     fn git(path: &Path, arguments: &[&str]) {

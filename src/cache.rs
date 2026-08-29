@@ -8,7 +8,7 @@ use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 
 use moka::sync::Cache;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ids::ProjectId;
 
@@ -36,7 +36,7 @@ pub enum CacheAdmission {
     RejectedUnavailable,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CacheStats {
     pub active_projects: usize,
     pub entries: u64,

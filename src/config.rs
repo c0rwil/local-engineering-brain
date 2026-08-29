@@ -701,8 +701,9 @@ mod tests {
 
         let zero = temp.path().join("zero-cache.toml");
         fs::write(&zero, "[cache]\nenabled = true\ntotal_budget_mb = 0\n").expect("config");
-        let error = Config::load_layers(Some(&zero), None, &ConfigOverrides::default(), temp.path())
-            .expect_err("zero cache budget");
+        let error =
+            Config::load_layers(Some(&zero), None, &ConfigOverrides::default(), temp.path())
+                .expect_err("zero cache budget");
         assert!(error.to_string().contains("positive"));
     }
 
