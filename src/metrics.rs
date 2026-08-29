@@ -160,11 +160,13 @@ pub enum EndpointGroup {
     Experience,
     Learning,
     Semantic,
+    Jobs,
+    Synthesis,
     Other,
 }
 
 impl EndpointGroup {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 12] = [
         Self::Observability,
         Self::Admin,
         Self::Projects,
@@ -174,6 +176,8 @@ impl EndpointGroup {
         Self::Experience,
         Self::Learning,
         Self::Semantic,
+        Self::Jobs,
+        Self::Synthesis,
         Self::Other,
     ];
 
@@ -188,7 +192,9 @@ impl EndpointGroup {
             Self::Experience => 6,
             Self::Learning => 7,
             Self::Semantic => 8,
-            Self::Other => 9,
+            Self::Jobs => 9,
+            Self::Synthesis => 10,
+            Self::Other => 11,
         }
     }
 
@@ -204,6 +210,8 @@ impl EndpointGroup {
             Self::Experience => "experience",
             Self::Learning => "learning",
             Self::Semantic => "semantic",
+            Self::Jobs => "jobs",
+            Self::Synthesis => "synthesis",
             Self::Other => "other",
         }
     }
@@ -235,6 +243,10 @@ impl EndpointGroup {
             Self::Learning
         } else if suffix.starts_with("semantic") {
             Self::Semantic
+        } else if suffix.starts_with("jobs") {
+            Self::Jobs
+        } else if suffix.starts_with("synthesis") {
+            Self::Synthesis
         } else {
             Self::Other
         }
@@ -247,7 +259,7 @@ pub struct MetricsRegistry {
     context_compile_ms: Histogram,
     retrieval_ms: Histogram,
     index_scan_ms: Histogram,
-    request_ms: [Histogram; 10],
+    request_ms: [Histogram; 12],
     context_compiles_brain: AtomicU64,
     context_compiles_off: AtomicU64,
     injected_items: AtomicU64,

@@ -28,6 +28,7 @@ use crate::config::JobsConfig;
 use crate::error::{Error, Result};
 use crate::ids::{JobId, MemoryId, ProjectId};
 use crate::memory::{MemoryStatus, MemoryStore};
+use crate::metrics::MetricsRegistry;
 use crate::scheduler::{MutationPriority, MutationScheduler};
 use crate::security::Redactor;
 use crate::semantic::{SqliteVectorIndex, VectorIndex as _};
@@ -551,6 +552,9 @@ pub struct JobExecutor {
     redactor: Redactor,
     config: JobsConfig,
     semantic_max_scanned: usize,
+    /// Job-driven invalidations count toward the daemon's stale-injection
+    /// signal; absent only in library/test contexts without a registry.
+    metrics: Option<std::sync::Arc<MetricsRegistry>>,
 }
 
 impl JobExecutor {
@@ -561,6 +565,7 @@ impl JobExecutor {
         redactor: Redactor,
         config: JobsConfig,
         semantic_max_scanned: usize,
+        metrics: Option<std::sync::Arc<MetricsRegistry>>,
     ) -> Self {
         Self {
             database,
@@ -568,6 +573,7 @@ impl JobExecutor {
             redactor,
             config,
             semantic_max_scanned,
+            metrics,
         }
     }
 
@@ -662,11 +668,17 @@ impl JobExecutor {
                 break;
             }
         }
-        let orphans_removed = remove_orphaned_blobs(
-            &BlobStore::new(self.database.clone()),
-            ORPHAN_BLOB_GRACE_MS,
-            ORPHAN_BLOB_LIMIT,
-        )?;
+        let gc_database = self.database.clone();
+        let orphans_removed = self
+            .scheduler
+            .submit(MutationPriority::BackgroundLearning, move || {
+                remove_orphaned_blobs(
+                    &BlobStore::new(gc_database),
+                    ORPHAN_BLOB_GRACE_MS,
+                    ORPHAN_BLOB_LIMIT,
+                )
+            })?
+            .wait()?;
         Ok(serde_json::json!({
             "context_runs_deleted": deleted_runs,
             "orphan_blobs_removed": orphans_removed,
@@ -748,6 +760,16 @@ impl JobExecutor {
             })?
             .wait()?;
 
+        if let Some(metrics) = &self.metrics {
+            metrics.count_drift_invalidation(
+                drift_marked.invalidated,
+                drift_marked.previously_injected,
+            );
+            // Commit-unreachable markings carry no injection attribution;
+            // count them as invalidations with a zero injected lower bound.
+            metrics.count_drift_invalidation(marked, 0);
+        }
+
         Ok(serde_json::json!({
             "stale_commit_evidence": stale_evidence,
             "memories_marked_suspect": marked,
@@ -768,7 +790,9 @@ fn required_project(job: &JobRecord) -> Result<ProjectId> {
 }
 
 /// Delete one bounded batch of expired `context_runs` (their `context_items`
-/// rows cascade and `usage_events` references null out) in one transaction.
+/// rows cascade) in one transaction. Runs referenced by `usage_events` are
+/// exempt: nulling their `context_run_id` would silently erase the recorded
+/// uses that gate procedure-to-skill promotion.
 ///
 /// # Errors
 ///
@@ -779,6 +803,9 @@ pub fn delete_context_run_batch(database: &Database, cutoff_ms: i64, limit: usiz
         let deleted = transaction.execute(
             "DELETE FROM context_runs WHERE id IN (
                  SELECT id FROM context_runs WHERE created_at_ms < ?1
+                   AND NOT EXISTS (
+                     SELECT 1 FROM usage_events u WHERE u.context_run_id = context_runs.id
+                   )
                  ORDER BY created_at_ms, id LIMIT ?2
              )",
             params![cutoff_ms, limit],
@@ -788,33 +815,52 @@ pub fn delete_context_run_batch(database: &Database, cutoff_ms: i64, limit: usiz
 }
 
 /// Unlink blob files that have no metadata row (the `orphan_files` that
-/// `leb doctor` reports). Files modified within `grace_ms` are skipped: a
-/// concurrent evidence write materializes the file *before* committing the
-/// row that references it. Removal is a filesystem operation on unreferenced
-/// files, so it needs no canonical write.
+/// `leb doctor` reports). For every candidate, the row's absence is
+/// re-confirmed and the unlink performed inside one canonical writer
+/// transaction, and the mtime grace window is re-checked at unlink time —
+/// an unreadable or future mtime counts as recent, because deletion is the
+/// irreversible branch. Callers on the daemon path additionally submit this
+/// through the mutation scheduler so it serializes with the evidence
+/// stage-then-commit sequence.
 ///
 /// # Errors
 ///
-/// Returns an error when discovery or an unlink (other than already-missing)
-/// fails.
+/// Returns an error when discovery, the row re-check, or an unlink (other
+/// than already-missing) fails.
 pub fn remove_orphaned_blobs(store: &BlobStore, grace_ms: u64, limit: usize) -> Result<u64> {
-    let mut removed = 0_u64;
-    for digest in store.orphaned_digests(limit)? {
-        if grace_ms > 0 {
-            let path = store.path_for(&digest)?;
-            let recent = std::fs::metadata(&path)
-                .and_then(|metadata| metadata.modified())
-                .ok()
-                .and_then(|modified| modified.elapsed().ok())
-                .is_some_and(|age| age < Duration::from_millis(grace_ms));
-            if recent {
+    let candidates = store.orphaned_digests(limit)?;
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+    store.database().write_immediate(|transaction| {
+        let mut removed = 0_u64;
+        for digest in &candidates {
+            let referenced: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM blobs WHERE digest = ?1)",
+                [digest.as_str()],
+                |row| row.get(0),
+            )?;
+            if referenced {
                 continue;
             }
+            if grace_ms > 0 {
+                let path = store.path_for(digest)?;
+                let Some(age) = std::fs::metadata(&path)
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                else {
+                    continue;
+                };
+                if age < Duration::from_millis(grace_ms) {
+                    continue;
+                }
+            }
+            store.remove_file(digest)?;
+            removed = removed.saturating_add(1);
         }
-        store.remove_file(&digest)?;
-        removed = removed.saturating_add(1);
-    }
-    Ok(removed)
+        Ok(removed)
+    })
 }
 
 /// Daily dedupe key for self-enqueued maintenance jobs: one enqueue per UTC
@@ -1211,6 +1257,55 @@ mod tests {
     }
 
     #[test]
+    fn gc_exempts_context_runs_referenced_by_usage_events() {
+        let temp = TempDir::new().expect("temp dir");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(&root).expect("project dir");
+        let project = ProjectRegistry::new(database.clone())
+            .resolve_or_register(&root)
+            .expect("project")
+            .project
+            .id;
+        insert_context_run(&database, &project, 0, 100); // expired, unreferenced
+        insert_context_run(&database, &project, 1, 100); // expired, but a use depends on it
+        database
+            .write_immediate(|transaction| {
+                transaction.execute(
+                    "INSERT INTO usage_events(id, source_type, source_id, context_run_id,
+                         usage_kind, outcome, created_at_ms)
+                     SELECT 'use_fixture', 'memory', 'mem_fixture', id, 'injected', NULL, 100
+                     FROM context_runs WHERE request_id = 'gc-fixture-1'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .expect("usage fixture");
+
+        assert_eq!(
+            delete_context_run_batch(&database, 1_000, 10).expect("gc"),
+            1,
+            "only the unreferenced run is deleted"
+        );
+        assert_eq!(count_context_runs(&database), 1);
+        let (kept_run, usage_link): (i64, i64) = database
+            .with_reader(|connection| {
+                connection
+                    .query_row(
+                        "SELECT
+                             (SELECT COUNT(*) FROM context_runs WHERE request_id = 'gc-fixture-1'),
+                             (SELECT COUNT(*) FROM usage_events WHERE context_run_id IS NOT NULL)",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(Error::from)
+            })
+            .expect("counts");
+        assert_eq!(kept_run, 1, "the referenced run survives retention");
+        assert_eq!(usage_link, 1, "use attribution is never nulled by GC");
+    }
+
+    #[test]
     fn orphaned_blob_files_are_removed_but_referenced_and_recent_files_stay() {
         let (_temp, database) = database();
         let store = BlobStore::new(database.clone());
@@ -1255,6 +1350,7 @@ mod tests {
             Redactor::default(),
             JobsConfig::default(),
             50_000,
+            None,
         )
     }
 

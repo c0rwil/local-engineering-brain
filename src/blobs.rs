@@ -76,6 +76,13 @@ pub struct BlobStore {
 }
 
 impl BlobStore {
+    #[must_use]
+    pub(crate) const fn database(&self) -> &Database {
+        &self.database
+    }
+}
+
+impl BlobStore {
     /// Open the blob store that belongs to `database`.
     ///
     /// The root is derived from the database path exactly like the live
@@ -116,6 +123,16 @@ impl BlobStore {
         let digest = digest_hex(bytes);
         let path = self.path_for(&digest)?;
         if path.exists() {
+            // Refresh the mtime: orphan GC measures its grace window from the
+            // file's last modification, so a reused crash-orphan must read as
+            // freshly written or GC could unlink it before the referencing
+            // row commits.
+            let file = fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .map_err(|source| io_error(&path, source))?;
+            file.set_modified(std::time::SystemTime::now())
+                .map_err(|source| io_error(&path, source))?;
             return Ok(digest);
         }
         let shard = path

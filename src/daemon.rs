@@ -1186,6 +1186,7 @@ async fn start_job_system(
             state.redactor.clone(),
             config.jobs.clone(),
             usize::try_from(config.semantic.max_scanned).unwrap_or(usize::MAX),
+            Some(Arc::clone(&state.metrics)),
         );
         let runner = JobRunner::new(
             executor,
