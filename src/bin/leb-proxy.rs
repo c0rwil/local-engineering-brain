@@ -22,6 +22,11 @@ struct Cli {
     /// Override the local daemon Unix socket.
     #[arg(long)]
     socket: Option<PathBuf>,
+
+    /// Override the canonical database path (must match the daemon that owns
+    /// the socket).
+    #[arg(long)]
+    db: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -35,7 +40,11 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> leb::Result<()> {
-    let mut config = Config::load_for(None, &ConfigOverrides::default())?;
+    let overrides = ConfigOverrides {
+        db_path: cli.db.clone(),
+        ..ConfigOverrides::default()
+    };
+    let mut config = Config::load_for(None, &overrides)?;
     if let Some(runtime) = cli.runtime {
         config.proxy.runtime_url = runtime;
     }
