@@ -1,0 +1,66 @@
+[brain]
+auto_learn = false
+conservative_promotion = true
+raw_transcript_retention_days = 0
+
+[cache]
+# Reserved until derived-cache invalidation is connected to storage generations.
+enabled = false
+
+[context]
+max_injected_tokens = 6000
+stable_prefix_tokens = 1800
+semantic_retrieval = false
+
+[daemon]
+socket_path = "~/.leb/lebd.sock"
+max_connections = 128
+max_request_bytes = 1048576
+request_timeout_ms = 30000
+read_connections = 4
+read_wait_timeout_ms = 5000
+writer_queue_capacity = 4096
+background_concurrency = 2
+rss_soft_limit_mb = 600
+rss_hard_limit_mb = 900
+
+[storage]
+db_path = "~/.leb/brain.sqlite"
+blob_budget_gb = 0
+vector_backend = "disabled"
+
+[structural]
+provider = "tree_sitter"
+max_files = 100000
+max_file_bytes = 2097152
+git_history_commits = 50000
+# Required only when provider = "graphify"; CLI --graphify overrides it.
+# graphify_export = "/absolute/path/to/graphify-export.json"
+max_graph_nodes = 2000000
+max_graph_edges = 8000000
+max_prepared_bytes = 268435456
+max_graphify_export_bytes = 134217728
+
+[embeddings]
+provider = "disabled"
+model = ""
+allow_remote = false
+
+[policy]
+default_enforcement = "warn"
+
+[network]
+local_only = true
+
+[proxy]
+bind = "127.0.0.1:11435"
+runtime_url = "http://127.0.0.1:8000"
+failure_mode = "fail_open"
+
+[security]
+# Complete matches are replaced before durable persistence. Rust regex syntax;
+# at most 32 patterns, each at most 1024 bytes.
+custom_redaction_patterns = []
+
+[evaluation]
+record_trajectory_metrics = false

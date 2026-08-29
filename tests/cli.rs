@@ -1,0 +1,210 @@
+use std::fs;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use assert_cmd::Command as AssertCommand;
+use predicates::prelude::*;
+use tempfile::TempDir;
+
+use leb::storage::Database;
+
+#[test]
+fn doctor_json_reports_healthy_database() {
+    let temp = TempDir::new().expect("temp dir");
+    let db = temp.path().join("brain.sqlite");
+    let mut command = AssertCommand::cargo_bin("leb").expect("leb binary");
+    command
+        .args(["--db", db.to_str().unwrap(), "doctor", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"ok\": true"))
+        .stdout(predicate::str::contains("sqlite_integrity"));
+}
+
+#[test]
+fn status_registers_plain_project_and_is_stable() {
+    let temp = TempDir::new().expect("temp dir");
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).expect("project");
+    let db = temp.path().join("brain.sqlite");
+    let socket = temp.path().join("lebd.sock");
+    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("lebd"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn daemon");
+    let ready_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+            break;
+        }
+        if let Some(status) = daemon.try_wait().expect("poll daemon process") {
+            panic!("daemon exited before readiness: {status}");
+        }
+        assert!(Instant::now() < ready_deadline, "daemon readiness timeout");
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let first = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "status",
+            project.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("first status");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let second = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "status",
+            project.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("second status");
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let first_json: serde_json::Value = serde_json::from_slice(&first.stdout).expect("first json");
+    let second_json: serde_json::Value =
+        serde_json::from_slice(&second.stdout).expect("second json");
+    assert_eq!(first_json["project"]["id"], second_json["project"]["id"]);
+    assert_eq!(second_json["project_event_count"], 2);
+
+    let stopped = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "daemon",
+            "stop",
+        ])
+        .output()
+        .expect("stop daemon");
+    assert!(
+        stopped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stopped.stderr)
+    );
+    let daemon_output = daemon.wait_with_output().expect("daemon exits gracefully");
+    assert_process_success(&daemon_output);
+}
+
+fn assert_process_success(output: &std::process::Output) {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn status_autostarts_daemon_without_direct_writes() {
+    let temp = TempDir::new().expect("temp dir");
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).expect("project");
+    let db = temp.path().join("brain.sqlite");
+    let socket = temp.path().join("missing.sock");
+    let mut command = AssertCommand::cargo_bin("leb").expect("leb binary");
+    command
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "status",
+            project.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Project:"));
+    assert!(db.exists(), "the canonical daemon must create storage");
+    assert!(socket.exists(), "the canonical daemon must own the socket");
+
+    AssertCommand::cargo_bin("leb")
+        .expect("leb binary")
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "daemon",
+            "stop",
+        ])
+        .assert()
+        .success();
+    let shutdown_deadline = Instant::now() + Duration::from_secs(5);
+    while socket.exists() && Instant::now() < shutdown_deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !socket.exists(),
+        "auto-started daemon must shut down cleanly"
+    );
+}
+
+#[test]
+fn process_kill_rolls_back_event_and_projection_together() {
+    let temp = TempDir::new().expect("temp dir");
+    let db = temp.path().join("brain.sqlite");
+    let ready = temp.path().join("ready");
+    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "internal-crash-transaction",
+            "--ready",
+            ready.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn crash helper");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() && Instant::now() < deadline {
+        if let Some(status) = child.try_wait().expect("poll child") {
+            panic!("crash helper exited early: {status}");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(ready.exists(), "crash helper did not enter its transaction");
+    child.kill().expect("kill child");
+    child.wait().expect("reap child");
+
+    let database = Database::open(&db).expect("reopen database");
+    let connection = database.connect().expect("connection");
+    let projects: i64 = connection
+        .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
+        .expect("projects count");
+    let events: i64 = connection
+        .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
+        .expect("events count");
+    assert_eq!((projects, events), (0, 0));
+    assert_eq!(
+        database.integrity_report().expect("integrity").integrity,
+        "ok"
+    );
+}
