@@ -43,9 +43,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         include_str!("migrations/0006_semantic_index.sql"),
     ),
     (7, "jobs", include_str!("migrations/0007_jobs.sql")),
+    (
+        8,
+        "compact_injection",
+        include_str!("migrations/0008_compact_injection.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 7;
+pub const LATEST_MIGRATION_VERSION: i64 = 8;
 
 /// Reopenable handle to the canonical database.
 ///
@@ -508,6 +513,9 @@ fn apply_migrations(connection: &mut Connection) -> Result<()> {
             continue;
         }
         transaction.execute_batch(sql)?;
+        if version == 8 {
+            crate::memory::rebuild_compact_injections_in_transaction(&transaction)?;
+        }
         transaction.execute(
             "INSERT INTO schema_migrations(version, name, checksum, applied_at_ms)
              VALUES (?1, ?2, ?3, unixepoch('subsec') * 1000)",
@@ -631,6 +639,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    use crate::memory::{MemoryDraft, MemoryStore};
+    use crate::projects::ProjectRegistry;
 
     fn database() -> (TempDir, Database) {
         let temp = TempDir::new().expect("temp dir");
@@ -768,6 +778,100 @@ mod tests {
         let error = Database::open(temp.path().join("brain.sqlite"))
             .expect_err("checksum mismatch must fail");
         assert!(error.to_string().contains("checksum mismatch"));
+    }
+
+    #[test]
+    fn migration_8_backfills_existing_memories_transactionally() {
+        let (temp, db) = database();
+        let root = temp.path().join("migration-project");
+        fs::create_dir(&root).expect("project directory");
+        let project = ProjectRegistry::new(db.clone())
+            .resolve_or_register(&root)
+            .expect("project")
+            .project
+            .id;
+        let memory = MemoryStore::new(db.clone())
+            .create_candidate(
+                &project,
+                &MemoryDraft {
+                    scope_type: "project".to_owned(),
+                    scope_id: project.to_string(),
+                    kind: "preference".to_owned(),
+                    claim: "Keep CaseSensitive API names.\nNever flatten them.".to_owned(),
+                    rationale: "Canonical rationale survives outside compact text.".to_owned(),
+                    confidence: 0.8,
+                    importance: 0.9,
+                    tags: Vec::new(),
+                    valid_from_commit: None,
+                    valid_to_commit: None,
+                    trust_source: "human_instruction".to_owned(),
+                    evidence_ids: Vec::new(),
+                    source_task_ids: Vec::new(),
+                    node_ids: Vec::new(),
+                },
+            )
+            .expect("pre-migration memory");
+        let expected = db
+            .with_reader(|connection| {
+                connection
+                    .query_row(
+                        "SELECT renderer_version, source_digest, compact_text, token_estimate
+                         FROM memory_compact_injections WHERE memory_id = ?1",
+                        [memory.id.as_str()],
+                        |row| {
+                            Ok((
+                                row.get::<_, i64>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, i64>(3)?,
+                            ))
+                        },
+                    )
+                    .map_err(Error::from)
+            })
+            .expect("original projection");
+
+        db.write_immediate(|transaction| {
+            transaction.execute("DROP TABLE memory_compact_injections", [])?;
+            transaction.execute("DELETE FROM schema_migrations WHERE version = 8", [])?;
+            Ok(())
+        })
+        .expect("simulate a version-7 database");
+        let path = db.path().to_path_buf();
+        drop(db);
+
+        let migrated = Database::open(&path).expect("apply migration 8");
+        assert_eq!(
+            migrated
+                .integrity_report()
+                .expect("integrity")
+                .migration_version,
+            8
+        );
+        let actual = migrated
+            .with_reader(|connection| {
+                connection
+                    .query_row(
+                        "SELECT renderer_version, source_digest, compact_text, token_estimate
+                         FROM memory_compact_injections WHERE memory_id = ?1",
+                        [memory.id.as_str()],
+                        |row| {
+                            Ok((
+                                row.get::<_, i64>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, i64>(3)?,
+                            ))
+                        },
+                    )
+                    .map_err(Error::from)
+            })
+            .expect("backfilled projection");
+        assert_eq!(actual, expected);
+        assert_eq!(
+            actual.2,
+            "- PREF: Keep CaseSensitive API names. Never flatten them.\n"
+        );
     }
 
     #[test]

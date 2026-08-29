@@ -14,6 +14,10 @@ stable_prefix_tokens = 1800
 # SQLite vector sidecar). Off by default: enable only after a measured paired
 # benchmark win (spec Appendix E/G); disabled keeps the ablation control exact.
 semantic_retrieval = false
+# Deterministic compact memory blocks omit full IDs and rationale boilerplate.
+# Canonical memory text and context provenance are unchanged. Off by default so
+# verbose-vs-compact benchmarks differ by exactly this flag.
+compact_injection = false
 
 [daemon]
 socket_path = "~/.leb/lebd.sock"

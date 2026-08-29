@@ -164,6 +164,11 @@ never claims improvement unless the measured report does.
 Priority: request/CLI override → project `.leb/config.toml` → user
 `~/.config/leb/config.toml` → defaults. See [`config/leb.example.toml`](config/leb.example.toml).
 
+`context.compact_injection = true` selects deterministic, bounded memory blocks that omit full IDs
+and rationale boilerplate while retaining canonical source IDs and `why` records for audit. It is
+off by default for an exact verbose/compact ablation. With unchanged eligible memory and repository
+state, rendered LEB context is byte-stable across turn/request IDs and contains no volatile metadata.
+
 - canonical writer queue, read pool, request sizes, connections, scans, Graphify imports, Git
   history, traversal, context tokens, and prepared data are hard-bounded;
 - no repository graph or full memory corpus is retained in process memory;
