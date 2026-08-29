@@ -1,0 +1,53 @@
+name: Audit
+
+on:
+  # Weekly sweep so a newly published advisory is noticed even when the
+  # dependency tree has not moved.
+  schedule:
+    - cron: "0 6 * * 1"
+  # And immediately whenever the dependency tree or the policy itself changes.
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/audit.yml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/audit.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: audit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    name: cargo-deny (${{ matrix.checks }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      # Run every check even when one fails, so a single advisory does not
+      # hide an unrelated license or source regression.
+      fail-fast: false
+      matrix:
+        checks:
+          - advisories
+          - licenses
+          - bans
+          - sources
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check ${{ matrix.checks }}
+          # `--warn unmaintained` downgrades RUSTSEC unmaintained notices to
+          # warnings. Vulnerability and unsoundness advisories stay fatal.
+          arguments: --all-features ${{ matrix.checks == 'advisories' && '--warn unmaintained' || '' }}

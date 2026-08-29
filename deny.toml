@@ -1,0 +1,96 @@
+# cargo-deny configuration.
+#
+# Run locally with:
+#   cargo deny check
+#
+# CI runs the same checks from .github/workflows/audit.yml, split one check
+# per job so a new advisory cannot mask an unrelated license or source
+# regression.
+
+[graph]
+# Only evaluate the platforms LEB actually ships on. This keeps Windows-only
+# transitive crates (which are never compiled here) out of the license and
+# ban reports.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# Advisories: security is a hard gate, maintenance status is informational.
+# ---------------------------------------------------------------------------
+[advisories]
+version = 2
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Under `version = 2` every RUSTSEC vulnerability and unsoundness advisory is
+# an error, which is what we want: a vulnerable dependency must not merge.
+# "unmaintained" is deliberately downgraded to a warning instead, because an
+# unmaintained transitive crate is a planning problem, not a release blocker.
+# The downgrade is applied by the audit workflow via `--warn unmaintained`,
+# since severity overrides live on the CLI in this schema version.
+yanked = "warn"
+# Every entry here must carry a comment explaining why it is tolerated and
+# what would let us remove it.
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Licenses: allowlist derived from the actual resolved dependency tree.
+# ---------------------------------------------------------------------------
+# Regenerate the observed set with:
+#   cargo metadata --format-version 1 --locked \
+#     | jq -r '.packages[].license' | sort -u
+#
+# Notes on the less obvious entries:
+#   BSD-3-Clause  required by `matchit` ("MIT AND BSD-3-Clause" - both halves
+#                 must be allowed, this is a conjunction, not a choice).
+#   Unicode-3.0   required by the `icu_*` / `zerovec` / `yoke` family pulled
+#                 in through `idna` -> `url`, and by `unicode-ident`.
+#   Unlicense     the `BurntSushi` crates (`memchr`, `walkdir`, `ignore`,
+#                 `globset`, `aho-corasick`) dual-license Unlicense OR MIT.
+#   Zlib          `foldhash`, the default hasher behind `hashbrown`.
+#
+# Permissive only: no copyleft license is accepted. `r-efi` offers
+# "MIT OR Apache-2.0 OR LGPL-2.1-or-later" and resolves to MIT here; the
+# LGPL arm is never selected because LGPL-2.1-or-later is not listed below.
+[licenses]
+version = 2
+allow = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.93
+exceptions = []
+
+[licenses.private]
+# This crate is not published; its own MIT OR Apache-2.0 header does not need
+# to be re-verified against the allowlist.
+ignore = true
+
+# ---------------------------------------------------------------------------
+# Bans: duplicate versions are noise to track, not a merge blocker.
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = []
+skip = []
+skip-tree = []
+
+# ---------------------------------------------------------------------------
+# Sources: crates.io only. No git dependencies, no alternate registries.
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

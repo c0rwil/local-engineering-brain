@@ -1,0 +1,10 @@
+# The single source of truth for the toolchain version.
+#
+# This file, the `RUST_VERSION` env in .github/workflows/ci.yml, and the
+# version quoted in CONTRIBUTING.md must be bumped together. `rustup` reads
+# this file automatically, so a contributor with rustup gets the same
+# compiler CI uses without any extra step.
+[toolchain]
+channel = "1.96.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
