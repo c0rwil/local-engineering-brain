@@ -452,7 +452,14 @@ impl SynthesisStore {
             trust_source: "agent_inference".to_owned(),
             evidence_ids: body.evidence_ids.clone(),
             source_task_ids: source_task_ids.clone(),
-            node_ids: Vec::new(),
+            // Anchor the procedure to its precondition files' symbols so
+            // drift invalidation can quarantine it when they change.
+            node_ids: crate::learning::derive_node_links(
+                &self.database,
+                project_id,
+                &source_task_ids,
+                32,
+            )?,
         };
         let (memory, reused_existing) = if let Some(existing) =
             memories.find_exact(project_id, "project", &draft.scope_id, "procedure", &claim)?
