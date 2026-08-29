@@ -11,7 +11,7 @@ Everything below is the current state of the unreleased **0.1.0** pre-release.
 Nothing has shipped under a version tag yet, so there is no comparison base:
 the entries describe the shape of the product as it stands and the changes made
 since the initial implementation landed. On-disk formats and CLI surfaces are
-not yet stable, and the schema version is 4.
+not yet stable, and the schema version is 7.
 
 ### Added
 
@@ -44,6 +44,39 @@ not yet stable, and the schema version is 4.
   Actions, and this changelog. The latency and RSS assertions in
   `tests/performance.rs` run in a separate non-blocking job, because their
   bounds are meaningful on the Apple Silicon target and not on a shared runner.
+- Hybrid retrieval's semantic stage (V1 goal): `EmbeddingProvider` and
+  `VectorIndex` ports with a deterministic, fully offline default — a seeded
+  hashed n-gram embedder into 256 normalized dimensions and a rebuildable
+  SQLite vector sidecar with bounded brute-force cosine search. Disabled by
+  default (`context.semantic_retrieval`), so ablation against the purely
+  lexical/structural ranker stays one config flag away; purge removes vectors,
+  and `leb semantic rebuild` reconstructs the sidecar from canonical memories.
+- A content-addressed blob store for large evidence artifacts: redacted
+  payloads above `storage.blob_threshold_bytes` (16 KiB default) land under
+  `~/.leb/blobs/` sharded by SHA-256 digest with refcounted dedupe, purge
+  integration that deletes files at zero references, transparent read-back,
+  self-contained exports, and orphan reporting in `leb doctor`.
+- A daemon-owned durable background job system over the previously unused
+  `jobs` table: idempotent enqueue by `(type, dedupe_key)`, retries with
+  exponential backoff, crash recovery that resets `running` jobs on start,
+  RSS-pressure-aware execution under the existing background concurrency
+  budget, and four job types — FTS/database integrity sweeps, semantic index
+  rebuilds, bounded consolidation GC with blob-orphan cleanup, and an
+  evidence staleness sweep that deliberately never re-executes stored
+  commands (spec 26.4). Surfaced as `POST /api/v1/jobs`, `leb jobs
+  list/enqueue/status`, and daily self-enqueued maintenance.
+- Process-lifetime observability (spec 25.1): an in-daemon registry of
+  fixed-bucket latency histograms (compile, retrieval, per-endpoint-group
+  request, index scan) with interpolated percentiles, counters for compiles
+  by mode, injected items/tokens, retrieval candidates, memory promotions and
+  purges, evidence records, and a real lower-bound stale-injection signal
+  wired to drift quarantine. Served by `GET /api/v1/metrics`, `leb metrics`,
+  and a single-shot `leb dashboard`; the proxy exposes its own outcome
+  counters at `GET /leb/metrics` on its loopback listener.
+- A property-based test layer (spec 32.3) with proptest: fifteen seeded,
+  shrinking properties over the event store, memory state machine, Git
+  porcelain parsing, context budgeting, retrieval scoring, the byte-weighted
+  cache, redaction, and typed IDs, with failure seeds persisted in-repo.
 - Episode-to-procedure synthesis (spec 16.3–16.5): a bounded pass over recent
   successful episodes creates a typed `procedure` memory when at least
   `synthesis.min_supporting_episodes` (default 3) evidence-verified episodes
@@ -61,14 +94,18 @@ not yet stable, and the schema version is 4.
 
 ### Changed
 
-- Cache configuration now takes real byte budgets instead of the reserved
-  placeholder values it previously accepted. The bounded cache primitive stays
-  disabled in V1 — generation-based invalidation is not wired end to end yet —
-  but the settings are now honest about what they will mean when it is
-  enabled, rather than silently inert.
+- The bounded byte-weighted cache is now live instead of decorative: world
+  search and graph-neighborhood reads consult per-project, generation-scoped
+  partitions, and every graph mutation advances the generation before its
+  response returns, making a stale cached read impossible by construction.
+  Cache configuration takes real byte budgets and is enabled by default;
+  health reports partition stats and hit/miss counters.
 
 ### Fixed
 
+- Git porcelain parsing no longer lets `./`-prefixed paths bypass the
+  `.git`/`.leb` reserved-directory filter — found by the new property suite,
+  with the shrunken failing seed persisted as a regression.
 - Rescanning no longer loses track of files that were reverted while other
   files in the same project stayed dirty. Scan dirty sets are now persisted,
   so a partially reverted working tree converges to the correct state instead
