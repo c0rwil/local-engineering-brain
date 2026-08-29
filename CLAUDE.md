@@ -82,9 +82,11 @@ protection), so bump-and-reinstall order matters: build, install, restart
 - `wait_for_mutation` responses must stay after cache-generation bumps in
   `src/daemon.rs` — a graph mutation bumps the world-read cache generation
   BEFORE its response returns, which is what makes cached reads safe.
-- The daemon test `stale_socket_is_replaced_but_regular_file_is_preserved` can
-  flake under unusual parallel filters (`cargo test --lib -- projects::
-  daemon::`); it is clean in the standard suite invocation.
+- The daemon test `stale_socket_is_replaced_but_regular_file_is_preserved`
+  used to flake under parallel load: macOS can keep a closed Unix listener
+  connectable for a moment while the kernel tears it down. The test now waits
+  for teardown (the same connect probe `bind_socket` uses) before asserting
+  replacement; keep that wait if you touch the test.
 - `mtplx` subcommands: `pull`/`models` accept `--cache-dir`; `inspect` does
   not (it reads the default cache). `mtplx validate` does not exist.
 

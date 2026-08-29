@@ -44,6 +44,20 @@ not yet stable, and the schema version is 4.
   Actions, and this changelog. The latency and RSS assertions in
   `tests/performance.rs` run in a separate non-blocking job, because their
   bounds are meaningful on the Apple Silicon target and not on a shared runner.
+- Episode-to-procedure synthesis (spec 16.3–16.5): a bounded pass over recent
+  successful episodes creates a typed `procedure` memory when at least
+  `synthesis.min_supporting_episodes` (default 3) evidence-verified episodes
+  share one normalized strategy signature with overlapping touched files.
+  Drafts start unvalidated at the agent-inference confidence cap and never
+  auto-promote; re-synthesis is idempotent and supersets extend provenance.
+  Surfaced as `POST /api/v1/synthesis/run`, `leb synthesize <path>`, and an
+  opt-in `synthesis.auto` pass after successful task finishes. Context
+  compilation can now declare the task it serves, recording truthful
+  usage-outcome linkage in `usage_events`; a validated procedure with
+  `synthesis.min_distinct_uses` distinct successful uses can be promoted to
+  the `skill` kind. Cross-project transfer of validated procedures as
+  explicitly marked hypothesis memories is gated behind
+  `synthesis.cross_project_hypotheses` (default off).
 
 ### Changed
 

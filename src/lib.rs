@@ -29,6 +29,7 @@ pub mod scheduler;
 pub mod security;
 pub mod semantic;
 pub mod storage;
+pub mod synthesis;
 pub mod world;
 
 pub use error::{Error, Result};

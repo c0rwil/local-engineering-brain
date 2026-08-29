@@ -54,6 +54,7 @@ use crate::scheduler::{MutationPriority, MutationScheduler, SchedulerStats};
 use crate::security::Redactor;
 use crate::semantic::{SemanticOptions, SqliteVectorIndex, VectorIndex as _};
 use crate::storage::{Database, IntegrityReport, ReadPoolStats};
+use crate::synthesis::{SynthesisOptions, SynthesisReport, SynthesisStore};
 use crate::world::{
     GitHistory, GitIngestReport, GraphNode, GraphSlice, GraphifyProvider, IndexReport,
     StructuralIndexStatus, StructuralProvider, TreeSitterProvider, WorldModel,
@@ -83,6 +84,7 @@ const API_METRICS: &str = "/api/v1/metrics";
 const API_MEMORY_STATS: &str = "/api/v1/metrics/memories";
 const API_JOBS: &str = "/api/v1/jobs";
 const API_JOBS_LIST: &str = "/api/v1/jobs/list";
+const API_SYNTHESIS_RUN: &str = "/api/v1/synthesis/run";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -358,6 +360,13 @@ pub struct ProjectExportRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SemanticRebuildRequest {
     pub project_id: ProjectId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SynthesisRunRequest {
+    /// Project path; resolved and scoped like `projects/index`, so a project's
+    /// own `.leb/config.toml` `[synthesis]` section governs its thresholds.
+    pub path: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -893,6 +902,16 @@ impl DaemonClient {
             .await
     }
 
+    /// Run one bounded episode-to-procedure synthesis pass for a project.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport, overload, validation, or canonical storage errors.
+    pub async fn run_synthesis(&self, request: &SynthesisRunRequest) -> Result<SynthesisReport> {
+        self.request(hyper::Method::POST, API_SYNTHESIS_RUN, Some(request))
+            .await
+    }
+
     /// Rebuild the derived semantic vector sidecar from canonical memories.
     ///
     /// # Errors
@@ -1019,6 +1038,7 @@ fn requires_terminal_ack(method: &hyper::Method, path: &str) -> bool {
         || path == API_PROJECT_EXPORT
         || path == API_SEMANTIC_REBUILD
         || path == API_JOBS
+        || path == API_SYNTHESIS_RUN
 }
 
 /// Serve the local API until `shutdown` resolves.
@@ -1099,6 +1119,7 @@ where
         .route(API_JOBS, post(enqueue_job))
         .route(API_JOBS_LIST, post(list_jobs))
         .route("/api/v1/jobs/{id}", get(get_job))
+        .route(API_SYNTHESIS_RUN, post(run_synthesis))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -1995,7 +2016,24 @@ async fn finish_task(
             )
         })
         .map_err(|error| ApiError::from_core(&error))?;
-    Ok(Json(wait_for_mutation(&state, handle).await?))
+    let finished = wait_for_mutation(&state, handle).await?;
+    // Opt-in only (spec P9): a successful close may trigger one bounded
+    // synthesis pass at background priority. The finish itself has committed,
+    // so a failed or shed synthesis pass never fails this response.
+    if state.config.synthesis.auto && request.outcome == TaskOutcome::Success {
+        let options = SynthesisOptions::from(&state.config.synthesis);
+        let store = SynthesisStore::with_redactor(state.database.clone(), state.redactor.clone());
+        let project_id = finished.project_id.clone();
+        if let Ok(handle) = state
+            .scheduler
+            .submit(MutationPriority::BackgroundLearning, move || {
+                store.synthesize(&project_id, &options)
+            })
+        {
+            let _ = wait_for_mutation(&state, handle).await;
+        }
+    }
+    Ok(Json(finished))
 }
 
 async fn past_failures(
@@ -2034,6 +2072,34 @@ async fn distill(
         .scheduler
         .submit(MutationPriority::BackgroundLearning, move || {
             store.distill(&request)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
+async fn run_synthesis(
+    State(state): State<DaemonState>,
+    Json(request): Json<SynthesisRunRequest>,
+) -> std::result::Result<Json<SynthesisReport>, ApiError> {
+    admit_work(&state, MutationPriority::BackgroundLearning)?;
+    let registry = ProjectRegistry::new(state.database.clone());
+    let path = request.path;
+    let resolve = state
+        .scheduler
+        .submit(MutationPriority::Interactive, move || {
+            registry.resolve_or_register(&path)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    let resolved = wait_for_mutation(&state, resolve).await?;
+    let scoped =
+        scoped_config(&state, &resolved.root).map_err(|error| ApiError::from_core(&error))?;
+    let options = SynthesisOptions::from(&scoped.synthesis);
+    let store = SynthesisStore::with_redactor(state.database.clone(), state.redactor.clone());
+    let project_id = resolved.project.id;
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::BackgroundLearning, move || {
+            store.synthesize(&project_id, &options)
         })
         .map_err(|error| ApiError::from_core(&error))?;
     Ok(Json(wait_for_mutation(&state, handle).await?))
@@ -2504,6 +2570,7 @@ mod tests {
                 mode: crate::context::ContextMode::Brain,
                 repository_root: Some(project.clone()),
                 head: None,
+                task_id: None,
             })
             .await
             .expect("compile context");
@@ -2518,6 +2585,7 @@ mod tests {
                 mode: crate::context::ContextMode::Brain,
                 repository_root: Some(project.clone()),
                 head: None,
+                task_id: None,
             })
             .await
             .expect_err("project context limit");
@@ -2658,6 +2726,7 @@ mod tests {
                 mode: crate::context::ContextMode::Brain,
                 repository_root: Some(project.clone()),
                 head: None,
+                task_id: None,
             })
             .await
             .expect("semantic context compile");
@@ -2670,133 +2739,6 @@ mod tests {
         client.shutdown().await.expect("shutdown request");
         drop(shutdown_sender);
         server.await.expect("server task").expect("server result");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[allow(clippy::too_many_lines)]
-    async fn metrics_endpoint_reflects_compiles_searches_and_memory_lifecycle() {
-        let temp = TempDir::new().expect("temp dir");
-        let project = temp.path().join("project");
-        std::fs::create_dir_all(&project).expect("project dir");
-        std::fs::write(project.join("lib.rs"), "pub struct Meter;\nfn tick() {}\n")
-            .expect("source");
-        let config = test_config(&temp);
-        let socket_path = config.daemon.socket_path.clone();
-        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
-        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
-        let server = tokio::spawn(serve_until(config, async move {
-            let _ = shutdown_receiver.await;
-        }));
-        wait_until_ready(&client).await;
-
-        let status = client.resolve_project(&project).await.expect("resolve");
-        let project_id = status.resolved.project.id.clone();
-        client.index_project(&project, None).await.expect("index");
-        let memory = client
-            .create_memory(&MemoryCreateRequest {
-                project_id: project_id.clone(),
-                memory: MemoryDraft {
-                    scope_type: "project".to_owned(),
-                    scope_id: project_id.to_string(),
-                    kind: "lesson".to_owned(),
-                    claim: "The meter must tick monotonically".to_owned(),
-                    rationale: "Explicit test fixture".to_owned(),
-                    confidence: 0.5,
-                    importance: 0.9,
-                    tags: vec!["meter".to_owned()],
-                    valid_from_commit: None,
-                    valid_to_commit: None,
-                    trust_source: "human_instruction".to_owned(),
-                    evidence_ids: Vec::new(),
-                    source_task_ids: Vec::new(),
-                    node_ids: Vec::new(),
-                },
-            })
-            .await
-            .expect("create memory");
-        client
-            .promote_memory(
-                &memory.id,
-                &MemoryPromoteRequest {
-                    target: EpistemicState::Validated,
-                    human_override: true,
-                },
-            )
-            .await
-            .expect("promote");
-        let compiled = client
-            .compile_context(&ContextCompileRequest {
-                request_id: "metrics-brain".to_owned(),
-                project_id: project_id.clone(),
-                task_text: "make the meter tick".to_owned(),
-                current_paths: Vec::new(),
-                token_budget: 400,
-                mode: ContextMode::Brain,
-                repository_root: None,
-                head: None,
-            })
-            .await
-            .expect("brain compile");
-        assert!(compiled.metrics.selected_tokens > 0);
-        client
-            .compile_context(&ContextCompileRequest {
-                request_id: "metrics-off".to_owned(),
-                project_id: project_id.clone(),
-                task_text: "control run".to_owned(),
-                current_paths: Vec::new(),
-                token_budget: 400,
-                mode: ContextMode::Off,
-                repository_root: None,
-                head: None,
-            })
-            .await
-            .expect("off compile");
-        for _ in 0..2 {
-            client
-                .search_world(&WorldSearchRequest {
-                    project_id: project_id.clone(),
-                    query: "Meter".to_owned(),
-                    limit: 10,
-                })
-                .await
-                .expect("world search");
-        }
-
-        let response = client.metrics().await.expect("metrics");
-        let counters = &response.metrics.counters;
-        assert_eq!(counters.context_compiles_brain, 1);
-        assert_eq!(counters.context_compiles_off, 1);
-        assert!(counters.injected_items >= 1, "{counters:?}");
-        assert!(
-            counters.injected_tokens >= u64::from(compiled.metrics.selected_tokens),
-            "{counters:?}"
-        );
-        assert!(counters.retrieval_candidates_considered >= 1);
-        assert!(counters.retrieval_candidates_selected >= 1);
-        assert_eq!(counters.memory_promotions, 1);
-        assert_eq!(counters.memory_rejections, 0);
-        assert_eq!(counters.stale_injections, 0);
-        assert_eq!(response.metrics.context_compile_ms.count, 2);
-        assert_eq!(response.metrics.retrieval_ms.count, 1);
-        assert!(response.metrics.index_scan_ms.count >= 1);
-        assert!(response.metrics.requests_ms["context"].count >= 2);
-        assert!(response.metrics.requests_ms["world"].count >= 2);
-        assert!(response.metrics.requests_ms["memory"].count >= 2);
-        let cache = response.cache.expect("cache enabled by default");
-        assert!(cache.hits >= 1, "repeat search must hit: {cache:?}");
-        assert!(cache.misses >= 1);
-
-        let breakdown = client.memory_stats().await.expect("memory stats");
-        assert_eq!(breakdown.total, 1);
-        assert_eq!(breakdown.by_status.get("active"), Some(&1));
-        assert_eq!(breakdown.by_epistemic_state.get("validated"), Some(&1));
-
-        client.purge_memory(&memory.id).await.expect("purge");
-        let after_purge = client.metrics().await.expect("metrics after purge");
-        assert_eq!(after_purge.metrics.counters.memory_purges, 1);
-
-        drop(shutdown_sender);
-        let _ = server.await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2899,12 +2841,333 @@ mod tests {
         server.await.expect("server task").expect("server result");
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[allow(clippy::too_many_lines)]
+    async fn metrics_endpoint_reflects_compiles_searches_and_memory_lifecycle() {
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        std::fs::write(project.join("lib.rs"), "pub struct Meter;\nfn tick() {}\n")
+            .expect("source");
+        let config = test_config(&temp);
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+
+        let status = client.resolve_project(&project).await.expect("resolve");
+        let project_id = status.resolved.project.id.clone();
+        client.index_project(&project, None).await.expect("index");
+        let memory = client
+            .create_memory(&MemoryCreateRequest {
+                project_id: project_id.clone(),
+                memory: MemoryDraft {
+                    scope_type: "project".to_owned(),
+                    scope_id: project_id.to_string(),
+                    kind: "lesson".to_owned(),
+                    claim: "The meter must tick monotonically".to_owned(),
+                    rationale: "Explicit test fixture".to_owned(),
+                    confidence: 0.5,
+                    importance: 0.9,
+                    tags: vec!["meter".to_owned()],
+                    valid_from_commit: None,
+                    valid_to_commit: None,
+                    trust_source: "human_instruction".to_owned(),
+                    evidence_ids: Vec::new(),
+                    source_task_ids: Vec::new(),
+                    node_ids: Vec::new(),
+                },
+            })
+            .await
+            .expect("create memory");
+        client
+            .promote_memory(
+                &memory.id,
+                &MemoryPromoteRequest {
+                    target: EpistemicState::Validated,
+                    human_override: true,
+                },
+            )
+            .await
+            .expect("promote");
+        let compiled = client
+            .compile_context(&ContextCompileRequest {
+                request_id: "metrics-brain".to_owned(),
+                project_id: project_id.clone(),
+                task_text: "make the meter tick".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 400,
+                mode: ContextMode::Brain,
+                repository_root: None,
+                head: None,
+                task_id: None,
+            })
+            .await
+            .expect("brain compile");
+        assert!(compiled.metrics.selected_tokens > 0);
+        client
+            .compile_context(&ContextCompileRequest {
+                request_id: "metrics-off".to_owned(),
+                project_id: project_id.clone(),
+                task_text: "control run".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 400,
+                mode: ContextMode::Off,
+                repository_root: None,
+                head: None,
+                task_id: None,
+            })
+            .await
+            .expect("off compile");
+        for _ in 0..2 {
+            client
+                .search_world(&WorldSearchRequest {
+                    project_id: project_id.clone(),
+                    query: "Meter".to_owned(),
+                    limit: 10,
+                })
+                .await
+                .expect("world search");
+        }
+
+        let response = client.metrics().await.expect("metrics");
+        let counters = &response.metrics.counters;
+        assert_eq!(counters.context_compiles_brain, 1);
+        assert_eq!(counters.context_compiles_off, 1);
+        assert!(counters.injected_items >= 1, "{counters:?}");
+        assert!(
+            counters.injected_tokens >= u64::from(compiled.metrics.selected_tokens),
+            "{counters:?}"
+        );
+        assert!(counters.retrieval_candidates_considered >= 1);
+        assert!(counters.retrieval_candidates_selected >= 1);
+        assert_eq!(counters.memory_promotions, 1);
+        assert_eq!(counters.memory_rejections, 0);
+        assert_eq!(counters.stale_injections, 0);
+        assert_eq!(response.metrics.context_compile_ms.count, 2);
+        assert_eq!(response.metrics.retrieval_ms.count, 1);
+        assert!(response.metrics.index_scan_ms.count >= 1);
+        assert!(response.metrics.requests_ms["context"].count >= 2);
+        assert!(response.metrics.requests_ms["world"].count >= 2);
+        assert!(response.metrics.requests_ms["memory"].count >= 2);
+        let cache = response.cache.expect("cache enabled by default");
+        assert!(cache.hits >= 1, "repeat search must hit: {cache:?}");
+        assert!(cache.misses >= 1);
+
+        let breakdown = client.memory_stats().await.expect("memory stats");
+        assert_eq!(breakdown.total, 1);
+        assert_eq!(breakdown.by_status.get("active"), Some(&1));
+        assert_eq!(breakdown.by_epistemic_state.get("validated"), Some(&1));
+
+        client.purge_memory(&memory.id).await.expect("purge");
+        let after_purge = client.metrics().await.expect("metrics after purge");
+        assert_eq!(after_purge.metrics.counters.memory_purges, 1);
+
+        drop(shutdown_sender);
+        let _ = server.await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn opt_in_auto_synthesis_runs_after_a_successful_finish() {
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        let mut config = test_config(&temp);
+        config.synthesis.auto = true;
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+
+        let status = client.resolve_project(&project).await.expect("resolve");
+        for ordinal in 0..3 {
+            let task = client
+                .start_task(&TaskStartRequest {
+                    project_id: status.resolved.project.id.clone(),
+                    prompt: format!("auto synthesis episode {ordinal}"),
+                    session_id: None,
+                })
+                .await
+                .expect("start task");
+            let attempt = client
+                .record_attempt(
+                    &task.id,
+                    &AttemptCreateRequest {
+                        strategy_summary: "quarantine flaky test".to_owned(),
+                        outcome: AttemptOutcome::Success,
+                        files: vec!["flaky.rs".to_owned()],
+                    },
+                )
+                .await
+                .expect("attempt");
+            client
+                .record_evidence(&EvidenceCreateRequest {
+                    project_id: status.resolved.project.id.clone(),
+                    task_id: Some(task.id.clone()),
+                    attempt_id: Some(attempt.id),
+                    kind: "test_result".to_owned(),
+                    strength: EvidenceStrength::Deterministic,
+                    commit_hash: None,
+                    command: Some("cargo test".to_owned()),
+                    exit_code: Some(0),
+                    artifact_text: "ok".to_owned(),
+                    metadata: serde_json::json!({}),
+                })
+                .await
+                .expect("evidence");
+            client
+                .finish_task(
+                    &task.id,
+                    &TaskFinishRequest {
+                        outcome: TaskOutcome::Success,
+                        accepted_by_user: Some(true),
+                        final_commit: None,
+                    },
+                )
+                .await
+                .expect("finish");
+        }
+
+        // The third successful finish crossed the threshold; the opt-in auto
+        // pass ran before its response returned, so the procedure exists
+        // without any explicit synthesis call.
+        let procedures = client
+            .list_memories(&MemoryListRequest {
+                project_id: status.resolved.project.id.clone(),
+                kind: Some("procedure".to_owned()),
+                limit: 10,
+            })
+            .await
+            .expect("list procedures");
+        assert_eq!(procedures.len(), 1);
+        assert_eq!(procedures[0].claim, "Procedure: quarantine flaky test");
+
+        drop(shutdown_sender);
+        server.await.expect("server task").expect("server result");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn synthesis_endpoint_creates_a_procedure_from_repeated_episodes() {
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        let config = test_config(&temp);
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+
+        let status = client.resolve_project(&project).await.expect("resolve");
+        for ordinal in 0..3 {
+            let task = client
+                .start_task(&TaskStartRequest {
+                    project_id: status.resolved.project.id.clone(),
+                    prompt: format!("fix worker lifecycle timeout {ordinal}"),
+                    session_id: None,
+                })
+                .await
+                .expect("start task");
+            let attempt = client
+                .record_attempt(
+                    &task.id,
+                    &AttemptCreateRequest {
+                        strategy_summary: "Inspect  Signal Recipient".to_owned(),
+                        outcome: AttemptOutcome::Success,
+                        files: vec!["worker.rs".to_owned()],
+                    },
+                )
+                .await
+                .expect("attempt");
+            client
+                .record_evidence(&EvidenceCreateRequest {
+                    project_id: status.resolved.project.id.clone(),
+                    task_id: Some(task.id.clone()),
+                    attempt_id: Some(attempt.id),
+                    kind: "test_result".to_owned(),
+                    strength: EvidenceStrength::Deterministic,
+                    commit_hash: None,
+                    command: Some("cargo test".to_owned()),
+                    exit_code: Some(0),
+                    artifact_text: "ok".to_owned(),
+                    metadata: serde_json::json!({}),
+                })
+                .await
+                .expect("evidence");
+            client
+                .finish_task(
+                    &task.id,
+                    &TaskFinishRequest {
+                        outcome: TaskOutcome::Success,
+                        accepted_by_user: Some(true),
+                        final_commit: None,
+                    },
+                )
+                .await
+                .expect("finish");
+        }
+
+        let report = client
+            .run_synthesis(&SynthesisRunRequest {
+                path: project.clone(),
+            })
+            .await
+            .expect("synthesis run");
+        assert_eq!(report.examined_episodes, 3);
+        assert_eq!(report.procedures.len(), 1);
+        let procedure = &report.procedures[0];
+        assert!(!procedure.reused_existing);
+        assert_eq!(procedure.memory.kind, "procedure");
+        assert_eq!(
+            procedure.memory.claim,
+            "Procedure: inspect signal recipient"
+        );
+        let fetched = client
+            .get_memory(&procedure.memory.id)
+            .await
+            .expect("get")
+            .expect("procedure memory");
+        assert_eq!(fetched.epistemic_state, EpistemicState::Candidate);
+        assert!((fetched.confidence - 0.5).abs() < f64::EPSILON);
+
+        let repeat = client
+            .run_synthesis(&SynthesisRunRequest { path: project })
+            .await
+            .expect("idempotent rerun");
+        assert_eq!(repeat.procedures.len(), 1);
+        assert!(repeat.procedures[0].reused_existing);
+        assert_eq!(repeat.procedures[0].memory.id, procedure.memory.id);
+
+        drop(shutdown_sender);
+        server.await.expect("server task").expect("server result");
+    }
+
     #[tokio::test]
     async fn stale_socket_is_replaced_but_regular_file_is_preserved() {
         let temp = TempDir::new().expect("temp dir");
         let stale = temp.path().join("stale.sock");
         let listener = std::os::unix::net::UnixListener::bind(&stale).expect("stale listener");
         drop(listener);
+        // macOS can briefly keep the closed listener connectable while the
+        // kernel tears it down, especially under parallel test load. The
+        // precondition here is a genuinely dead socket, so wait for the probe
+        // that `bind_socket` itself uses to observe the teardown.
+        let teardown_deadline = Instant::now() + Duration::from_secs(5);
+        while std::os::unix::net::UnixStream::connect(&stale).is_ok() {
+            assert!(
+                Instant::now() < teardown_deadline,
+                "closed stale listener stayed connectable"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let (_listener, guard) = bind_socket(&stale, 1).expect("replace stale socket");
         drop(guard);
         assert!(!stale.exists());

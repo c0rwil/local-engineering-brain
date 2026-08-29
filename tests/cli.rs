@@ -397,3 +397,132 @@ fn process_kill_rolls_back_event_and_projection_together() {
         "ok"
     );
 }
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
+    let temp = TempDir::new().expect("temp dir");
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).expect("project");
+    let db = temp.path().join("brain.sqlite");
+    let socket = temp.path().join("lebd.sock");
+    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("lebd"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn daemon");
+    let ready_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+            break;
+        }
+        if let Some(status) = daemon.try_wait().expect("poll daemon process") {
+            panic!("daemon exited before readiness: {status}");
+        }
+        assert!(Instant::now() < ready_deadline, "daemon readiness timeout");
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let leb = |args: &[&str]| {
+        let mut full = vec![
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+        ];
+        full.extend_from_slice(args);
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+            .args(&full)
+            .output()
+            .expect("run leb");
+        assert!(
+            output.status.success(),
+            "leb {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    };
+
+    for _ in 0..3 {
+        let started: serde_json::Value = serde_json::from_slice(&leb(&[
+            "task",
+            "start",
+            "fix worker lifecycle timeout",
+            "--path",
+            project.to_str().unwrap(),
+        ]))
+        .expect("task json");
+        let task_id = started["id"].as_str().expect("task id").to_owned();
+        leb(&[
+            "task",
+            "attempt",
+            &task_id,
+            "Inspect signal recipient",
+            "--outcome",
+            "success",
+            "--file",
+            "worker.rs",
+        ]);
+        leb(&[
+            "task",
+            "evidence",
+            "test_result",
+            "--path",
+            project.to_str().unwrap(),
+            "--task-id",
+            &task_id,
+            "--strength",
+            "deterministic",
+            "--command",
+            "cargo test",
+            "--exit-code",
+            "0",
+        ]);
+        leb(&[
+            "task",
+            "finish",
+            &task_id,
+            "--outcome",
+            "success",
+            "--accepted-by-user",
+            "true",
+        ]);
+    }
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&leb(&["synthesize", project.to_str().unwrap(), "--json"]))
+            .expect("synthesis json");
+    assert_eq!(report["examined_episodes"], 3);
+    let procedures = report["procedures"].as_array().expect("procedures");
+    assert_eq!(procedures.len(), 1);
+    assert_eq!(
+        procedures[0]["memory"]["kind"],
+        serde_json::json!("procedure")
+    );
+    assert_eq!(
+        procedures[0]["memory"]["claim"],
+        serde_json::json!("Procedure: inspect signal recipient")
+    );
+    assert_eq!(procedures[0]["reused_existing"], serde_json::json!(false));
+
+    let stopped = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "daemon",
+            "stop",
+        ])
+        .output()
+        .expect("stop daemon");
+    assert_process_success(&stopped);
+    let daemon_output = daemon.wait_with_output().expect("daemon exits gracefully");
+    assert_process_success(&daemon_output);
+}

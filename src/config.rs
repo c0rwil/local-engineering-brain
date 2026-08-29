@@ -24,6 +24,36 @@ pub struct Config {
     pub security: SecurityConfig,
     pub network: NetworkConfig,
     pub evaluation: EvaluationConfig,
+    pub synthesis: SynthesisConfig,
+}
+
+/// Conservative multi-episode procedure synthesis (spec §16.3–§16.5).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SynthesisConfig {
+    /// Distinct successful evidence-backed episodes that must share one
+    /// normalized strategy signature before a procedure draft is synthesized.
+    pub min_supporting_episodes: u32,
+    /// Distinct successfully-served tasks a procedure must have been injected
+    /// for before it can be promoted to the `skill` kind.
+    pub min_distinct_uses: u32,
+    /// Run a bounded synthesis pass automatically after a successful
+    /// `finish_task`. Off by default: V1 keeps learning explicit (spec P9).
+    pub auto: bool,
+    /// Allow validated procedures from other projects to enter this project as
+    /// explicitly marked hypothesis memories (spec §16.5). Off by default.
+    pub cross_project_hypotheses: bool,
+}
+
+impl Default for SynthesisConfig {
+    fn default() -> Self {
+        Self {
+            min_supporting_episodes: 3,
+            min_distinct_uses: 3,
+            auto: false,
+            cross_project_hypotheses: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -412,6 +442,26 @@ impl Config {
         Ok(config)
     }
 
+    fn validate_jobs(&self) -> Result<()> {
+        if self.jobs.poll_interval_ms == 0 || self.jobs.poll_interval_ms > 3_600_000 {
+            return Err(Error::Config(
+                "jobs.poll_interval_ms must be between 1 and 3600000".to_owned(),
+            ));
+        }
+        if self.jobs.max_attempts == 0 || self.jobs.max_attempts > 20 {
+            return Err(Error::Config(
+                "jobs.max_attempts must be between 1 and 20".to_owned(),
+            ));
+        }
+        if self.jobs.context_run_retention_days == 0 || self.jobs.context_run_retention_days > 3_650
+        {
+            return Err(Error::Config(
+                "jobs.context_run_retention_days must be between 1 and 3650".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Validate safety constraints and token budgets.
     ///
     /// # Errors
@@ -450,22 +500,7 @@ impl Config {
                 "daemon RSS limits must be positive with soft < hard".to_owned(),
             ));
         }
-        if self.jobs.poll_interval_ms == 0 || self.jobs.poll_interval_ms > 3_600_000 {
-            return Err(Error::Config(
-                "jobs.poll_interval_ms must be between 1 and 3600000".to_owned(),
-            ));
-        }
-        if self.jobs.max_attempts == 0 || self.jobs.max_attempts > 20 {
-            return Err(Error::Config(
-                "jobs.max_attempts must be between 1 and 20".to_owned(),
-            ));
-        }
-        if self.jobs.context_run_retention_days == 0 || self.jobs.context_run_retention_days > 3_650
-        {
-            return Err(Error::Config(
-                "jobs.context_run_retention_days must be between 1 and 3650".to_owned(),
-            ));
-        }
+        self.validate_jobs()?;
         if self.structural.max_files == 0
             || self.structural.max_file_bytes == 0
             || self.structural.git_history_commits == 0
@@ -510,6 +545,17 @@ impl Config {
             ));
         }
         crate::security::Redactor::new(&self.security.custom_redaction_patterns)?;
+
+        if !(2..=64).contains(&self.synthesis.min_supporting_episodes) {
+            return Err(Error::Config(
+                "synthesis.min_supporting_episodes must be between 2 and 64".to_owned(),
+            ));
+        }
+        if !(1..=10_000).contains(&self.synthesis.min_distinct_uses) {
+            return Err(Error::Config(
+                "synthesis.min_distinct_uses must be between 1 and 10000".to_owned(),
+            ));
+        }
 
         validate_proxy_network(self)?;
         Ok(())
@@ -816,6 +862,41 @@ mod tests {
                     .expect_err("invalid jobs limits");
             assert!(error.to_string().contains(needle), "{name}: {error}");
         }
+    }
+
+    #[test]
+    fn synthesis_defaults_are_conservative_and_thresholds_are_validated() {
+        let defaults = Config::default().synthesis;
+        assert_eq!(defaults.min_supporting_episodes, 3);
+        assert_eq!(defaults.min_distinct_uses, 3);
+        assert!(!defaults.auto, "auto synthesis must be opt-in (spec P9)");
+        assert!(
+            !defaults.cross_project_hypotheses,
+            "cross-project transfer must be opt-in (spec 16.5)"
+        );
+
+        let temp = TempDir::new().expect("temp dir");
+        let invalid = temp.path().join("synthesis.toml");
+        fs::write(&invalid, "[synthesis]\nmin_supporting_episodes = 1\n").expect("config");
+        let error = Config::load_layers(
+            Some(&invalid),
+            None,
+            &ConfigOverrides::default(),
+            temp.path(),
+        )
+        .expect_err("single-episode procedures are not allowed");
+        assert!(error.to_string().contains("min_supporting_episodes"));
+
+        let zero_uses = temp.path().join("synthesis-uses.toml");
+        fs::write(&zero_uses, "[synthesis]\nmin_distinct_uses = 0\n").expect("config");
+        let error = Config::load_layers(
+            Some(&zero_uses),
+            None,
+            &ConfigOverrides::default(),
+            temp.path(),
+        )
+        .expect_err("zero-use skill promotion is not allowed");
+        assert!(error.to_string().contains("min_distinct_uses"));
     }
 
     #[test]

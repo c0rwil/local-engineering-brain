@@ -576,6 +576,15 @@ impl ExperienceStore {
                     final_commit
                 ],
             )?;
+            // Close open context-usage records for this task with the observed
+            // outcome. Only compilations that explicitly declared this task are
+            // touched, so usage counts never over-attribute (spec P2).
+            transaction.execute(
+                "UPDATE usage_events SET outcome = ?2
+                 WHERE source_type = 'task' AND source_id = ?1
+                   AND usage_kind = 'context_served' AND outcome IS NULL",
+                params![task_id.as_str(), outcome.as_str()],
+            )?;
             let event = DomainEvent::TaskFinished {
                 project_id,
                 task_id: task_id.clone(),
