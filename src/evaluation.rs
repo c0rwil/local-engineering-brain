@@ -345,12 +345,23 @@ fn run_one(
     copy_repository(&source_repo, &worktree)?;
     let run_artifacts = artifact_dir.join(&run_name);
     create_private_dir_all(&run_artifacts)?;
-    let state_root = isolation_root.join(format!("{run_name}-state"));
+    // Deliberately short: `sun_path` is ~104 bytes on macOS, and the state
+    // dir hosts the arm's Unix socket, so the descriptive run name must not
+    // appear in this path (the worktree and artifact dirs carry it instead).
+    let state_root = isolation_root.join(format!("s{ordinal:06}"));
     fs::create_dir(&state_root).map_err(|source| io_error(&state_root, source))?;
     make_private_dir(&state_root)?;
     let arm_database = state_root.join("brain.sqlite");
     fs::copy(brain_baseline, &arm_database).map_err(|source| io_error(&arm_database, source))?;
     let arm_socket = state_root.join("lebd.sock");
+    if arm_socket.as_os_str().len() > 100 {
+        return Err(Error::Config(format!(
+            "evaluation socket path exceeds the platform Unix-socket limit ({} bytes): {}; \
+             set TMPDIR to a shorter directory and rerun",
+            arm_socket.as_os_str().len(),
+            arm_socket.display()
+        )));
+    }
     let proxy_port = reserve_loopback_port()?;
     let timeout = Duration::from_secs(
         task.limits
