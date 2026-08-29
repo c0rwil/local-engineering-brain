@@ -42,9 +42,10 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "semantic_index",
         include_str!("migrations/0006_semantic_index.sql"),
     ),
+    (7, "jobs", include_str!("migrations/0007_jobs.sql")),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 6;
+pub const LATEST_MIGRATION_VERSION: i64 = 7;
 
 /// Reopenable handle to the canonical database.
 ///

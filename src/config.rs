@@ -14,6 +14,7 @@ pub struct Config {
     pub cache: CacheConfig,
     pub context: ContextConfig,
     pub daemon: DaemonConfig,
+    pub jobs: JobsConfig,
     pub semantic: SemanticConfig,
     pub storage: StorageConfig,
     pub structural: StructuralConfig,
@@ -72,6 +73,34 @@ pub struct DaemonConfig {
     pub background_concurrency: u16,
     pub rss_soft_limit_mb: u32,
     pub rss_hard_limit_mb: u32,
+}
+
+/// Durable daemon-owned background job execution over the canonical `jobs`
+/// table. The runner polls on a fixed interval, executes under the daemon's
+/// bounded background slots, and never starts new jobs under hard RSS pressure.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct JobsConfig {
+    /// Run the background job loop inside the daemon.
+    pub enabled: bool,
+    /// Fixed (jitterless) queue poll interval.
+    pub poll_interval_ms: u64,
+    /// Attempts before a repeatedly failing job is marked `dead`.
+    pub max_attempts: u32,
+    /// `context_runs`/`context_items` older than this are deleted by the
+    /// daily `consolidation_gc` job in bounded batches (spec section 16).
+    pub context_run_retention_days: u32,
+}
+
+impl Default for JobsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            poll_interval_ms: 5_000,
+            max_attempts: 5,
+            context_run_retention_days: 90,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -421,6 +450,22 @@ impl Config {
                 "daemon RSS limits must be positive with soft < hard".to_owned(),
             ));
         }
+        if self.jobs.poll_interval_ms == 0 || self.jobs.poll_interval_ms > 3_600_000 {
+            return Err(Error::Config(
+                "jobs.poll_interval_ms must be between 1 and 3600000".to_owned(),
+            ));
+        }
+        if self.jobs.max_attempts == 0 || self.jobs.max_attempts > 20 {
+            return Err(Error::Config(
+                "jobs.max_attempts must be between 1 and 20".to_owned(),
+            ));
+        }
+        if self.jobs.context_run_retention_days == 0 || self.jobs.context_run_retention_days > 3_650
+        {
+            return Err(Error::Config(
+                "jobs.context_run_retention_days must be between 1 and 3650".to_owned(),
+            ));
+        }
         if self.structural.max_files == 0
             || self.structural.max_file_bytes == 0
             || self.structural.git_history_commits == 0
@@ -725,6 +770,52 @@ mod tests {
         )
         .expect_err("scan bound below candidate bound");
         assert!(error.to_string().contains("semantic.max_candidates"));
+    }
+
+    #[test]
+    fn shipped_example_config_parses_and_validates() {
+        let temp = TempDir::new().expect("temp dir");
+        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/leb.example.toml");
+        let config = Config::load_layers(
+            Some(&example),
+            None,
+            &ConfigOverrides::default(),
+            temp.path(),
+        )
+        .expect("example config must stay valid");
+        assert!(config.jobs.enabled);
+        assert_eq!(config.jobs.poll_interval_ms, 5_000);
+        assert_eq!(config.jobs.max_attempts, 5);
+        assert_eq!(config.jobs.context_run_retention_days, 90);
+    }
+
+    #[test]
+    fn jobs_limits_are_validated() {
+        let temp = TempDir::new().expect("temp dir");
+        for (name, body, needle) in [
+            (
+                "poll.toml",
+                "[jobs]\npoll_interval_ms = 0\n",
+                "poll_interval_ms",
+            ),
+            (
+                "attempts.toml",
+                "[jobs]\nmax_attempts = 21\n",
+                "max_attempts",
+            ),
+            (
+                "retention.toml",
+                "[jobs]\ncontext_run_retention_days = 0\n",
+                "context_run_retention_days",
+            ),
+        ] {
+            let path = temp.path().join(name);
+            fs::write(&path, body).expect("config");
+            let error =
+                Config::load_layers(Some(&path), None, &ConfigOverrides::default(), temp.path())
+                    .expect_err("invalid jobs limits");
+            assert!(error.to_string().contains(needle), "{name}: {error}");
+        }
     }
 
     #[test]

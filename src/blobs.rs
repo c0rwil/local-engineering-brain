@@ -313,6 +313,31 @@ impl BlobStore {
         })
     }
 
+    /// Digests of files present on disk with no metadata row, bounded to
+    /// `limit`. This is the same discovery `leb doctor` reports as
+    /// `orphan_files`; callers such as the `consolidation_gc` job may delete
+    /// these files because nothing canonical references them. Names that are
+    /// not valid digests (for example abandoned temporary files) are skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when metadata cannot be read or the blob directory
+    /// cannot be listed.
+    pub fn orphaned_digests(&self, limit: usize) -> Result<Vec<String>> {
+        let rows: BTreeSet<String> = self.database.with_reader(|connection| {
+            let mut statement = connection.prepare("SELECT digest FROM blobs")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<std::result::Result<BTreeSet<_>, _>>()
+                .map_err(Error::from)
+        })?;
+        Ok(self
+            .list_files()?
+            .into_iter()
+            .filter(|name| validate_digest(name).is_ok() && !rows.contains(name))
+            .take(limit)
+            .collect())
+    }
+
     /// Names of every regular file under the sharded blob root.
     fn list_files(&self) -> Result<BTreeSet<String>> {
         let mut names = BTreeSet::new();

@@ -17,6 +17,7 @@ pub mod events;
 pub mod experience;
 pub mod export;
 pub mod ids;
+pub mod jobs;
 pub mod learning;
 pub mod mcp;
 pub mod memory;

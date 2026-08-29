@@ -141,7 +141,7 @@ pub struct MemoryRecord {
 }
 
 /// Outcome of one symbol-drift invalidation sweep.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DriftInvalidation {
     /// Active memories quarantined as suspect by this sweep.
     pub invalidated: u64,

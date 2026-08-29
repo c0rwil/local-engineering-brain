@@ -8,16 +8,17 @@ use leb::Result;
 use leb::config::{Config, ConfigOverrides};
 use leb::context::{ContextCompileRequest, ContextMode};
 use leb::daemon::{
-    AttemptCreateRequest, EvidenceCreateRequest, MemoryCreateRequest, MemoryListRequest,
-    MemoryPromoteRequest, ProjectExportRequest, SemanticRebuildRequest, TaskFinishRequest,
-    TaskStartRequest, WorldSearchRequest,
+    AttemptCreateRequest, EvidenceCreateRequest, JobEnqueueRequest, JobListRequest,
+    MemoryCreateRequest, MemoryListRequest, MemoryPromoteRequest, ProjectExportRequest,
+    SemanticRebuildRequest, TaskFinishRequest, TaskStartRequest, WorldSearchRequest,
 };
 use leb::daemon::{DaemonClient, ProjectStatus};
 use leb::doctor::DoctorReport;
 use leb::evaluation::EvaluationRunner;
 use leb::events::EventStore;
 use leb::experience::{AttemptOutcome, EvidenceStrength, TaskOutcome};
-use leb::ids::{AttemptId, EvidenceId, MemoryId, TaskId};
+use leb::ids::{AttemptId, EvidenceId, JobId, MemoryId, TaskId};
+use leb::jobs::{JobRecord, JobStatus, JobType};
 use leb::learning::DistillationRequest;
 use leb::memory::{EpistemicState, MemoryDraft};
 use leb::projects::GitState;
@@ -122,6 +123,12 @@ enum Commands {
     Semantic {
         #[command(subcommand)]
         action: SemanticAction,
+    },
+
+    /// Inspect and enqueue durable daemon background jobs.
+    Jobs {
+        #[command(subcommand)]
+        action: JobsAction,
     },
 
     /// Run a reproducible paired brain-off/brain-on benchmark.
@@ -257,6 +264,39 @@ enum SemanticAction {
     Rebuild {
         #[arg(default_value = ".")]
         path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum JobsAction {
+    /// List newest jobs, optionally filtered by status.
+    List {
+        /// pending | running | succeeded | failed | dead
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Enqueue one allowlisted job type: `fts_integrity`, `semantic_rebuild`,
+    /// `consolidation_gc`, or `evidence_reverify`. Enqueue is idempotent by
+    /// (type, dedupe key).
+    Enqueue {
+        job_type: String,
+        /// Project scope; required by `semantic_rebuild` and `evidence_reverify`.
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        dedupe_key: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one job.
+    Status {
+        id: String,
         #[arg(long)]
         json: bool,
     },
@@ -421,6 +461,7 @@ fn run(cli: Cli) -> Result<bool> {
         Commands::Semantic { action } => {
             run_semantic(&overrides, socket_override.as_deref(), &action)
         }
+        Commands::Jobs { action } => run_jobs(&overrides, socket_override.as_deref(), &action),
         Commands::Eval { action } => run_eval(&overrides, socket_override.as_deref(), &action),
         Commands::Task { action } => run_task(&overrides, socket_override.as_deref(), &action),
         Commands::Learn {
@@ -899,6 +940,99 @@ fn run_semantic(
         }
     }
     Ok(true)
+}
+
+fn run_jobs(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    action: &JobsAction,
+) -> Result<bool> {
+    let project_root = match action {
+        JobsAction::Enqueue { path, .. } => Some(discover_project_root(path)?),
+        JobsAction::List { .. } | JobsAction::Status { .. } => None,
+    };
+    let config = load_daemon_config(overrides, socket, project_root.as_deref())?;
+    let client = client(&config);
+    match action {
+        JobsAction::List {
+            status,
+            limit,
+            json,
+        } => {
+            let status = status.as_deref().map(JobStatus::parse).transpose()?;
+            let jobs = block_on(client.list_jobs(&JobListRequest {
+                status,
+                limit: *limit,
+            }))?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&jobs)?);
+            } else {
+                for job in &jobs {
+                    print_job_line(job);
+                }
+            }
+        }
+        JobsAction::Enqueue {
+            job_type,
+            path,
+            dedupe_key,
+            json,
+        } => {
+            let job_type = JobType::parse(job_type)?;
+            let project_id = if job_type.requires_project() {
+                Some(block_on(client.resolve_project(path))?.resolved.project.id)
+            } else {
+                None
+            };
+            let job = block_on(client.enqueue_job(&JobEnqueueRequest {
+                job_type,
+                project_id,
+                payload: None,
+                dedupe_key: dedupe_key.clone(),
+            }))?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&job)?);
+            } else {
+                println!(
+                    "Enqueued {} ({}), status {}",
+                    job.id,
+                    job.job_type.as_str(),
+                    job.status.as_str()
+                );
+            }
+        }
+        JobsAction::Status { id, json } => {
+            let id = JobId::parse(id)?;
+            let job = block_on(client.get_job(&id))?
+                .ok_or_else(|| leb::Error::Config(format!("unknown job `{id}`")))?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&job)?);
+            } else {
+                print_job_line(&job);
+                if let Some(error) = &job.last_error {
+                    println!("Error:  {error}");
+                }
+                if let Some(result) = &job.result {
+                    println!("Result: {result}");
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
+fn print_job_line(job: &JobRecord) {
+    println!(
+        "{}\t{}\t{}\tattempts {}/{}\t{}",
+        job.id,
+        job.job_type.as_str(),
+        job.status.as_str(),
+        job.attempts,
+        job.max_attempts,
+        job.project_id
+            .as_ref()
+            .map_or_else(|| "-".to_owned(), std::string::ToString::to_string)
+    );
 }
 
 fn run_memory(

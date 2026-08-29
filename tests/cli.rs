@@ -243,6 +243,118 @@ fn status_autostarts_daemon_without_direct_writes() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
+fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
+    let temp = TempDir::new().expect("temp dir");
+    let db = temp.path().join("brain.sqlite");
+    let socket = temp.path().join("lebd.sock");
+    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("lebd"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn daemon");
+    let ready_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+            break;
+        }
+        if let Some(status) = daemon.try_wait().expect("poll daemon process") {
+            panic!("daemon exited before readiness: {status}");
+        }
+        assert!(Instant::now() < ready_deadline, "daemon readiness timeout");
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let enqueued = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "jobs",
+            "enqueue",
+            "fts_integrity",
+            "--dedupe-key",
+            "cli-test",
+            "--json",
+        ])
+        .output()
+        .expect("enqueue job");
+    assert_process_success(&enqueued);
+    let job: serde_json::Value = serde_json::from_slice(&enqueued.stdout).expect("job json");
+    let job_id = job["id"].as_str().expect("job id").to_owned();
+    assert_eq!(job["job_type"], "fts_integrity");
+
+    // Job types outside the allowlist never reach the daemon.
+    AssertCommand::cargo_bin("leb")
+        .expect("leb binary")
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "jobs",
+            "enqueue",
+            "shell_exec",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported job type"));
+
+    let listed = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "jobs",
+            "list",
+        ])
+        .output()
+        .expect("list jobs");
+    assert_process_success(&listed);
+    let stdout = String::from_utf8_lossy(&listed.stdout);
+    assert!(stdout.contains(&job_id), "list shows the job: {stdout}");
+    assert!(stdout.contains("fts_integrity"), "{stdout}");
+
+    let shown = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "jobs",
+            "status",
+            &job_id,
+        ])
+        .output()
+        .expect("job status");
+    assert_process_success(&shown);
+    assert!(String::from_utf8_lossy(&shown.stdout).contains(&job_id));
+
+    let stopped = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "daemon",
+            "stop",
+        ])
+        .output()
+        .expect("stop daemon");
+    assert_process_success(&stopped);
+    let daemon_output = daemon.wait_with_output().expect("daemon exits gracefully");
+    assert_process_success(&daemon_output);
+}
+
+#[test]
 fn process_kill_rolls_back_event_and_projection_together() {
     let temp = TempDir::new().expect("temp dir");
     let db = temp.path().join("brain.sqlite");
