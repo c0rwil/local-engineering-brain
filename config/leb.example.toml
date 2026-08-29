@@ -10,6 +10,9 @@ enabled = false
 [context]
 max_injected_tokens = 6000
 stable_prefix_tokens = 1800
+# Deterministic local semantic retrieval (hashed n-gram embeddings over the
+# SQLite vector sidecar). Off by default: enable only after a measured paired
+# benchmark win (spec Appendix E/G); disabled keeps the ablation control exact.
 semantic_retrieval = false
 
 [daemon]
@@ -23,6 +26,12 @@ writer_queue_capacity = 4096
 background_concurrency = 2
 rss_soft_limit_mb = 600
 rss_hard_limit_mb = 900
+
+[semantic]
+# Bounds for the derived vector sidecar; the embedding dimension is a
+# compile-time constant. The sidecar is rebuildable: `leb semantic rebuild .`
+max_candidates = 50
+max_scanned = 50000
 
 [storage]
 db_path = "~/.leb/brain.sqlite"

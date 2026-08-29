@@ -14,6 +14,7 @@ pub struct Config {
     pub cache: CacheConfig,
     pub context: ContextConfig,
     pub daemon: DaemonConfig,
+    pub semantic: SemanticConfig,
     pub storage: StorageConfig,
     pub structural: StructuralConfig,
     pub embeddings: EmbeddingsConfig,
@@ -79,6 +80,28 @@ pub struct ContextConfig {
     pub max_injected_tokens: u32,
     pub stable_prefix_tokens: u32,
     pub semantic_retrieval: bool,
+}
+
+/// Bounds for the optional deterministic semantic retrieval stage. The stage
+/// itself is toggled by `context.semantic_retrieval` (default `false`); the
+/// embedding dimension is a compile-time constant
+/// ([`crate::semantic::EMBEDDING_DIMENSION`]).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SemanticConfig {
+    /// Maximum semantic candidates merged into hybrid retrieval per request.
+    pub max_candidates: u32,
+    /// Hard bound on vectors scanned per brute-force cosine search.
+    pub max_scanned: u32,
+}
+
+impl Default for SemanticConfig {
+    fn default() -> Self {
+        Self {
+            max_candidates: 50,
+            max_scanned: 50_000,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -466,9 +489,14 @@ fn validate_supported_v1_features(config: &Config) -> Result<()> {
             ));
         }
     }
-    if config.context.semantic_retrieval {
+    if config.semantic.max_candidates == 0
+        || config.semantic.max_candidates > 1_000
+        || config.semantic.max_scanned < config.semantic.max_candidates
+        || config.semantic.max_scanned > 1_000_000
+    {
         return Err(Error::Config(
-            "semantic retrieval is unavailable in V1; use deterministic lexical/structural retrieval"
+            "semantic.max_candidates must be in 1..=1000 and semantic.max_scanned must be \
+             between max_candidates and 1000000"
                 .to_owned(),
         ));
     }
@@ -648,6 +676,47 @@ mod tests {
     }
 
     #[test]
+    fn semantic_retrieval_is_opt_in_and_bounded() {
+        assert!(
+            !Config::default().context.semantic_retrieval,
+            "semantic retrieval must stay disabled until measured (Appendix E)"
+        );
+
+        let temp = TempDir::new().expect("temp dir");
+        let enabled = temp.path().join("semantic.toml");
+        fs::write(
+            &enabled,
+            "[context]\nsemantic_retrieval = true\n\n[semantic]\nmax_candidates = 25\nmax_scanned = 10000\n",
+        )
+        .expect("config");
+        let config = Config::load_layers(
+            Some(&enabled),
+            None,
+            &ConfigOverrides::default(),
+            temp.path(),
+        )
+        .expect("semantic retrieval is configurable");
+        assert!(config.context.semantic_retrieval);
+        assert_eq!(config.semantic.max_candidates, 25);
+        assert_eq!(config.semantic.max_scanned, 10_000);
+
+        let invalid = temp.path().join("semantic-invalid.toml");
+        fs::write(
+            &invalid,
+            "[semantic]\nmax_candidates = 100\nmax_scanned = 10\n",
+        )
+        .expect("config");
+        let error = Config::load_layers(
+            Some(&invalid),
+            None,
+            &ConfigOverrides::default(),
+            temp.path(),
+        )
+        .expect_err("scan bound below candidate bound");
+        assert!(error.to_string().contains("semantic.max_candidates"));
+    }
+
+    #[test]
     fn test_policy_block_not_default() {
         assert_eq!(
             Config::default().policy.default_enforcement,
@@ -701,8 +770,9 @@ mod tests {
 
         let zero = temp.path().join("zero-cache.toml");
         fs::write(&zero, "[cache]\nenabled = true\ntotal_budget_mb = 0\n").expect("config");
-        let error = Config::load_layers(Some(&zero), None, &ConfigOverrides::default(), temp.path())
-            .expect_err("zero cache budget");
+        let error =
+            Config::load_layers(Some(&zero), None, &ConfigOverrides::default(), temp.path())
+                .expect_err("zero cache budget");
         assert!(error.to_string().contains("positive"));
     }
 

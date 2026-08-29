@@ -9,8 +9,8 @@ use leb::config::{Config, ConfigOverrides};
 use leb::context::{ContextCompileRequest, ContextMode};
 use leb::daemon::{
     AttemptCreateRequest, EvidenceCreateRequest, MemoryCreateRequest, MemoryListRequest,
-    MemoryPromoteRequest, ProjectExportRequest, TaskFinishRequest, TaskStartRequest,
-    WorldSearchRequest,
+    MemoryPromoteRequest, ProjectExportRequest, SemanticRebuildRequest, TaskFinishRequest,
+    TaskStartRequest, WorldSearchRequest,
 };
 use leb::daemon::{DaemonClient, ProjectStatus};
 use leb::doctor::DoctorReport;
@@ -107,6 +107,12 @@ enum Commands {
     Memory {
         #[command(subcommand)]
         action: MemoryAction,
+    },
+
+    /// Manage the derived semantic vector sidecar.
+    Semantic {
+        #[command(subcommand)]
+        action: SemanticAction,
     },
 
     /// Run a reproducible paired brain-off/brain-on benchmark.
@@ -231,6 +237,17 @@ enum MemoryAction {
     /// Irreversibly purge content and all derived retrieval material.
     Purge {
         id: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SemanticAction {
+    /// Rebuild the rebuildable vector sidecar from canonical memories.
+    Rebuild {
+        #[arg(default_value = ".")]
+        path: PathBuf,
         #[arg(long)]
         json: bool,
     },
@@ -389,6 +406,9 @@ fn run(cli: Cli) -> Result<bool> {
             json,
         ),
         Commands::Memory { action } => run_memory(&overrides, socket_override.as_deref(), &action),
+        Commands::Semantic { action } => {
+            run_semantic(&overrides, socket_override.as_deref(), &action)
+        }
         Commands::Eval { action } => run_eval(&overrides, socket_override.as_deref(), &action),
         Commands::Task { action } => run_task(&overrides, socket_override.as_deref(), &action),
         Commands::Learn {
@@ -838,6 +858,33 @@ fn run_context(
             context.items.len(),
             context.metrics.compile_ms
         );
+    }
+    Ok(true)
+}
+
+fn run_semantic(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    action: &SemanticAction,
+) -> Result<bool> {
+    match action {
+        SemanticAction::Rebuild { path, json } => {
+            let root = discover_project_root(path)?;
+            let config = load_daemon_config(overrides, socket, Some(&root))?;
+            let client = client(&config);
+            let status = block_on(client.resolve_project(path))?;
+            let response = block_on(client.rebuild_semantic_index(&SemanticRebuildRequest {
+                project_id: status.resolved.project.id,
+            }))?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                println!(
+                    "Rebuilt {} semantic vectors for {}",
+                    response.vectors, response.project_id
+                );
+            }
+        }
     }
     Ok(true)
 }

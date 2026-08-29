@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::ids::{MemoryId, ProjectId};
 use crate::memory::{MemoryRecord, MemoryStore};
+use crate::semantic::{
+    EmbeddingProvider, HashedNGramEmbedder, SemanticOptions, SqliteVectorIndex, VectorIndex,
+};
 use crate::storage::Database;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -42,8 +45,16 @@ pub struct RetrievalRequest<'a> {
 }
 
 #[derive(Clone, Debug)]
+struct SemanticStage {
+    embedder: HashedNGramEmbedder,
+    index: SqliteVectorIndex,
+    max_candidates: usize,
+}
+
+#[derive(Clone, Debug)]
 pub struct Retriever {
     memories: MemoryStore,
+    semantic: Option<SemanticStage>,
 }
 
 impl Retriever {
@@ -51,14 +62,33 @@ impl Retriever {
     pub fn new(database: Database) -> Self {
         Self {
             memories: MemoryStore::new(database),
+            semantic: None,
+        }
+    }
+
+    /// Enable the optional deterministic semantic candidate stage.
+    ///
+    /// When disabled ([`Self::new`]) behavior is byte-identical to the pure
+    /// lexical/structural retriever and `semantic` stays exactly `0.0`, which
+    /// keeps the brain-off/ablation control valid (spec Appendix E/G).
+    #[must_use]
+    pub fn with_semantic(database: Database, options: SemanticOptions) -> Self {
+        Self {
+            memories: MemoryStore::new(database.clone()),
+            semantic: Some(SemanticStage {
+                embedder: HashedNGramEmbedder::new(),
+                index: SqliteVectorIndex::new(database, options.max_scanned),
+                max_candidates: options.max_candidates,
+            }),
         }
     }
 
     /// Retrieve validated, active, structurally current memories.
     ///
-    /// Candidate generation combines FTS5, structural overlap, and an
-    /// importance/utility fallback. Semantic score is explicitly zero when no
-    /// optional vector accelerator is configured.
+    /// Candidate generation combines FTS5, structural overlap, an
+    /// importance/utility fallback, and — only when explicitly enabled —
+    /// bounded semantic vector search. Semantic score is explicitly zero when
+    /// no vector accelerator is configured.
     ///
     /// # Errors
     ///
@@ -90,6 +120,7 @@ impl Retriever {
         {
             candidates.entry(memory.id.clone()).or_insert((memory, 0.0));
         }
+        let semantic_scores = self.semantic_scores(request, &mut candidates)?;
 
         let task_lower = request.task_text.to_lowercase();
         let mut ranked = Vec::new();
@@ -102,6 +133,7 @@ impl Retriever {
                 .memories
                 .structural_overlap(&memory.id, request.current_paths)?;
             let utility = utility_score(&memory);
+            let semantic = semantic_scores.get(&memory.id).copied().unwrap_or(0.0);
             let why = RetrievalWhy {
                 lexical,
                 exact,
@@ -110,7 +142,7 @@ impl Retriever {
                 utility,
                 importance: memory.importance,
                 validity: 1.0,
-                semantic: 0.0,
+                semantic,
                 note: "active validated memory; current symbol digests and commit bounds match"
                     .to_owned(),
             };
@@ -132,6 +164,42 @@ impl Retriever {
         });
         ranked.truncate(request.limit);
         Ok(ranked)
+    }
+
+    /// Embed the task text and merge the bounded top-k semantic hits into the
+    /// candidate set, returning per-memory cosine scores clamped to `[0, 1]`.
+    /// Returns an empty map when the semantic stage is disabled.
+    fn semantic_scores(
+        &self,
+        request: &RetrievalRequest<'_>,
+        candidates: &mut BTreeMap<MemoryId, (MemoryRecord, f64)>,
+    ) -> Result<BTreeMap<MemoryId, f64>> {
+        let mut scores = BTreeMap::new();
+        let Some(stage) = &self.semantic else {
+            return Ok(scores);
+        };
+        let query_vector = stage
+            .embedder
+            .embed(&[request.task_text])?
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::Semantic("embedder returned no query vector".to_owned()))?;
+        for hit in stage
+            .index
+            .search(request.project_id, &query_vector, stage.max_candidates)?
+        {
+            let score = hit.score.clamp(0.0, 1.0);
+            if score <= 0.0 {
+                continue;
+            }
+            if !candidates.contains_key(&hit.memory_id)
+                && let Some(memory) = self.memories.get(&hit.memory_id)?
+            {
+                candidates.insert(hit.memory_id.clone(), (memory, 0.0));
+            }
+            scores.insert(hit.memory_id, score);
+        }
+        Ok(scores)
     }
 }
 
@@ -304,5 +372,114 @@ mod tests {
         assert_eq!(results[0].memory.id, validated.id);
         assert_ne!(results[0].memory.id, candidate.id);
         assert!(results[0].why.lexical > 0.0);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn semantic_stage_is_opt_in_and_only_changes_the_semantic_component() {
+        let temp = TempDir::new().expect("temp");
+        let root = temp.path().join("project");
+        std::fs::create_dir(&root).expect("project");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let project = ProjectRegistry::new(database.clone())
+            .resolve_or_register(&root)
+            .expect("project")
+            .project
+            .id;
+        let store = MemoryStore::new(database.clone());
+        let mut validated_ids = Vec::new();
+        for claim in [
+            "Release reservations when abort cleanup runs",
+            "Rotate archived log files every week",
+        ] {
+            let memory = store
+                .create_candidate(
+                    &project,
+                    &MemoryDraft {
+                        scope_type: "project".to_owned(),
+                        scope_id: project.to_string(),
+                        kind: "lesson".to_owned(),
+                        claim: claim.to_owned(),
+                        rationale: "Fixture".to_owned(),
+                        confidence: 0.5,
+                        importance: 0.5,
+                        tags: Vec::new(),
+                        valid_from_commit: None,
+                        valid_to_commit: None,
+                        trust_source: "human_instruction".to_owned(),
+                        evidence_ids: Vec::new(),
+                        source_task_ids: Vec::new(),
+                        node_ids: Vec::new(),
+                    },
+                )
+                .expect("candidate");
+            store
+                .promote(&memory.id, EpistemicState::Validated, true)
+                .expect("validated");
+            validated_ids.push(memory.id);
+        }
+
+        let request = RetrievalRequest {
+            project_id: &project,
+            task_text: "fix abort cleanup and release reservations",
+            current_paths: &[],
+            repository_root: None,
+            head: None,
+            limit: 10,
+        };
+        let disabled = Retriever::new(database.clone())
+            .retrieve(&request)
+            .expect("disabled retrieve");
+        let disabled_again = Retriever::new(database.clone())
+            .retrieve(&request)
+            .expect("disabled retry");
+        assert_eq!(
+            disabled, disabled_again,
+            "disabled retrieval must stay deterministic"
+        );
+        assert!(
+            disabled
+                .iter()
+                .all(|result| result.why.semantic.abs() < f64::EPSILON),
+            "disabled retrieval must keep semantic at exactly 0.0"
+        );
+
+        let enabled = Retriever::with_semantic(
+            database,
+            SemanticOptions {
+                max_candidates: 50,
+                max_scanned: 50_000,
+            },
+        )
+        .retrieve(&request)
+        .expect("enabled retrieve");
+        assert_eq!(enabled.len(), disabled.len());
+        let related = enabled
+            .iter()
+            .find(|result| result.memory.id == validated_ids[0])
+            .expect("related memory retrieved");
+        let unrelated = enabled
+            .iter()
+            .find(|result| result.memory.id == validated_ids[1])
+            .expect("unrelated memory retrieved");
+        assert!(
+            related.why.semantic > 0.0,
+            "enabled retrieval must populate the semantic score"
+        );
+        assert!((0.0..=1.0).contains(&related.why.semantic));
+        assert!(related.why.semantic > unrelated.why.semantic);
+        assert_eq!(enabled[0].memory.id, validated_ids[0]);
+        for result in &enabled {
+            let baseline = disabled
+                .iter()
+                .find(|candidate| candidate.memory.id == result.memory.id)
+                .expect("same candidate set");
+            assert!(
+                (result.score - (baseline.score + 0.24 * result.why.semantic)).abs() < 1e-9,
+                "semantic must only add the weighted semantic component"
+            );
+            assert!((result.why.lexical - baseline.why.lexical).abs() < f64::EPSILON);
+            assert!((result.why.structural - baseline.why.structural).abs() < f64::EPSILON);
+        }
     }
 }

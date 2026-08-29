@@ -238,6 +238,15 @@ impl MemoryStore {
                     tags_text
                 ],
             )?;
+            crate::semantic::upsert_memory_vector(
+                transaction,
+                &id,
+                project_id,
+                claim,
+                rationale,
+                &tags,
+                now,
+            )?;
             link_draft_provenance(transaction, &id, draft)?;
             append_generated_in_transaction(transaction, &event, now)
         })?;
@@ -401,6 +410,7 @@ impl MemoryStore {
                              updated_at_ms = ?2 WHERE id = ?1 AND status = 'active'",
                         params![id.as_str(), now],
                     )?;
+                    crate::semantic::delete_memory_vector(transaction, &id)?;
                     append_generated_in_transaction(
                         transaction,
                         &DomainEvent::MemoryStateChanged {
@@ -459,6 +469,10 @@ impl MemoryStore {
                 "DELETE FROM memories_fts WHERE memory_id = ?1",
                 [id.as_str()],
             )?;
+            // Purge MUST remove embeddings (spec §26.5). The foreign key
+            // cascade would also remove this row, but the derived sidecar is
+            // purged explicitly to mirror the FTS projection.
+            crate::semantic::delete_memory_vector(transaction, id)?;
             // Context runs duplicate rendered claim/rationale text for exact
             // retry and explanation. Purge the complete derived run before its
             // provenance rows disappear so no canonical copy survives.
@@ -781,6 +795,14 @@ impl MemoryStore {
                      known_to_ms = CASE WHEN ?3 = 'active' THEN NULL ELSE ?4 END,
                      updated_at_ms = ?4 WHERE id = ?1",
                 params![id.as_str(), epistemic_state.as_str(), status.as_str(), now],
+            )?;
+            // Forgotten/archived/invalidated memories drop their derived
+            // vector immediately; reactivation re-derives it deterministically.
+            crate::semantic::sync_memory_vector(
+                transaction,
+                id,
+                status == MemoryStatus::Active,
+                now,
             )?;
             append_generated_in_transaction(
                 transaction,
@@ -1232,6 +1254,58 @@ mod tests {
             })
             .expect("counts");
         assert_eq!(counts, (0, 0, 1));
+    }
+
+    #[test]
+    fn memory_lifecycle_maintains_the_derived_semantic_vector() {
+        fn vector_rows(database: &Database, id: &MemoryId) -> i64 {
+            database
+                .with_reader(|connection| {
+                    connection
+                        .query_row(
+                            "SELECT COUNT(*) FROM memory_vectors WHERE memory_id = ?1",
+                            [id.as_str()],
+                            |row| row.get(0),
+                        )
+                        .map_err(Error::from)
+                })
+                .expect("vector count")
+        }
+
+        let (_temp, database, project) = fixture();
+        let memories = MemoryStore::new(database.clone());
+        let created = memories
+            .create_candidate(&project, &draft(&project, Vec::new()))
+            .expect("memory");
+        assert_eq!(
+            vector_rows(&database, &created.id),
+            1,
+            "creation must upsert the derived embedding"
+        );
+
+        memories
+            .mark_status(&created.id, MemoryStatus::Archived, "user_forget")
+            .expect("forget");
+        assert_eq!(
+            vector_rows(&database, &created.id),
+            0,
+            "forget must drop the derived embedding"
+        );
+        memories
+            .mark_status(&created.id, MemoryStatus::Active, "user_restore")
+            .expect("restore");
+        assert_eq!(
+            vector_rows(&database, &created.id),
+            1,
+            "reactivation must re-derive the embedding"
+        );
+
+        memories.purge(&created.id).expect("purge");
+        assert_eq!(
+            vector_rows(&database, &created.id),
+            0,
+            "purge must remove embeddings (spec 26.5)"
+        );
     }
 
     #[test]

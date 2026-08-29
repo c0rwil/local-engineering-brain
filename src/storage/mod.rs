@@ -32,9 +32,16 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "scan_changed_paths",
         include_str!("migrations/0004_scan_changed_paths.sql"),
     ),
+    // NOTE: version 5 is reserved for a migration developed in a parallel
+    // work package; the semantic sidecar deliberately claims version 6.
+    (
+        6,
+        "semantic_index",
+        include_str!("migrations/0006_semantic_index.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 4;
+pub const LATEST_MIGRATION_VERSION: i64 = 6;
 
 /// Reopenable handle to the canonical database.
 ///
