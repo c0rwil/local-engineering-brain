@@ -32,12 +32,30 @@ pub struct BrainConfig {
     pub raw_transcript_retention_days: u32,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CacheConfig {
-    /// Reserved for the post-V1 derived-cache integration. Enabling it is
-    /// rejected until cache invalidation is wired to canonical generations.
+    /// Enable the daemon's byte-bounded derived read caches. Cached values are
+    /// never canonical: every key is scoped by project and storage generation,
+    /// and graph mutations bump the generation before responses return.
     pub enabled: bool,
+    /// Hard aggregate budget across every active project partition.
+    pub total_budget_mb: u64,
+    /// Maximum concurrently cached projects; least-recent partitions evict.
+    pub max_active_projects: u16,
+    /// Objects heavier than this bypass the cache entirely.
+    pub max_item_kb: u32,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            total_budget_mb: 64,
+            max_active_projects: 8,
+            max_item_kb: 512,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -430,10 +448,23 @@ fn validate_supported_v1_features(config: &Config) -> Result<()> {
         ));
     }
     if config.cache.enabled {
-        return Err(Error::Config(
-            "derived in-process caching is reserved until generation invalidation is integrated"
-                .to_owned(),
-        ));
+        let per_project = config
+            .cache
+            .total_budget_mb
+            .saturating_mul(1024 * 1024)
+            .checked_div(u64::from(config.cache.max_active_projects))
+            .unwrap_or(0);
+        if per_project == 0 {
+            return Err(Error::Config(
+                "cache.total_budget_mb and cache.max_active_projects must be positive".to_owned(),
+            ));
+        }
+        if u64::from(config.cache.max_item_kb).saturating_mul(1024) > per_project {
+            return Err(Error::Config(
+                "cache.max_item_kb must fit within one project's share of the cache budget"
+                    .to_owned(),
+            ));
+        }
     }
     if config.context.semantic_retrieval {
         return Err(Error::Config(
@@ -655,14 +686,24 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_cache_enable_is_rejected() {
+    fn cache_budgets_are_validated() {
         let temp = TempDir::new().expect("temp dir");
         let path = temp.path().join("invalid-cache.toml");
-        fs::write(&path, "[cache]\nenabled = true\n").expect("config");
+        fs::write(
+            &path,
+            "[cache]\nenabled = true\ntotal_budget_mb = 1\nmax_active_projects = 4\nmax_item_kb = 1024\n",
+        )
+        .expect("config");
         let error =
             Config::load_layers(Some(&path), None, &ConfigOverrides::default(), temp.path())
-                .expect_err("unsupported cache");
-        assert!(error.to_string().contains("reserved"));
+                .expect_err("oversized cache item bound");
+        assert!(error.to_string().contains("max_item_kb"));
+
+        let zero = temp.path().join("zero-cache.toml");
+        fs::write(&zero, "[cache]\nenabled = true\ntotal_budget_mb = 0\n").expect("config");
+        let error = Config::load_layers(Some(&zero), None, &ConfigOverrides::default(), temp.path())
+            .expect_err("zero cache budget");
+        assert!(error.to_string().contains("positive"));
     }
 
     #[test]
