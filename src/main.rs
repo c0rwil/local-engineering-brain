@@ -66,6 +66,15 @@ enum Commands {
         action: DaemonAction,
     },
 
+    /// Show process-lifetime daemon metrics (reset on daemon restart).
+    Metrics {
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Render a single-shot plain-text observability dashboard.
+    Dashboard,
+
     /// Build or refresh the structural world model.
     Index {
         #[arg(default_value = ".")]
@@ -350,6 +359,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run(cli: Cli) -> Result<bool> {
     let overrides = ConfigOverrides {
         db_path: cli.db,
@@ -364,6 +374,8 @@ fn run(cli: Cli) -> Result<bool> {
         Commands::Daemon { action } => {
             run_daemon_action(&overrides, socket_override.as_deref(), &action)
         }
+        Commands::Metrics { json } => run_metrics(&overrides, socket_override.as_deref(), json),
+        Commands::Dashboard => run_dashboard(&overrides, socket_override.as_deref()),
         Commands::Index {
             path,
             changed,
@@ -1141,6 +1153,181 @@ fn run_daemon_action(
             Ok(true)
         }
     }
+}
+
+fn run_metrics(overrides: &ConfigOverrides, socket: Option<&Path>, json: bool) -> Result<bool> {
+    let config = load_daemon_config(overrides, socket, None)?;
+    let response = block_on(client(&config).metrics())?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(true);
+    }
+    println!("Daemon metrics (process-lifetime; reset on daemon restart)");
+    println!("Uptime:    {:.1} s", ms_to_seconds(response.uptime_ms));
+    let counters = &response.metrics.counters;
+    println!("\nCounters");
+    for (name, value) in [
+        ("context_compiles_brain", counters.context_compiles_brain),
+        ("context_compiles_off", counters.context_compiles_off),
+        ("injected_items", counters.injected_items),
+        ("injected_tokens", counters.injected_tokens),
+        (
+            "candidates_considered",
+            counters.retrieval_candidates_considered,
+        ),
+        (
+            "candidates_selected",
+            counters.retrieval_candidates_selected,
+        ),
+        ("memory_promotions", counters.memory_promotions),
+        ("memory_rejections", counters.memory_rejections),
+        ("memory_purges", counters.memory_purges),
+        ("memories_invalidated", counters.memories_invalidated),
+        ("stale_injections", counters.stale_injections),
+        ("evidence_records", counters.evidence_records),
+    ] {
+        println!("  {name:<24} {value}");
+    }
+    print_latency_table(&response.metrics);
+    if let Some(cache) = &response.cache {
+        println!("\nCache");
+        println!("  hits/misses            {}/{}", cache.hits, cache.misses);
+        println!(
+            "  search entries/bytes   {}/{}",
+            cache.search.entries, cache.search.weighted_bytes
+        );
+        println!(
+            "  neighbor entries/bytes {}/{}",
+            cache.neighbors.entries, cache.neighbors.weighted_bytes
+        );
+    }
+    Ok(true)
+}
+
+fn print_latency_table(metrics: &leb::metrics::MetricsSnapshot) {
+    println!("\nLatency (ms)               count      p50      p90      p95      p99");
+    print_latency_row("context_compile", &metrics.context_compile_ms);
+    print_latency_row("retrieval", &metrics.retrieval_ms);
+    print_latency_row("index_scan", &metrics.index_scan_ms);
+    for (group, histogram) in &metrics.requests_ms {
+        if histogram.count > 0 {
+            print_latency_row(&format!("request:{group}"), histogram);
+        }
+    }
+}
+
+fn print_latency_row(name: &str, histogram: &leb::metrics::HistogramSnapshot) {
+    println!(
+        "  {name:<24} {:>7} {:>8.1} {:>8.1} {:>8.1} {:>8.1}",
+        histogram.count, histogram.p50_ms, histogram.p90_ms, histogram.p95_ms, histogram.p99_ms
+    );
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn ms_to_seconds(ms: u64) -> f64 {
+    ms as f64 / 1_000.0
+}
+
+fn run_dashboard(overrides: &ConfigOverrides, socket: Option<&Path>) -> Result<bool> {
+    let config = load_daemon_config(overrides, socket, None)?;
+    let client = client(&config);
+    let health = block_on(client.health())?;
+    let response = block_on(client.metrics())?;
+    let memory = block_on(client.memory_stats())?;
+
+    println!("Local Engineering Brain dashboard (single snapshot)");
+    println!("\n== Daemon ==");
+    println!(
+        "Status:    {} (v{}, {})",
+        health.status, health.version, health.build_id
+    );
+    println!("Database:  {}", health.database.display());
+    println!("Uptime:    {:.1} s", ms_to_seconds(health.uptime_ms));
+    println!(
+        "Network:   {}",
+        if health.local_only {
+            "local-only"
+        } else {
+            "enabled"
+        }
+    );
+    if let Some(rss_bytes) = health.rss_bytes {
+        let mebibyte = 1_024_u64 * 1_024;
+        println!(
+            "RSS:       {}.{} MiB ({:?} pressure)",
+            rss_bytes / mebibyte,
+            (rss_bytes % mebibyte) * 10 / mebibyte,
+            health.memory_pressure
+        );
+    }
+    println!(
+        "Scheduler: {}/{} queued, {} completed, {} failed, {} rejected",
+        health.scheduler.queued,
+        health.scheduler.queue_capacity,
+        health.scheduler.completed,
+        health.scheduler.failed,
+        health.scheduler.rejected
+    );
+    println!(
+        "Readers:   {}/{} in use",
+        health.read_pool.in_use, health.read_pool.capacity
+    );
+
+    println!("\n== Cache ==");
+    if let Some(cache) = &health.cache {
+        println!("Hits:      {}", cache.hits);
+        println!("Misses:    {}", cache.misses);
+        println!(
+            "Entries:   {} search, {} neighbors",
+            cache.search.entries, cache.neighbors.entries
+        );
+        println!(
+            "Bytes:     {} / {} budget",
+            cache.search.weighted_bytes + cache.neighbors.weighted_bytes,
+            cache.search.total_budget_bytes + cache.neighbors.total_budget_bytes
+        );
+    } else {
+        println!("Disabled");
+    }
+
+    println!("\n== Latency ==");
+    print_latency_table(&response.metrics);
+
+    let counters = &response.metrics.counters;
+    println!("\n== Context compiles ==");
+    println!(
+        "Compiles:  {} brain / {} off",
+        counters.context_compiles_brain, counters.context_compiles_off
+    );
+    println!(
+        "Injected:  {} items, {} tokens",
+        counters.injected_items, counters.injected_tokens
+    );
+    println!(
+        "Candidates: {} considered, {} selected",
+        counters.retrieval_candidates_considered, counters.retrieval_candidates_selected
+    );
+    println!(
+        "Stale:     {} invalidated ({} previously injected)",
+        counters.memories_invalidated, counters.stale_injections
+    );
+
+    println!("\n== Memory ==");
+    println!("Total:     {}", memory.total);
+    for (status, count) in &memory.by_status {
+        println!("  status {status:<14} {count}");
+    }
+    for (epistemic_state, count) in &memory.by_epistemic_state {
+        println!("  state  {epistemic_state:<14} {count}");
+    }
+
+    println!("\n== Learning ==");
+    println!(
+        "Promotions: {} / rejections: {} / purges: {}",
+        counters.memory_promotions, counters.memory_rejections, counters.memory_purges
+    );
+    println!("Evidence:   {} records", counters.evidence_records);
+    Ok(true)
 }
 
 fn client(config: &Config) -> DaemonClient {

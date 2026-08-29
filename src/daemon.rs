@@ -33,7 +33,9 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::cache::{CacheStats, PartitionedCache};
 use crate::config::{Config, ConfigOverrides};
-use crate::context::{CompiledContext, ContextCompileRequest, ContextCompiler, ContextItem};
+use crate::context::{
+    CompiledContext, ContextCompileRequest, ContextCompiler, ContextItem, ContextMode,
+};
 use crate::doctor::DoctorReport;
 use crate::error::{Error, Result, io_error};
 use crate::evaluation::{EvaluationRecord, EvaluationStore};
@@ -45,6 +47,7 @@ use crate::export::{ExportReport, export_project};
 use crate::ids::{AttemptId, ContextRunId, EvidenceId, MemoryId, NodeId, ProjectId, TaskId};
 use crate::learning::{DistillationRequest, DistillationResult, LearningStore};
 use crate::memory::{EpistemicState, MemoryDraft, MemoryRecord, MemoryStore};
+use crate::metrics::{EndpointGroup, MetricsRegistry, MetricsSnapshot};
 use crate::projects::{ProjectRegistry, ResolvedProject};
 use crate::scheduler::{MutationPriority, MutationScheduler, SchedulerStats};
 use crate::security::Redactor;
@@ -75,6 +78,8 @@ const API_BACKUP_CREATE: &str = "/api/v1/admin/backups";
 const API_BACKUP_VERIFY: &str = "/api/v1/admin/backups/verify";
 const API_PROJECT_EXPORT: &str = "/api/v1/admin/export";
 const API_SEMANTIC_REBUILD: &str = "/api/v1/semantic/rebuild";
+const API_METRICS: &str = "/api/v1/metrics";
+const API_MEMORY_STATS: &str = "/api/v1/metrics/memories";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -85,6 +90,7 @@ struct DaemonState {
     blocking_slots: Arc<Semaphore>,
     background_slots: Arc<Semaphore>,
     world_cache: Option<Arc<WorldReadCache>>,
+    metrics: Arc<MetricsRegistry>,
     shutdown: Arc<tokio::sync::Notify>,
     started: Instant,
 }
@@ -358,6 +364,26 @@ pub struct SemanticRebuildResponse {
     pub vectors: u64,
 }
 
+/// Process-lifetime observability snapshot served by `GET /api/v1/metrics`.
+/// Counters and histograms reset when the daemon restarts; durable history
+/// lives in `context_runs` and the event log.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MetricsResponse {
+    pub uptime_ms: u64,
+    pub metrics: MetricsSnapshot,
+    /// Bridged from the live world-read cache; absent when caching is off.
+    #[serde(default)]
+    pub cache: Option<WorldCacheHealth>,
+}
+
+/// Daemon-wide canonical memory counts served by `GET /api/v1/metrics/memories`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MemoryStatsResponse {
+    pub total: u64,
+    pub by_status: std::collections::BTreeMap<String, u64>,
+    pub by_epistemic_state: std::collections::BTreeMap<String, u64>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct ApiErrorEnvelope {
     error: ApiErrorBody,
@@ -451,6 +477,27 @@ impl DaemonClient {
     /// or the daemon returns an incompatible response.
     pub async fn health(&self) -> Result<HealthResponse> {
         self.request::<(), _>(hyper::Method::GET, API_HEALTH, None)
+            .await
+    }
+
+    /// Fetch the daemon's process-lifetime metrics snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the socket is unavailable, the deadline expires,
+    /// or the daemon returns an incompatible response.
+    pub async fn metrics(&self) -> Result<MetricsResponse> {
+        self.request::<(), _>(hyper::Method::GET, API_METRICS, None)
+            .await
+    }
+
+    /// Fetch daemon-wide canonical memory counts by status and state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for transport, timeout, or storage-read failures.
+    pub async fn memory_stats(&self) -> Result<MemoryStatsResponse> {
+        self.request::<(), _>(hyper::Method::GET, API_MEMORY_STATS, None)
             .await
     }
 
@@ -957,11 +1004,14 @@ where
             config.daemon.background_concurrency,
         ))),
         world_cache: WorldReadCache::from_config(&config.cache),
+        metrics: Arc::new(MetricsRegistry::default()),
         shutdown: Arc::clone(&local_shutdown),
         started: Instant::now(),
     };
     let router = Router::new()
         .route(API_HEALTH, get(health))
+        .route(API_METRICS, get(metrics_snapshot))
+        .route(API_MEMORY_STATS, get(memory_stats))
         .route(API_DOCTOR, get(doctor))
         .route(API_SHUTDOWN, post(shutdown))
         .route(API_BACKUP_CREATE, post(create_backup))
@@ -993,6 +1043,10 @@ where
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            track_request_latency,
         ))
         .with_state(state);
 
@@ -1028,6 +1082,62 @@ async fn health(State(state): State<DaemonState>) -> Json<HealthResponse> {
         memory_pressure: classify_memory_pressure(rss_bytes, soft, hard),
         cache: state.world_cache.as_ref().map(|cache| cache.health()),
     })
+}
+
+/// Time every served request into its endpoint-group histogram. One relaxed
+/// atomic add per request keeps the hot-path overhead trivial.
+async fn track_request_latency(
+    State(state): State<DaemonState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let group = EndpointGroup::classify(request.uri().path());
+    let started = Instant::now();
+    let response = next.run(request).await;
+    state.metrics.observe_request(group, started.elapsed());
+    response
+}
+
+async fn metrics_snapshot(State(state): State<DaemonState>) -> Json<MetricsResponse> {
+    Json(MetricsResponse {
+        uptime_ms: u64::try_from(state.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        metrics: state.metrics.snapshot(),
+        cache: state.world_cache.as_ref().map(|cache| cache.health()),
+    })
+}
+
+async fn memory_stats(
+    State(state): State<DaemonState>,
+) -> std::result::Result<Json<MemoryStatsResponse>, ApiError> {
+    let database = state.database.clone();
+    let breakdown = run_blocking(&state, move || {
+        database.with_reader(|connection| {
+            let group_counts = |query: &str| -> Result<std::collections::BTreeMap<String, u64>> {
+                let mut statement = connection.prepare(query)?;
+                let rows = statement.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })?;
+                let mut counts = std::collections::BTreeMap::new();
+                for row in rows {
+                    let (key, count) = row?;
+                    counts.insert(key, u64::try_from(count).unwrap_or(0));
+                }
+                Ok(counts)
+            };
+            let by_status = group_counts("SELECT status, COUNT(*) FROM memories GROUP BY status")?;
+            let by_epistemic_state = group_counts(
+                "SELECT epistemic_state, COUNT(*) FROM memories GROUP BY epistemic_state",
+            )?;
+            let total = by_status.values().sum();
+            Ok(MemoryStatsResponse {
+                total,
+                by_status,
+                by_epistemic_state,
+            })
+        })
+    })
+    .await?;
+    Ok(Json(breakdown))
 }
 
 async fn doctor(
@@ -1198,6 +1308,7 @@ async fn index_project(
         ApiError::from_core(&Error::Config("Git history limit is too large".to_owned()))
     })?;
     let database = state.database.clone();
+    let scan_started = Instant::now();
     let prepared = run_background(&state, move || {
         let provider: Box<dyn StructuralProvider> = match provider_name.as_str() {
             "tree_sitter" => Box::new(TreeSitterProvider::new(
@@ -1238,6 +1349,7 @@ async fn index_project(
         Ok((structural, git))
     })
     .await?;
+    state.metrics.observe_index_scan(scan_started.elapsed());
 
     let apply_project = resolved.clone();
     let redactor = state.redactor.clone();
@@ -1245,9 +1357,8 @@ async fn index_project(
         .scheduler
         .submit(MutationPriority::ChangedFileRefresh, move || {
             let index = world.apply_prepared(&apply_project, prepared.0)?;
-            let invalidated_memories =
-                MemoryStore::with_redactor(world.database().clone(), redactor)
-                    .mark_symbol_drift_suspect(&apply_project.project.id)?;
+            let drift = MemoryStore::with_redactor(world.database().clone(), redactor)
+                .mark_symbol_drift_suspect(&apply_project.project.id)?;
             let git = prepared
                 .1
                 .map(|history| {
@@ -1255,10 +1366,13 @@ async fn index_project(
                         .apply_prepared(&apply_project, history)
                 })
                 .transpose()?;
-            Ok((index, git, invalidated_memories))
+            Ok((index, git, drift))
         })
         .map_err(|error| ApiError::from_core(&error))?;
-    let (index, git, invalidated_memories) = wait_for_mutation(&state, apply).await?;
+    let (index, git, drift) = wait_for_mutation(&state, apply).await?;
+    state
+        .metrics
+        .count_drift_invalidation(drift.invalidated, drift.previously_injected);
     if let Some(cache) = &state.world_cache {
         cache.bump(&resolved.project.id);
     }
@@ -1266,7 +1380,7 @@ async fn index_project(
         resolved,
         index,
         git,
-        invalidated_memories,
+        invalidated_memories: drift.invalidated,
     }))
 }
 
@@ -1437,14 +1551,27 @@ async fn compile_context(
         ContextCompiler::new(state.database.clone(), max_tokens, stable_tokens)
     };
     let prepare_compiler = compiler.clone();
+    let request_mode = request.mode;
+    let retrieval_started = Instant::now();
     let prepared = run_blocking(&state, move || prepare_compiler.prepare(&request)).await?;
+    if request_mode == ContextMode::Brain {
+        state.metrics.observe_retrieval(retrieval_started.elapsed());
+    }
     let handle = state
         .scheduler
         .submit(MutationPriority::Interactive, move || {
             compiler.apply_prepared(prepared)
         })
         .map_err(|error| ApiError::from_core(&error))?;
-    Ok(Json(wait_for_mutation(&state, handle).await?))
+    let context = wait_for_mutation(&state, handle).await?;
+    state.metrics.observe_context_compile(
+        context.mode == ContextMode::Brain,
+        context.metrics.compile_ms,
+        u64::try_from(context.items.len()).unwrap_or(u64::MAX),
+        u64::from(context.metrics.selected_tokens),
+        u64::from(context.metrics.candidate_count),
+    );
+    Ok(Json(context))
 }
 
 fn semantic_options(config: &crate::config::SemanticConfig) -> SemanticOptions {
@@ -1546,13 +1673,20 @@ async fn promote_memory(
 ) -> std::result::Result<Json<MemoryRecord>, ApiError> {
     let id = MemoryId::parse(&id).map_err(|error| ApiError::from_core(&error))?;
     let store = MemoryStore::with_redactor(state.database.clone(), state.redactor.clone());
+    let target = request.target;
     let handle = state
         .scheduler
         .submit(MutationPriority::Interactive, move || {
             store.promote(&id, request.target, request.human_override)
         })
         .map_err(|error| ApiError::from_core(&error))?;
-    Ok(Json(wait_for_mutation(&state, handle).await?))
+    let memory = wait_for_mutation(&state, handle).await?;
+    if target == EpistemicState::Rejected {
+        state.metrics.count_memory_rejection();
+    } else {
+        state.metrics.count_memory_promotion();
+    }
+    Ok(Json(memory))
 }
 
 async fn purge_memory(
@@ -1568,6 +1702,7 @@ async fn purge_memory(
         })
         .map_err(|error| ApiError::from_core(&error))?;
     wait_for_mutation(&state, handle).await?;
+    state.metrics.count_memory_purge();
     Ok(Json(()))
 }
 
@@ -1647,7 +1782,9 @@ async fn record_evidence(
             )
         })
         .map_err(|error| ApiError::from_core(&error))?;
-    Ok(Json(wait_for_mutation(&state, handle).await?))
+    let evidence = wait_for_mutation(&state, handle).await?;
+    state.metrics.count_evidence_record();
+    Ok(Json(evidence))
 }
 
 async fn get_evidence(
@@ -2361,6 +2498,133 @@ mod tests {
         client.shutdown().await.expect("shutdown request");
         drop(shutdown_sender);
         server.await.expect("server task").expect("server result");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[allow(clippy::too_many_lines)]
+    async fn metrics_endpoint_reflects_compiles_searches_and_memory_lifecycle() {
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        std::fs::write(project.join("lib.rs"), "pub struct Meter;\nfn tick() {}\n")
+            .expect("source");
+        let config = test_config(&temp);
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+
+        let status = client.resolve_project(&project).await.expect("resolve");
+        let project_id = status.resolved.project.id.clone();
+        client.index_project(&project, None).await.expect("index");
+        let memory = client
+            .create_memory(&MemoryCreateRequest {
+                project_id: project_id.clone(),
+                memory: MemoryDraft {
+                    scope_type: "project".to_owned(),
+                    scope_id: project_id.to_string(),
+                    kind: "lesson".to_owned(),
+                    claim: "The meter must tick monotonically".to_owned(),
+                    rationale: "Explicit test fixture".to_owned(),
+                    confidence: 0.5,
+                    importance: 0.9,
+                    tags: vec!["meter".to_owned()],
+                    valid_from_commit: None,
+                    valid_to_commit: None,
+                    trust_source: "human_instruction".to_owned(),
+                    evidence_ids: Vec::new(),
+                    source_task_ids: Vec::new(),
+                    node_ids: Vec::new(),
+                },
+            })
+            .await
+            .expect("create memory");
+        client
+            .promote_memory(
+                &memory.id,
+                &MemoryPromoteRequest {
+                    target: EpistemicState::Validated,
+                    human_override: true,
+                },
+            )
+            .await
+            .expect("promote");
+        let compiled = client
+            .compile_context(&ContextCompileRequest {
+                request_id: "metrics-brain".to_owned(),
+                project_id: project_id.clone(),
+                task_text: "make the meter tick".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 400,
+                mode: ContextMode::Brain,
+                repository_root: None,
+                head: None,
+            })
+            .await
+            .expect("brain compile");
+        assert!(compiled.metrics.selected_tokens > 0);
+        client
+            .compile_context(&ContextCompileRequest {
+                request_id: "metrics-off".to_owned(),
+                project_id: project_id.clone(),
+                task_text: "control run".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 400,
+                mode: ContextMode::Off,
+                repository_root: None,
+                head: None,
+            })
+            .await
+            .expect("off compile");
+        for _ in 0..2 {
+            client
+                .search_world(&WorldSearchRequest {
+                    project_id: project_id.clone(),
+                    query: "Meter".to_owned(),
+                    limit: 10,
+                })
+                .await
+                .expect("world search");
+        }
+
+        let response = client.metrics().await.expect("metrics");
+        let counters = &response.metrics.counters;
+        assert_eq!(counters.context_compiles_brain, 1);
+        assert_eq!(counters.context_compiles_off, 1);
+        assert!(counters.injected_items >= 1, "{counters:?}");
+        assert!(
+            counters.injected_tokens >= u64::from(compiled.metrics.selected_tokens),
+            "{counters:?}"
+        );
+        assert!(counters.retrieval_candidates_considered >= 1);
+        assert!(counters.retrieval_candidates_selected >= 1);
+        assert_eq!(counters.memory_promotions, 1);
+        assert_eq!(counters.memory_rejections, 0);
+        assert_eq!(counters.stale_injections, 0);
+        assert_eq!(response.metrics.context_compile_ms.count, 2);
+        assert_eq!(response.metrics.retrieval_ms.count, 1);
+        assert!(response.metrics.index_scan_ms.count >= 1);
+        assert!(response.metrics.requests_ms["context"].count >= 2);
+        assert!(response.metrics.requests_ms["world"].count >= 2);
+        assert!(response.metrics.requests_ms["memory"].count >= 2);
+        let cache = response.cache.expect("cache enabled by default");
+        assert!(cache.hits >= 1, "repeat search must hit: {cache:?}");
+        assert!(cache.misses >= 1);
+
+        let breakdown = client.memory_stats().await.expect("memory stats");
+        assert_eq!(breakdown.total, 1);
+        assert_eq!(breakdown.by_status.get("active"), Some(&1));
+        assert_eq!(breakdown.by_epistemic_state.get("validated"), Some(&1));
+
+        client.purge_memory(&memory.id).await.expect("purge");
+        let after_purge = client.metrics().await.expect("metrics after purge");
+        assert_eq!(after_purge.metrics.counters.memory_purges, 1);
+
+        drop(shutdown_sender);
+        let _ = server.await;
     }
 
     #[tokio::test]

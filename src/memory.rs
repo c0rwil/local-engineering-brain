@@ -140,6 +140,16 @@ pub struct MemoryRecord {
     pub updated_at_ms: i64,
 }
 
+/// Outcome of one symbol-drift invalidation sweep.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DriftInvalidation {
+    /// Active memories quarantined as suspect by this sweep.
+    pub invalidated: u64,
+    /// Subset that had been compiled into context at least once before the
+    /// invalidation (`injected_count > 0`): the stale-injection signal.
+    pub previously_injected: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct MemoryStore {
     database: Database,
@@ -376,19 +386,23 @@ impl MemoryStore {
 
     /// Detect symbol digest drift and quarantine affected active memories.
     ///
+    /// The report distinguishes memories that had already been compiled into
+    /// context at least once (`injected_count > 0`) so observability can track
+    /// stale injections without a second scan.
+    ///
     /// # Errors
     ///
     /// Returns an error for storage or event failures.
-    pub fn mark_symbol_drift_suspect(&self, project_id: &ProjectId) -> Result<u64> {
+    pub fn mark_symbol_drift_suspect(&self, project_id: &ProjectId) -> Result<DriftInvalidation> {
         const BATCH_SIZE: i64 = 256;
 
-        let mut changed = 0_u64;
+        let mut report = DriftInvalidation::default();
         loop {
             let now = unix_time_ms();
-            let batch_count = self.database.write_immediate(|transaction| {
+            let batch = self.database.write_immediate(|transaction| {
                 let candidates = {
                     let mut statement = transaction.prepare(
-                        "SELECT DISTINCT m.id, m.epistemic_state
+                        "SELECT DISTINCT m.id, m.epistemic_state, m.injected_count > 0
                          FROM memories m
                          JOIN memory_nodes mn ON mn.memory_id = m.id
                          LEFT JOIN nodes n
@@ -397,13 +411,17 @@ impl MemoryStore {
                            AND (n.id IS NULL OR n.current_digest <> mn.observed_digest)
                          ORDER BY m.id LIMIT ?2",
                     )?;
-                    let rows = statement
-                        .query_map(params![project_id.as_str(), BATCH_SIZE], |row| {
-                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    let rows =
+                        statement.query_map(params![project_id.as_str(), BATCH_SIZE], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, bool>(2)?,
+                            ))
                         })?;
                     rows.collect::<std::result::Result<Vec<_>, _>>()?
                 };
-                for (raw_id, raw_state) in &candidates {
+                for (raw_id, raw_state, _) in &candidates {
                     let id = MemoryId::parse(raw_id)?;
                     let epistemic_state = EpistemicState::parse(raw_state)?;
                     transaction.execute(
@@ -424,12 +442,26 @@ impl MemoryStore {
                         now,
                     )?;
                 }
-                u64::try_from(candidates.len())
-                    .map_err(|_| Error::Config("drift batch size exceeds u64".to_owned()))
+                let invalidated = u64::try_from(candidates.len())
+                    .map_err(|_| Error::Config("drift batch size exceeds u64".to_owned()))?;
+                let previously_injected = u64::try_from(
+                    candidates
+                        .iter()
+                        .filter(|(_, _, injected)| *injected)
+                        .count(),
+                )
+                .map_err(|_| Error::Config("drift batch size exceeds u64".to_owned()))?;
+                Ok(DriftInvalidation {
+                    invalidated,
+                    previously_injected,
+                })
             })?;
-            changed = changed.saturating_add(batch_count);
-            if batch_count == 0 {
-                return Ok(changed);
+            report.invalidated = report.invalidated.saturating_add(batch.invalidated);
+            report.previously_injected = report
+                .previously_injected
+                .saturating_add(batch.previously_injected);
+            if batch.invalidated == 0 {
+                return Ok(report);
             }
         }
     }
