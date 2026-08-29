@@ -248,7 +248,12 @@ async fn augment_request(
         })
         .unwrap_or_default();
     let (project_id, root, head) = resolve_scope(state, headers, mode, &current_paths).await?;
-    let task_text = extract_task(body, flavor)?;
+    let Some(task_text) = extract_task(body, flavor)? else {
+        // No user turn carries text (a degenerate but protocol-valid
+        // conversation): there is no task to compile context for, so forward
+        // the request unchanged in either mode.
+        return Ok(false);
+    };
     let default_token_budget = root
         .as_deref()
         .map(|root| {
@@ -366,42 +371,54 @@ fn index_freshness_mismatch(
     git.is_some_and(|git| index.head != git.head || index.diff_fingerprint != git.diff_fingerprint)
 }
 
-fn extract_task(body: &Value, flavor: ApiFlavor) -> std::result::Result<String, ProxyError> {
+/// Extract the task text from the MOST RECENT user message that carries any.
+/// Agentic loops routinely end on a tool-result-only user message; the human
+/// task statement lives in an earlier turn, so extraction walks backward
+/// instead of failing the request. Returns `None` when no user message in the
+/// conversation carries text at all — callers forward such requests unchanged
+/// rather than rejecting a protocol-valid conversation.
+fn extract_task(
+    body: &Value,
+    flavor: ApiFlavor,
+) -> std::result::Result<Option<String>, ProxyError> {
     let messages = body
         .get("messages")
         .and_then(Value::as_array)
         .ok_or_else(|| ProxyError::bad_request("request.messages must be an array"))?;
-    let message = messages
+    for message in messages
         .iter()
         .rev()
-        .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
-        .ok_or_else(|| ProxyError::bad_request("request has no user message"))?;
-    let content = message
-        .get("content")
-        .ok_or_else(|| ProxyError::bad_request("user message has no content"))?;
-    if let Some(text) = content.as_str() {
-        return Ok(text.to_owned());
-    }
-    if let Some(parts) = content.as_array() {
-        let texts = parts
-            .iter()
-            .filter(|part| {
-                part.get("type").and_then(Value::as_str).is_none_or(|kind| {
-                    matches!(
-                        (flavor, kind),
-                        (ApiFlavor::OpenAi | ApiFlavor::Anthropic, "text")
-                    )
+        .filter(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+    {
+        let Some(content) = message.get("content") else {
+            continue;
+        };
+        if let Some(text) = content.as_str() {
+            if !text.trim().is_empty() {
+                return Ok(Some(text.to_owned()));
+            }
+            continue;
+        }
+        if let Some(parts) = content.as_array() {
+            let texts = parts
+                .iter()
+                .filter(|part| {
+                    part.get("type").and_then(Value::as_str).is_none_or(|kind| {
+                        matches!(
+                            (flavor, kind),
+                            (ApiFlavor::OpenAi | ApiFlavor::Anthropic, "text")
+                        )
+                    })
                 })
-            })
-            .filter_map(|part| part.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>();
-        if !texts.is_empty() {
-            return Ok(texts.join("\n"));
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .filter(|text| !text.trim().is_empty())
+                .collect::<Vec<_>>();
+            if !texts.is_empty() {
+                return Ok(Some(texts.join("\n")));
+            }
         }
     }
-    Err(ProxyError::bad_request(
-        "user message content contains no text",
-    ))
+    Ok(None)
 }
 
 fn inject_openai(body: &mut Value, context: &str) -> std::result::Result<(), ProxyError> {
@@ -583,7 +600,39 @@ mod tests {
         });
         assert_eq!(
             extract_task(&body, ApiFlavor::Anthropic).expect("task"),
-            "first\nsecond"
+            Some("first\nsecond".to_owned())
+        );
+    }
+
+    #[test]
+    fn task_extraction_walks_past_tool_result_only_turns() {
+        // Every agentic follow-up turn ends on a tool-result-only user
+        // message; the task statement lives in the first user turn.
+        let body = json!({
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "fix the scheduler"}]},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "tu_1", "name": "bash", "input": {"cmd": "ls"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "tu_1", "content": ""}
+                ]}
+            ]
+        });
+        assert_eq!(
+            extract_task(&body, ApiFlavor::Anthropic).expect("task"),
+            Some("fix the scheduler".to_owned())
+        );
+
+        let no_text = json!({
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": ""}]
+            }]
+        });
+        assert_eq!(
+            extract_task(&no_text, ApiFlavor::Anthropic).expect("none"),
+            None
         );
     }
 
