@@ -78,6 +78,9 @@ pub struct StructuralIndexStatus {
     pub head: Option<String>,
     pub diff_fingerprint: String,
     pub completed_at_ms: i64,
+    /// Working-tree paths that were dirty when this scan committed. `None`
+    /// means the set is unknown and freshness planning must rescan fully.
+    pub changed_paths: Option<Vec<PathBuf>>,
 }
 
 #[derive(Clone, Debug)]
@@ -318,17 +321,22 @@ impl WorldModel {
         self.database.with_reader(|connection| {
             connection
                 .query_row(
-                    "SELECT id, provider, head, diff_fingerprint, completed_at_ms
+                    "SELECT id, provider, head, diff_fingerprint, completed_at_ms,
+                            changed_paths_json
                      FROM structural_scans WHERE project_id = ?1
                      ORDER BY completed_at_ms DESC, rowid DESC LIMIT 1",
                     [project_id.as_str()],
                     |row| {
+                        let changed_paths_json: Option<String> = row.get(5)?;
                         Ok(StructuralIndexStatus {
                             scan_id: row.get(0)?,
                             provider: row.get(1)?,
                             head: row.get(2)?,
                             diff_fingerprint: row.get(3)?,
                             completed_at_ms: row.get(4)?,
+                            changed_paths: changed_paths_json
+                                .as_deref()
+                                .and_then(parse_changed_paths_json),
                         })
                     },
                 )
@@ -541,27 +549,15 @@ impl WorldModel {
         };
 
         self.database.write_immediate(|transaction| {
-            transaction.execute(
-                "INSERT INTO structural_scans
-                 (id, project_id, provider, provider_version, head, diff_fingerprint,
-                  started_at_ms, completed_at_ms, file_count, node_count, edge_count, incremental)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    scan_id,
-                    project.project.id.as_str(),
-                    scan.provider,
-                    scan.provider_version,
-                    project.git.as_ref().and_then(|git| git.head.as_deref()),
-                    project
-                        .git
-                        .as_ref()
-                        .map_or("no-git", |git| git.diff_fingerprint.as_str()),
-                    now,
-                    usize_to_i64(discovered_files),
-                    usize_to_i64(nodes_written),
-                    usize_to_i64(edges_written),
-                    i64::from(scan.incremental),
-                ],
+            insert_scan_row(
+                transaction,
+                &scan_id,
+                project,
+                &scan,
+                now,
+                discovered_files,
+                nodes_written,
+                edges_written,
             )?;
             for path in &deleted_paths {
                 tombstone_file(transaction, &project.project.id, path, now)?;
@@ -1321,6 +1317,65 @@ fn normalize_reference(value: &str) -> String {
         .chars()
         .take(200)
         .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_scan_row(
+    transaction: &rusqlite::Transaction<'_>,
+    scan_id: &str,
+    project: &ResolvedProject,
+    scan: &ScanResult,
+    now: i64,
+    discovered_files: usize,
+    nodes_written: usize,
+    edges_written: usize,
+) -> Result<()> {
+    let changed_paths_json = project.git.as_ref().map_or_else(
+        || Some("[]".to_owned()),
+        |git| encode_changed_paths_json(&git.changed_paths),
+    );
+    transaction.execute(
+        "INSERT INTO structural_scans
+         (id, project_id, provider, provider_version, head, diff_fingerprint,
+          started_at_ms, completed_at_ms, file_count, node_count, edge_count, incremental,
+          changed_paths_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            scan_id,
+            project.project.id.as_str(),
+            scan.provider,
+            scan.provider_version,
+            project.git.as_ref().and_then(|git| git.head.as_deref()),
+            project
+                .git
+                .as_ref()
+                .map_or("no-git", |git| git.diff_fingerprint.as_str()),
+            now,
+            usize_to_i64(discovered_files),
+            usize_to_i64(nodes_written),
+            usize_to_i64(edges_written),
+            i64::from(scan.incremental),
+            changed_paths_json,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Encode a scan's dirty working-tree paths for persistence. Returns `None`
+/// when any path is not UTF-8, so freshness planning falls back to a full
+/// rescan instead of matching against a lossy path.
+fn encode_changed_paths_json(paths: &[PathBuf]) -> Option<String> {
+    let utf8 = paths
+        .iter()
+        .map(|path| path.to_str())
+        .collect::<Option<Vec<_>>>()?;
+    serde_json::to_string(&utf8).ok()
+}
+
+fn parse_changed_paths_json(json: &str) -> Option<Vec<PathBuf>> {
+    serde_json::from_str::<Vec<String>>(json)
+        .ok()
+        .map(|paths| paths.into_iter().map(PathBuf::from).collect())
 }
 
 fn relative_utf8(root: &Path, path: &Path) -> Result<String> {

@@ -1162,11 +1162,14 @@ fn plan_changed_paths(
     }
 
     if previous.diff_fingerprint != git.diff_fingerprint {
-        if previous.head == git.head && git.changed_paths.is_empty() {
-            // The prior scan observed a dirty tree that is now clean. Git
-            // porcelain cannot name the reverted paths, so reconcile fully.
+        // Local edits changed since the prior scan. Files dirty at that scan
+        // may have been reverted since, so they must be rescanned alongside
+        // the currently dirty set. When the prior dirty set is unknown
+        // (pre-migration scans), only a full rescan is safe.
+        let Some(previous_dirty) = &previous.changed_paths else {
             return Ok(None);
-        }
+        };
+        changed.extend(previous_dirty.iter().cloned());
         changed.extend(git.changed_paths.iter().cloned());
     }
     Ok(Some(changed.into_iter().collect()))
@@ -2040,5 +2043,103 @@ mod tests {
         };
         assert!(error.to_string().contains("non-socket"));
         assert_eq!(std::fs::read(&regular).expect("preserved"), b"keep");
+    }
+
+    fn git(path: &Path, arguments: &[&str]) {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(arguments)
+            .output()
+            .expect("git");
+        assert!(
+            output.status.success(),
+            "git failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    async fn search_labels(
+        client: &DaemonClient,
+        project_id: &ProjectId,
+        query: &str,
+    ) -> Vec<String> {
+        client
+            .search_world(&WorldSearchRequest {
+                project_id: project_id.clone(),
+                query: query.to_owned(),
+                limit: 10,
+            })
+            .await
+            .expect("world search")
+            .into_iter()
+            .map(|node| node.label)
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn freshness_rescans_files_reverted_while_others_stay_dirty() {
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        let alpha_original = "pub fn alpha_original() {}\n";
+        std::fs::write(project.join("alpha.rs"), alpha_original).expect("alpha");
+        std::fs::write(project.join("beta.rs"), "pub fn beta_original() {}\n").expect("beta");
+        git(&project, &["init", "-q"]);
+        git(&project, &["config", "user.email", "leb@example.invalid"]);
+        git(&project, &["config", "user.name", "LEB Tests"]);
+        git(&project, &["add", "alpha.rs", "beta.rs"]);
+        git(&project, &["commit", "-qm", "initial"]);
+
+        let config = test_config(&temp);
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+
+        let indexed = client
+            .index_project_with_provider(&project, None, Some("tree_sitter".to_owned()), None)
+            .await
+            .expect("initial index");
+        let project_id = indexed.resolved.project.id.clone();
+
+        // Dirty both files, then freshen so the graph holds dirty content.
+        std::fs::write(project.join("alpha.rs"), "pub fn alpha_dirty() {}\n").expect("alpha dirty");
+        std::fs::write(project.join("beta.rs"), "pub fn beta_dirty() {}\n").expect("beta dirty");
+        client
+            .ensure_project_fresh(&project, Vec::new())
+            .await
+            .expect("dirty refresh");
+        assert_eq!(
+            search_labels(&client, &project_id, "alpha_dirty").await,
+            ["alpha_dirty"]
+        );
+
+        // Revert only alpha; beta stays dirty, so porcelain status is not
+        // empty and a naive plan would skip the reverted file entirely.
+        std::fs::write(project.join("alpha.rs"), alpha_original).expect("alpha reverted");
+        client
+            .ensure_project_fresh(&project, Vec::new())
+            .await
+            .expect("revert refresh");
+        assert_eq!(
+            search_labels(&client, &project_id, "alpha_dirty").await,
+            Vec::<String>::new(),
+            "stale dirty-content node must not survive a partial revert"
+        );
+        assert_eq!(
+            search_labels(&client, &project_id, "alpha_original").await,
+            ["alpha_original"]
+        );
+        assert_eq!(
+            search_labels(&client, &project_id, "beta_dirty").await,
+            ["beta_dirty"]
+        );
+
+        drop(shutdown_sender);
+        let _ = server.await;
     }
 }

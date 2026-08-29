@@ -27,9 +27,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "context_request_scope",
         include_str!("migrations/0003_context_request_scope.sql"),
     ),
+    (
+        4,
+        "scan_changed_paths",
+        include_str!("migrations/0004_scan_changed_paths.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 3;
+pub const LATEST_MIGRATION_VERSION: i64 = 4;
 
 /// Reopenable handle to the canonical database.
 ///
