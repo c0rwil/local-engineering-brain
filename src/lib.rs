@@ -20,6 +20,7 @@ pub mod ids;
 pub mod learning;
 pub mod mcp;
 pub mod memory;
+pub mod metrics;
 pub mod projects;
 pub mod proxy;
 pub mod retrieval;

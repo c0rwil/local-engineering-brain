@@ -112,6 +112,83 @@ fn status_registers_plain_project_and_is_stable() {
     assert_process_success(&daemon_output);
 }
 
+#[test]
+fn metrics_and_dashboard_render_from_a_running_daemon() {
+    let temp = TempDir::new().expect("temp dir");
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).expect("project");
+    let db = temp.path().join("brain.sqlite");
+    let socket = temp.path().join("lebd.sock");
+    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("lebd"))
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn daemon");
+    let ready_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+            break;
+        }
+        if let Some(status) = daemon.try_wait().expect("poll daemon process") {
+            panic!("daemon exited before readiness: {status}");
+        }
+        assert!(Instant::now() < ready_deadline, "daemon readiness timeout");
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let leb = |args: &[&str]| {
+        let mut command = Command::new(assert_cmd::cargo::cargo_bin!("leb"));
+        command.args([
+            "--db",
+            db.to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+        ]);
+        command.args(args);
+        let output = command.output().expect("run leb");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    // Register a project so the dashboard has canonical state to report.
+    leb(&["status", project.to_str().unwrap()]);
+
+    let metrics_json = leb(&["metrics", "--json"]);
+    let parsed: serde_json::Value = serde_json::from_str(&metrics_json).expect("metrics json");
+    assert!(parsed["metrics"]["counters"]["context_compiles_brain"].is_u64());
+    assert!(parsed["metrics"]["requests_ms"]["projects"]["count"].is_u64());
+
+    let metrics_text = leb(&["metrics"]);
+    assert!(metrics_text.contains("Counters"), "{metrics_text}");
+    assert!(metrics_text.contains("Latency (ms)"), "{metrics_text}");
+
+    let dashboard = leb(&["dashboard"]);
+    for section in [
+        "== Daemon ==",
+        "== Cache ==",
+        "== Latency ==",
+        "== Context compiles ==",
+        "== Memory ==",
+        "== Learning ==",
+    ] {
+        assert!(dashboard.contains(section), "{dashboard}");
+    }
+
+    leb(&["daemon", "stop"]);
+    let daemon_output = daemon.wait_with_output().expect("daemon exits gracefully");
+    assert_process_success(&daemon_output);
+}
+
 fn assert_process_success(output: &std::process::Output) {
     assert!(
         output.status.success(),

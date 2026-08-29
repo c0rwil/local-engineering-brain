@@ -20,6 +20,7 @@ use crate::context::{ContextCompileRequest, ContextMode};
 use crate::daemon::DaemonClient;
 use crate::error::{Error, Result};
 use crate::ids::ProjectId;
+use crate::metrics::ProxyMetrics;
 use crate::projects::GitState;
 
 #[derive(Clone)]
@@ -28,6 +29,9 @@ struct ProxyState {
     daemon: DaemonClient,
     runtime: reqwest::Client,
     runtime_base: String,
+    /// Process-lifetime outcome counters; the proxy runs in its own process,
+    /// so it serves them itself from `GET /leb/metrics` on this listener.
+    metrics: Arc<ProxyMetrics>,
 }
 
 #[derive(Debug)]
@@ -112,11 +116,13 @@ where
         runtime,
         runtime_base: config.proxy.runtime_url.trim_end_matches('/').to_owned(),
         config: Arc::new(config),
+        metrics: Arc::new(ProxyMetrics::default()),
     };
     let max_body = usize::try_from(state.config.daemon.max_request_bytes)
         .map_err(|_| Error::Config("proxy request limit exceeds this platform".to_owned()))?;
     let router = Router::new()
         .route("/health", get(|| async { Json(json!({"status": "ok"})) }))
+        .route("/leb/metrics", get(proxy_metrics))
         .route("/v1/chat/completions", post(openai_chat))
         .route("/v1/messages", post(anthropic_messages))
         .layer(DefaultBodyLimit::max(max_body))
@@ -164,6 +170,12 @@ enum ApiFlavor {
     Anthropic,
 }
 
+async fn proxy_metrics(
+    State(state): State<ProxyState>,
+) -> Json<crate::metrics::ProxyMetricsSnapshot> {
+    Json(state.metrics.snapshot())
+}
+
 async fn proxy_request(
     state: &ProxyState,
     headers: &HeaderMap,
@@ -171,32 +183,48 @@ async fn proxy_request(
     flavor: ApiFlavor,
     runtime_path: &str,
 ) -> std::result::Result<Response, ProxyError> {
-    let degraded = match augment_request(state, headers, body, flavor).await {
-        Ok(()) => false,
+    // `Some(injected)` when augmentation ran; `None` when it degraded open.
+    let injected = match augment_request(state, headers, body, flavor).await {
+        Ok(injected) => Some(injected),
         Err(error)
             if error.degradable
                 && state.config.proxy.failure_mode == ProxyFailureMode::FailOpen =>
         {
-            true
+            None
         }
-        Err(error) => return Err(error),
+        Err(error) => {
+            state.metrics.count_refused();
+            return Err(error);
+        }
     };
-    let mut response = forward(state, headers, runtime_path, body.take()).await?;
-    if degraded {
-        response.headers_mut().insert(
-            "x-leb-degraded",
-            axum::http::HeaderValue::from_static("context_unavailable"),
-        );
+    let mut response = match forward(state, headers, runtime_path, body.take()).await {
+        Ok(response) => response,
+        Err(error) => {
+            state.metrics.count_refused();
+            return Err(error);
+        }
+    };
+    match injected {
+        None => {
+            state.metrics.count_degraded();
+            response.headers_mut().insert(
+                "x-leb-degraded",
+                axum::http::HeaderValue::from_static("context_unavailable"),
+            );
+        }
+        Some(true) => state.metrics.count_injected(),
+        Some(false) => state.metrics.count_forwarded(),
     }
     Ok(response)
 }
 
+/// Compile and inject bounded context; `Ok(true)` means content was injected.
 async fn augment_request(
     state: &ProxyState,
     headers: &HeaderMap,
     body: &mut Value,
     flavor: ApiFlavor,
-) -> std::result::Result<(), ProxyError> {
+) -> std::result::Result<bool, ProxyError> {
     let mode = match header_text(headers, "x-leb-mode")? {
         None | Some("brain" | "on") => ContextMode::Brain,
         Some("off") => ContextMode::Off,
@@ -207,7 +235,7 @@ async fn augment_request(
         }
     };
     if mode == ContextMode::Off && !has_project_scope(headers) {
-        return Ok(());
+        return Ok(false);
     }
     let current_paths = header_text(headers, "x-leb-current-paths")?
         .map(|paths| {
@@ -262,16 +290,17 @@ async fn augment_request(
         .await
         .map_err(|error| ProxyError::upstream(format!("context compilation failed: {error}")))?;
     if mode == ContextMode::Off {
-        return Ok(());
+        return Ok(false);
     }
     let injected = format!("{}{}", context.stable_prefix, context.dynamic_context);
     if injected.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     match flavor {
-        ApiFlavor::OpenAi => inject_openai(body, &injected),
-        ApiFlavor::Anthropic => inject_anthropic(body, &injected),
+        ApiFlavor::OpenAi => inject_openai(body, &injected)?,
+        ApiFlavor::Anthropic => inject_anthropic(body, &injected)?,
     }
+    Ok(true)
 }
 
 async fn resolve_scope(
@@ -729,6 +758,19 @@ mod tests {
             request,
             "fail-open must forward the original semantic request"
         );
+
+        let outcomes: crate::metrics::ProxyMetricsSnapshot = reqwest::Client::new()
+            .get(format!("http://{proxy_address}/leb/metrics"))
+            .send()
+            .await
+            .expect("proxy metrics request")
+            .json()
+            .await
+            .expect("proxy metrics body");
+        assert_eq!(outcomes.injected, 1, "{outcomes:?}");
+        assert_eq!(outcomes.forwarded, 1, "{outcomes:?}");
+        assert_eq!(outcomes.degraded, 1, "{outcomes:?}");
+        assert_eq!(outcomes.refused, 0, "{outcomes:?}");
 
         proxy_stop_tx.send(()).expect("proxy stop");
         runtime_stop_tx.send(()).expect("runtime stop");
