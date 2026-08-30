@@ -123,8 +123,14 @@ impl Retriever {
         let semantic_scores = self.semantic_scores(request, &mut candidates)?;
 
         let task_lower = request.task_text.to_lowercase();
+        let task_terms = coverage_terms(&task_lower);
         let mut ranked = Vec::new();
-        for (_, (memory, lexical)) in candidates {
+        for (_, (memory, _bm25)) in candidates {
+            // FTS/bm25 stays a candidate prefilter only. On small memory sets
+            // its IDF is nearly flat, so ranking uses claim-term coverage of
+            // the task text instead: a short claim either names the concepts
+            // the ticket is about or it does not.
+            let lexical = claim_coverage(&memory.claim, &memory.tags, &task_terms);
             if !commit_applicable(&memory, request.repository_root, request.head)? {
                 continue;
             }
@@ -203,15 +209,32 @@ impl Retriever {
     }
 }
 
+/// English function words that carry no retrieval signal. Discriminative
+/// domain terms must never lose their query slot to these.
+const FTS_STOPWORDS: &[&str] = &[
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "does", "for", "from",
+    "has", "have", "if", "in", "into", "is", "it", "its", "like", "make", "must", "not", "of",
+    "on", "or", "our", "so", "sure", "than", "that", "the", "their", "them", "then", "they",
+    "this", "to", "under", "up", "was", "we", "what", "when", "which", "will", "with", "you",
+    "your",
+];
+
 fn fts_query(task: &str) -> Option<String> {
     let mut terms = task
-        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .split(|character: char| !character.is_alphanumeric())
         .map(str::to_lowercase)
         .filter(|term| term.len() >= 2)
+        .filter(|term| !FTS_STOPWORDS.contains(&term.as_str()))
         .collect::<Vec<_>>();
     terms.sort();
     terms.dedup();
-    terms.truncate(24);
+    // Keep the most discriminative terms: longer tokens (identifiers,
+    // domain words) over short generic ones. A plain alphabetical truncate
+    // here once silently dropped every late-alphabet domain term on
+    // realistic prompt lengths, flattening lexical relevance to noise.
+    terms.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    terms.truncate(48);
+    terms.sort();
     if terms.is_empty() {
         None
     } else {
@@ -223,6 +246,56 @@ fn fts_query(task: &str) -> Option<String> {
                 .join(" OR "),
         )
     }
+}
+
+/// Light deterministic stemmer: trims common English inflections so
+/// "retries"/"retrying" meet "retry" without a full stemming dependency.
+fn light_stem(term: &str) -> String {
+    for suffix in ["ing", "ies", "ied", "es", "ed", "s"] {
+        if let Some(stripped) = term.strip_suffix(suffix) {
+            if stripped.len() >= 3 {
+                return stripped.to_owned();
+            }
+        }
+    }
+    term.to_owned()
+}
+
+fn coverage_terms(text_lower: &str) -> std::collections::BTreeSet<String> {
+    text_lower
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|term| term.len() >= 3)
+        .filter(|term| !FTS_STOPWORDS.contains(term))
+        .map(light_stem)
+        .collect()
+}
+
+/// Fraction of the claim's specific terms that the task text mentions,
+/// weighted by term length so rare identifiers count more than short generic
+/// words. Deterministic; in [0, 1].
+fn claim_coverage(
+    claim: &str,
+    tags: &[String],
+    task_terms: &std::collections::BTreeSet<String>,
+) -> f64 {
+    let mut text = claim.to_lowercase();
+    for tag in tags {
+        text.push(' ');
+        text.push_str(&tag.to_lowercase());
+    }
+    let claim_terms = coverage_terms(&text);
+    let mut total = 0_f64;
+    let mut matched = 0_f64;
+    for term in &claim_terms {
+        // Terms are tiny (<=64 bytes); the cast is exact.
+        #[allow(clippy::cast_precision_loss)]
+        let weight = term.len() as f64;
+        total += weight;
+        if task_terms.contains(term) {
+            matched += weight;
+        }
+    }
+    if total == 0.0 { 0.0 } else { matched / total }
 }
 
 fn exact_score(memory: &MemoryRecord, task_lower: &str) -> f64 {
@@ -372,6 +445,90 @@ mod tests {
         assert_eq!(results[0].memory.id, validated.id);
         assert_ne!(results[0].memory.id, candidate.id);
         assert!(results[0].why.lexical > 0.0);
+    }
+
+    #[test]
+    fn claim_coverage_ranks_the_right_family_lesson_for_real_tickets() {
+        // The six seeded benchmark lessons, verbatim.
+        let lessons = [
+            (
+                "B",
+                "Job cancellation must set JobState::Cancelled and remove from the queue; the legacy Aborted state is non-terminal and abort_job is not a cancellation path",
+            ),
+            (
+                "C",
+                "Scheduler drain() only pops jobs that are already due - it is not a full sweep; evacuate() is the stable-order full sweep for snapshots and shutdown",
+            ),
+            (
+                "F",
+                "Every dedupe-key lookup, removal, and comparison must normalize through DedupeKey::new first; raw string comparison misses case and whitespace variants",
+            ),
+            (
+                "A",
+                "Every new serde config or persistence field must carry serde(default) with the documented default; fielded legacy files without the field must keep parsing byte-identically",
+            ),
+            (
+                "D",
+                "The attempts counter already includes the just-failed run; retry backoff and budget checks must use attempts-1 or they are off by one",
+            ),
+            (
+                "E",
+                "All millisecond-to-tick conversions must round UP via ticks_for_ms; plain integer division silently schedules work one tick early",
+            ),
+        ];
+        let tickets = [
+            (
+                "D",
+                "Ticket: enforce the retry budget. RetryPolicy max_attempts is documented as the total number of executions a job is allowed, but the scheduler currently retries transient failures forever. Once a job has used its whole execution budget, stop retrying and move it to the dead-letter terminal state reserved for exhausted jobs.",
+            ),
+            (
+                "E",
+                "Ticket: deadline handling must round up. A job deadline given in milliseconds is converted to scheduler ticks; partial ticks must give the job breathing room rather than cutting it short.",
+            ),
+            (
+                "C",
+                "Ticket: snapshots must include future jobs. Persisted snapshots currently lose jobs scheduled past the capture instant; the snapshot writer must sweep every queued job, not only the currently due ones.",
+            ),
+            (
+                "B",
+                "Ticket: cancelling by key must work with messy input. Cancel the pending job registered under a dedupe key even when the caller passes extra whitespace or different casing, and make sure the cancelled job is reaped like other finished work.",
+            ),
+        ];
+        for (ticket_family, ticket) in tickets {
+            let task_terms = coverage_terms(&ticket.to_lowercase());
+            let mut scored = lessons
+                .iter()
+                .map(|(family, claim)| (*family, claim_coverage(claim, &[], &task_terms)))
+                .collect::<Vec<_>>();
+            scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+            let top_families: Vec<&str> = scored.iter().take(2).map(|(f, _)| *f).collect();
+            assert!(
+                top_families.contains(&ticket_family),
+                "ticket family {ticket_family} must rank in the top 2, got {scored:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fts_query_keeps_discriminative_terms_on_realistic_prompt_lengths() {
+        // A realistic ticket: >24 unique words, with the domain terms late in
+        // the alphabet. The old alphabetical truncation dropped all of them.
+        let prompt = "Ticket: enforce the retry budget. RetryPolicy max_attempts is \
+            documented as the total number of executions a job is allowed, first run \
+            included, but the scheduler currently retries transient failures forever \
+            and the field does nothing. Enforce it: once a job has used its whole \
+            execution budget stop retrying and move it to the dead-letter terminal \
+            state reserved for exhausted jobs and keep the reaper behaviour green.";
+        let query = fts_query(prompt).expect("query");
+        // `_` separates, matching the index tokenizer: max_attempts -> max, attempts.
+        for term in ["attempts", "retrying", "exhausted", "transient", "budget"] {
+            assert!(query.contains(term), "query must keep `{term}`: {query}");
+        }
+        for stopword in ["\"the\"", "\"and\"", "\"for\""] {
+            assert!(!query.contains(stopword), "stopword slipped in: {query}");
+        }
+        // Determinism: same prompt, same query.
+        assert_eq!(fts_query(prompt), Some(query));
     }
 
     #[test]

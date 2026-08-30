@@ -294,40 +294,57 @@ impl ContextCompiler {
         let mut used = 0_u32;
         let mut per_kind = BTreeMap::<String, u8>::new();
         let mut items = Vec::new();
-        for candidate in candidates {
-            let kind_count = per_kind.entry(candidate.memory.kind.clone()).or_default();
-            if *kind_count >= 3 {
-                continue;
+        // Two passes over the score-ranked candidates: the first bounds each
+        // memory kind to 3 entries so one kind cannot monopolize the budget;
+        // the second spends whatever budget remains on the skipped
+        // candidates in score order. A hard per-kind cap alone once left
+        // >90% of the configured budget unused while dropping the one
+        // relevant lesson for a task.
+        let candidates = candidates
+            .into_iter()
+            .map(|candidate| (candidate, false))
+            .collect::<Vec<_>>();
+        let mut candidates = candidates;
+        for diversity_pass in [true, false] {
+            for (candidate, consumed) in &mut candidates {
+                if *consumed {
+                    continue;
+                }
+                let kind_count = per_kind.entry(candidate.memory.kind.clone()).or_default();
+                if diversity_pass && *kind_count >= 3 {
+                    continue;
+                }
+                let (block, block_tokens) =
+                    self.memory_block(&candidate.memory, &mut compact_injections)?;
+                let heading_tokens = if dynamic.is_empty() {
+                    estimate_tokens(heading)
+                } else {
+                    0
+                };
+                if used
+                    .saturating_add(heading_tokens)
+                    .saturating_add(block_tokens)
+                    > remaining
+                {
+                    continue;
+                }
+                if dynamic.is_empty() {
+                    dynamic.push_str(heading);
+                    used = used.saturating_add(heading_tokens);
+                }
+                dynamic.push_str(&block);
+                used = used.saturating_add(block_tokens);
+                *kind_count += 1;
+                *consumed = true;
+                items.push(ContextItem {
+                    ordinal: u32::try_from(items.len() + 1).unwrap_or(u32::MAX),
+                    source_type: "memory".to_owned(),
+                    source_id: candidate.memory.id.to_string(),
+                    score: candidate.score,
+                    tokens: block_tokens,
+                    why: candidate.why.clone(),
+                });
             }
-            let (block, block_tokens) =
-                self.memory_block(&candidate.memory, &mut compact_injections)?;
-            let heading_tokens = if dynamic.is_empty() {
-                estimate_tokens(heading)
-            } else {
-                0
-            };
-            if used
-                .saturating_add(heading_tokens)
-                .saturating_add(block_tokens)
-                > remaining
-            {
-                continue;
-            }
-            if dynamic.is_empty() {
-                dynamic.push_str(heading);
-                used = used.saturating_add(heading_tokens);
-            }
-            dynamic.push_str(&block);
-            used = used.saturating_add(block_tokens);
-            *kind_count += 1;
-            items.push(ContextItem {
-                ordinal: u32::try_from(items.len() + 1).unwrap_or(u32::MAX),
-                source_type: "memory".to_owned(),
-                source_id: candidate.memory.id.to_string(),
-                score: candidate.score,
-                tokens: block_tokens,
-                why: candidate.why,
-            });
         }
         let selected_tokens = estimate_tokens(&format!("{stable_prefix}{dynamic}"));
         debug_assert!(selected_tokens <= request.token_budget);
@@ -811,6 +828,95 @@ mod tests {
     }
 
     #[test]
+    fn budget_headroom_admits_more_than_three_memories_of_one_kind() {
+        let temp = TempDir::new().expect("temp");
+        let root = temp.path().join("project");
+        std::fs::create_dir(&root).expect("project");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let project = ProjectRegistry::new(database.clone())
+            .resolve_or_register(&root)
+            .expect("project")
+            .project
+            .id;
+        let experience = ExperienceStore::new(database.clone());
+        let task = experience
+            .start_task(&project, "fix scheduler retry budget", None)
+            .expect("task");
+        let evidence = experience
+            .record_evidence(
+                &project,
+                Some(&task.id),
+                None,
+                "test_result",
+                EvidenceStrength::Deterministic,
+                None,
+                Some("cargo test"),
+                Some(0),
+                b"pass",
+                &serde_json::json!({}),
+            )
+            .expect("evidence");
+        experience
+            .finish_task(&task.id, TaskOutcome::Success, Some(true), None)
+            .expect("finish task");
+        let memories = MemoryStore::new(database.clone());
+        for ordinal in 0..6 {
+            let memory = memories
+                .create_candidate(
+                    &project,
+                    &MemoryDraft {
+                        scope_type: "project".to_owned(),
+                        scope_id: project.to_string(),
+                        kind: "lesson".to_owned(),
+                        claim: format!("Scheduler retry budget rule number {ordinal}"),
+                        rationale: "Regression test passes".to_owned(),
+                        confidence: 0.5,
+                        importance: 0.9,
+                        tags: Vec::new(),
+                        valid_from_commit: None,
+                        valid_to_commit: None,
+                        trust_source: "agent_inference".to_owned(),
+                        evidence_ids: vec![evidence.id.clone()],
+                        source_task_ids: vec![task.id.clone()],
+                        node_ids: Vec::new(),
+                    },
+                )
+                .expect("memory");
+            for state in [
+                EpistemicState::Observed,
+                EpistemicState::Supported,
+                EpistemicState::Validated,
+            ] {
+                memories.promote(&memory.id, state, false).expect("promote");
+            }
+        }
+        let compiler = ContextCompiler::new(database, 6_000, 1_800);
+        let context = compiler
+            .compile(&ContextCompileRequest {
+                request_id: "req-headroom".to_owned(),
+                project_id: project,
+                task_text: "enforce the scheduler retry budget".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 4_000,
+                mode: ContextMode::Brain,
+                repository_root: None,
+                head: None,
+                task_id: None,
+            })
+            .expect("compile");
+        let memory_items = context
+            .items
+            .iter()
+            .filter(|item| item.source_type == "memory")
+            .count();
+        assert_eq!(
+            memory_items, 6,
+            "with budget headroom every validated same-kind memory must inject: {context:?}"
+        );
+        assert!(context.metrics.selected_tokens <= 4_000);
+    }
+
+    #[test]
     fn compiler_never_exceeds_budget_and_every_item_is_explainable() {
         let (_temp, compiler, project) = fixture();
         let context = compiler
@@ -937,7 +1043,17 @@ mod tests {
             .expect("explain query")
             .expect("compact item remains explainable");
         assert_eq!(explained.source_id, compact.items[0].source_id);
-        assert_eq!(explained.why, compact.items[0].why);
+        // Persisted why-scores round-trip through serde_json's default float
+        // parsing, which can be 1 ulp off (see tests/properties.rs); compare
+        // with the same tolerance instead of bit equality.
+        assert!(
+            (explained.why.lexical - compact.items[0].why.lexical).abs() < 1e-9,
+            "lexical drifted: {} vs {}",
+            explained.why.lexical,
+            compact.items[0].why.lexical
+        );
+        assert!((explained.why.exact - compact.items[0].why.exact).abs() < 1e-9);
+        assert_eq!(explained.why.note, compact.items[0].why.note);
         let memory_id = MemoryId::parse(&explained.source_id).expect("canonical memory ID");
         let canonical = MemoryStore::new(compact_compiler.database.clone())
             .get(&memory_id)

@@ -48,9 +48,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "compact_injection",
         include_str!("migrations/0008_compact_injection.sql"),
     ),
+    (
+        9,
+        "fts_porter",
+        include_str!("migrations/0009_fts_porter.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 8;
+pub const LATEST_MIGRATION_VERSION: i64 = 9;
 
 /// Reopenable handle to the canonical database.
 ///
@@ -846,7 +851,7 @@ mod tests {
                 .integrity_report()
                 .expect("integrity")
                 .migration_version,
-            8
+            LATEST_MIGRATION_VERSION
         );
         let actual = migrated
             .with_reader(|connection| {
