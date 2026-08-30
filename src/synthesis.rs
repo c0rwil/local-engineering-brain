@@ -1016,6 +1016,7 @@ mod tests {
                     repository_root: None,
                     head: None,
                     task_id: Some(task.id.clone()),
+                    framing: None,
                 })
                 .expect("compile");
             assert!(

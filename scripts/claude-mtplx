@@ -259,6 +259,13 @@ start_leb_proxy_if_needed
 
 local_headers="x-leb-project-path: ${PWD}
 x-leb-mode: ${LEB_REQUEST_MODE}"
+if [[ -n "${LEB_INJECTION_FRAMING:-}" ]]; then
+  case "${LEB_INJECTION_FRAMING}" in
+    reference|directive) local_headers="${local_headers}
+x-leb-injection-framing: ${LEB_INJECTION_FRAMING}" ;;
+    *) print -u2 "invalid LEB_INJECTION_FRAMING (reference|directive)"; exit 64 ;;
+  esac
+fi
 if [[ -n "${LEB_TOKEN_BUDGET:-}" ]]; then
   local_headers="${local_headers}
 x-leb-token-budget: ${LEB_TOKEN_BUDGET}"

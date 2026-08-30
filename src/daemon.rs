@@ -2578,6 +2578,7 @@ mod tests {
                 repository_root: Some(project.clone()),
                 head: None,
                 task_id: None,
+                framing: None,
             })
             .await
             .expect("compile context");
@@ -2593,6 +2594,7 @@ mod tests {
                 repository_root: Some(project.clone()),
                 head: None,
                 task_id: None,
+                framing: None,
             })
             .await
             .expect_err("project context limit");
@@ -2734,6 +2736,7 @@ mod tests {
                 repository_root: Some(project.clone()),
                 head: None,
                 task_id: None,
+                framing: None,
             })
             .await
             .expect("semantic context compile");
@@ -2911,6 +2914,7 @@ mod tests {
                 repository_root: None,
                 head: None,
                 task_id: None,
+                framing: None,
             })
             .await
             .expect("brain compile");
@@ -2926,6 +2930,7 @@ mod tests {
                 repository_root: None,
                 head: None,
                 task_id: None,
+                framing: None,
             })
             .await
             .expect("off compile");

@@ -328,6 +328,7 @@ fn recall_request(arguments: &Value) -> Result<ContextCompileRequest> {
     let token_budget =
         u32::try_from(budget).map_err(|_| Error::Config("token_budget is too large".to_owned()))?;
     Ok(ContextCompileRequest {
+        framing: None,
         request_id: format!("mcp_{}", uuid::Uuid::new_v4()),
         project_id,
         task_text: required_string(arguments, "task")?.to_owned(),

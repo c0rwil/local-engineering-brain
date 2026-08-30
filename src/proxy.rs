@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
 use crate::config::{Config, ConfigOverrides, ProxyFailureMode};
-use crate::context::{ContextCompileRequest, ContextMode};
+use crate::context::{ContextCompileRequest, ContextMode, InjectionFraming};
 use crate::daemon::DaemonClient;
 use crate::error::{Error, Result};
 use crate::ids::ProjectId;
@@ -46,6 +46,7 @@ struct SessionInjectionKey {
     session_id: String,
     project_id: String,
     token_budget: u32,
+    framing: Option<InjectionFraming>,
 }
 
 #[derive(Clone, Debug)]
@@ -377,7 +378,13 @@ async fn augment_request(
         return Ok(Augmentation::Forwarded);
     };
     let token_budget = resolve_token_budget(state, headers, root.as_deref())?;
-    let session_key = session_injection_key(headers, mode, &project_id, token_budget)?;
+    let framing = match header_text(headers, "x-leb-injection-framing")? {
+        None => None,
+        Some(value) => Some(InjectionFraming::parse(value).ok_or_else(|| {
+            ProxyError::bad_request("x-leb-injection-framing must be `reference` or `directive`")
+        })?),
+    };
+    let session_key = session_injection_key(headers, mode, &project_id, token_budget, framing)?;
     if let Some(key) = &session_key
         && let Some(cached) = state.session_injections.get(key)
     {
@@ -402,6 +409,7 @@ async fn augment_request(
             repository_root: root,
             head,
             task_id: None,
+            framing,
         })
         .await
         .map_err(|error| ProxyError::upstream(format!("context compilation failed: {error}")))?;
@@ -657,6 +665,7 @@ fn session_injection_key(
     mode: ContextMode,
     project_id: &ProjectId,
     token_budget: u32,
+    framing: Option<InjectionFraming>,
 ) -> std::result::Result<Option<SessionInjectionKey>, ProxyError> {
     if mode == ContextMode::Off {
         return Ok(None);
@@ -676,6 +685,7 @@ fn session_injection_key(
         session_id: session_id.to_owned(),
         project_id: project_id.to_string(),
         token_budget,
+        framing,
     }))
 }
 

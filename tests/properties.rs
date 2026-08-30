@@ -642,6 +642,7 @@ proptest! {
             repository_root: None,
             head: None,
             task_id: None,
+            framing: None,
         };
         let first = compiler.compile(&request("prop-req-a")).expect("first compile");
         prop_assert!(

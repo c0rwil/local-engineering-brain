@@ -958,6 +958,7 @@ fn run_context(
         repository_root: Some(status.resolved.root),
         head: status.resolved.git.and_then(|git| git.head),
         task_id: None,
+        framing: None,
     }))?;
     if json {
         println!("{}", serde_json::to_string_pretty(&context)?);
