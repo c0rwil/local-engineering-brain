@@ -53,3 +53,19 @@ Valid-run tallies: off 13/14, brain 12/13. No aggregate separation.
 
 Raw artifacts: `~/lebbench-full-seeds-2-3/` (runs.jsonl, comparison.json,
 comparison.md, full per-run transcripts including both t10 brain arms).
+
+## Patch reruns (healthy server, same pre-fix binaries) — addendum
+
+| Run | Result |
+|---|---|
+| t11 off s2 | fail 1233s (wrong solution) |
+| t11 brain s2 | timeout |
+| t11 brain s3 | timeout |
+| t11 off s3 | **pass 1549s** |
+| t12 off s2 | pass 753s |
+| t12 brain s2 | pass 581s |
+
+Complete healthy t11 record across all seeds: off 1/3, brain 1/3 — the task
+does not discriminate memory effects at this model tier and is retired as a
+capability probe for the Speed model (retained for frontier tiers). The
+t12 seed-2 pair completes that task: 3/3 off, 2/2 valid brain.
