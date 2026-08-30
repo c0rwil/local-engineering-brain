@@ -139,6 +139,11 @@ pub struct ContextConfig {
     pub max_injected_tokens: u32,
     pub stable_prefix_tokens: u32,
     pub semantic_retrieval: bool,
+    /// Hard cap on injected memories per compile; 0 means budget-limited
+    /// only. Family-G v1 showed indiscriminate injection taxes wall time:
+    /// the agent tries to honor every injected rule (perf-evidence
+    /// 2026-08-30).
+    pub max_injected_memories: u32,
     /// Render validated memories from the deterministic derived compact
     /// projection. Disabled by default for an exact verbose-mode ablation.
     pub compact_injection: bool,
@@ -293,6 +298,7 @@ impl Default for ContextConfig {
             max_injected_tokens: 6_000,
             stable_prefix_tokens: 1_800,
             semantic_retrieval: false,
+            max_injected_memories: 0,
             compact_injection: false,
         }
     }

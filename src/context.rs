@@ -152,6 +152,7 @@ pub struct ContextCompiler {
     max_tokens: u32,
     stable_prefix_tokens: u32,
     compact_injection: bool,
+    max_memories: u32,
 }
 
 impl ContextCompiler {
@@ -163,7 +164,15 @@ impl ContextCompiler {
             max_tokens,
             stable_prefix_tokens,
             compact_injection: false,
+            max_memories: 0,
         }
+    }
+
+    /// Cap the number of injected memories per compile (0 = budget-only).
+    #[must_use]
+    pub const fn with_memory_cap(mut self, max_memories: u32) -> Self {
+        self.max_memories = max_memories;
+        self
     }
 
     /// Compile with the optional deterministic semantic retrieval stage
@@ -182,6 +191,7 @@ impl ContextCompiler {
             max_tokens,
             stable_prefix_tokens,
             compact_injection: false,
+            max_memories: 0,
         }
     }
 
@@ -349,6 +359,11 @@ impl ContextCompiler {
             for (candidate, consumed) in &mut candidates {
                 if *consumed {
                     continue;
+                }
+                if self.max_memories > 0
+                    && u32::try_from(items.len()).unwrap_or(u32::MAX) >= self.max_memories
+                {
+                    break;
                 }
                 let kind_count = per_kind.entry(candidate.memory.kind.clone()).or_default();
                 if diversity_pass && *kind_count >= 3 {
@@ -865,6 +880,38 @@ mod tests {
             .promote(&memory.id, EpistemicState::Validated, false)
             .expect("validated");
         (temp, ContextCompiler::new(database, 6_000, 1_800), project)
+    }
+
+    #[test]
+    fn memory_cap_limits_injection_below_budget() {
+        let (_temp, compiler, project) = fixture();
+        let capped = compiler.clone().with_memory_cap(0); // 0 = uncapped baseline
+        let base = ContextCompileRequest {
+            request_id: "req-cap-base".to_owned(),
+            project_id: project.clone(),
+            task_text: "fix abort cleanup".to_owned(),
+            current_paths: Vec::new(),
+            token_budget: 2_000,
+            mode: ContextMode::Brain,
+            repository_root: None,
+            head: None,
+            task_id: None,
+            framing: None,
+        };
+        let uncapped = capped.compile(&base).expect("uncapped");
+        assert!(!uncapped.items.is_empty());
+        let one = compiler.with_memory_cap(1);
+        let mut request = base;
+        request.request_id = "req-cap-one".to_owned();
+        let limited = one.compile(&request).expect("capped");
+        assert_eq!(
+            limited
+                .items
+                .iter()
+                .filter(|item| item.source_type == "memory")
+                .count(),
+            1
+        );
     }
 
     #[test]

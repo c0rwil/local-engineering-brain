@@ -1749,7 +1749,14 @@ async fn compile_context(
     } else {
         ContextCompiler::new(state.database.clone(), max_tokens, stable_tokens)
     })
-    .with_compact_injection(compact_injection);
+    .with_compact_injection(compact_injection)
+    .with_memory_cap(
+        scoped
+            .as_ref()
+            .map_or(state.config.context.max_injected_memories, |config| {
+                config.context.max_injected_memories
+            }),
+    );
     let prepare_compiler = compiler.clone();
     let request_mode = request.mode;
     let retrieval_started = Instant::now();
