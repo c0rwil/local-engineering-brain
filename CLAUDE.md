@@ -92,6 +92,14 @@ protection), so bump-and-reinstall order matters: build, install, restart
 
 ## Benchmarking discipline
 
+Launch every benchmark under `caffeinate -dims` (or attach with
+`caffeinate -dims -w <pid>`) so system sleep cannot stall a matrix; sleep
+pauses macOS monotonic clocks, but idle-sleep mid-run stalls the model
+server and agents. Restart the MTPLX server before any matrix longer than
+~10 runs — its RAM session bank grows per run and under memory pressure it
+defers generation past Claude Code's stream-idle timeout (this burned five
+runs once; see perf-evidence 2026-08-29).
+
 Brain-off mode is the control group and must remain semantically untouched
 (spec P10). The evaluation harness (`src/evaluation.rs`, `leb eval run`)
 executes paired off/brain trials in isolated repo copies with per-arm
