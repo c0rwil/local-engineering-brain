@@ -145,9 +145,10 @@ pub struct ContextConfig {
     /// 2026-08-30).
     pub max_injected_memories: u32,
     /// Render `preference` memories as an explicit review-standards section
-    /// (imperative, consequence-framed, placed last for salience). Added
-    /// after frontier-tier agents solved tasks correctly while ignoring
-    /// passively-worded preference injections (perf-evidence 2026-08-30).
+    /// (imperative, consequence-framed, placed last for salience). Default
+    /// ON: the best-performing composition at frontier tier — 6/6 fidelity
+    /// passes, fastest walls, ~35% fewer injected bytes than inclusive
+    /// rendering (perf-evidence 2026-08-31). Disable for ablation.
     pub review_standards_section: bool,
     /// Render validated memories from the deterministic derived compact
     /// projection. Disabled by default for an exact verbose-mode ablation.
@@ -304,7 +305,7 @@ impl Default for ContextConfig {
             stable_prefix_tokens: 1_800,
             semantic_retrieval: false,
             max_injected_memories: 0,
-            review_standards_section: false,
+            review_standards_section: true,
             compact_injection: false,
         }
     }
