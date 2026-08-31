@@ -144,6 +144,11 @@ pub struct ContextConfig {
     /// the agent tries to honor every injected rule (perf-evidence
     /// 2026-08-30).
     pub max_injected_memories: u32,
+    /// Render `preference` memories as an explicit review-standards section
+    /// (imperative, consequence-framed, placed last for salience). Added
+    /// after frontier-tier agents solved tasks correctly while ignoring
+    /// passively-worded preference injections (perf-evidence 2026-08-30).
+    pub review_standards_section: bool,
     /// Render validated memories from the deterministic derived compact
     /// projection. Disabled by default for an exact verbose-mode ablation.
     pub compact_injection: bool,
@@ -299,6 +304,7 @@ impl Default for ContextConfig {
             stable_prefix_tokens: 1_800,
             semantic_retrieval: false,
             max_injected_memories: 0,
+            review_standards_section: false,
             compact_injection: false,
         }
     }

@@ -1750,6 +1750,13 @@ async fn compile_context(
         ContextCompiler::new(state.database.clone(), max_tokens, stable_tokens)
     })
     .with_compact_injection(compact_injection)
+    .with_review_standards(
+        scoped
+            .as_ref()
+            .map_or(state.config.context.review_standards_section, |config| {
+                config.context.review_standards_section
+            }),
+    )
     .with_memory_cap(
         scoped
             .as_ref()

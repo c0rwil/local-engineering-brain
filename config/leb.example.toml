@@ -16,6 +16,8 @@ stable_prefix_tokens = 1800
 semantic_retrieval = false
 # 0 = budget-limited only; N caps injected memories per compile.
 max_injected_memories = 0
+# Render preference memories as an imperative review-standards section.
+review_standards_section = false
 # Deterministic compact memory blocks omit full IDs and rationale boilerplate.
 # Canonical memory text and context provenance are unchanged. Off by default so
 # verbose-vs-compact benchmarks differ by exactly this flag.

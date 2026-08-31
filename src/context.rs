@@ -145,7 +145,17 @@ pub struct PreparedContext {
     existing: bool,
 }
 
+const REVIEW_HEADING: &str =
+    "# Team review standards - a reviewer rejects changes that violate these\n";
+
 #[derive(Clone, Debug)]
+struct MemorySelection {
+    dynamic: String,
+    review: String,
+    items: Vec<ContextItem>,
+}
+
+#[derive(Clone)]
 pub struct ContextCompiler {
     database: Database,
     retriever: Retriever,
@@ -153,6 +163,7 @@ pub struct ContextCompiler {
     stable_prefix_tokens: u32,
     compact_injection: bool,
     max_memories: u32,
+    review_standards: bool,
 }
 
 impl ContextCompiler {
@@ -165,6 +176,7 @@ impl ContextCompiler {
             stable_prefix_tokens,
             compact_injection: false,
             max_memories: 0,
+            review_standards: false,
         }
     }
 
@@ -172,6 +184,13 @@ impl ContextCompiler {
     #[must_use]
     pub const fn with_memory_cap(mut self, max_memories: u32) -> Self {
         self.max_memories = max_memories;
+        self
+    }
+
+    /// Render preference memories as an explicit review-standards section.
+    #[must_use]
+    pub const fn with_review_standards(mut self, enabled: bool) -> Self {
+        self.review_standards = enabled;
         self
     }
 
@@ -192,6 +211,7 @@ impl ContextCompiler {
             stable_prefix_tokens,
             compact_injection: false,
             max_memories: 0,
+            review_standards: false,
         }
     }
 
@@ -314,33 +334,19 @@ impl ContextCompiler {
         })
     }
 
-    fn compile_brain(&self, request: &ContextCompileRequest) -> Result<CompiledContext> {
-        let stable_budget = self
-            .stable_prefix_tokens
-            .min(request.token_budget.saturating_mul(15) / 100);
-        let stable_prefix = self.stable_prefix(&request.project_id, stable_budget)?;
-        let stable_tokens = estimate_tokens(&stable_prefix);
-        let remaining = request.token_budget.saturating_sub(stable_tokens);
-        let candidates = self.retriever.retrieve(&RetrievalRequest {
-            project_id: &request.project_id,
-            task_text: &request.task_text,
-            current_paths: &request.current_paths,
-            repository_root: request.repository_root.as_deref(),
-            head: request.head.as_deref(),
-            limit: 100,
-        })?;
-        let candidate_count = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
-        let mut compact_injections = if self.compact_injection {
-            let ids = candidates
-                .iter()
-                .map(|candidate| candidate.memory.id.clone())
-                .collect::<Vec<_>>();
-            MemoryStore::new(self.database.clone()).compact_injections(&ids)?
-        } else {
-            BTreeMap::new()
-        };
+    /// Score-ordered two-pass memory selection: a kind-diversity pass, then a
+    /// budget-filling pass; preference memories divert to the review-standards
+    /// section when that mode is enabled.
+    fn fill_memory_sections(
+        &self,
+        candidates: Vec<crate::retrieval::RetrievedMemory>,
+        compact_injections: &mut BTreeMap<MemoryId, crate::memory::CompactInjection>,
+        remaining: u32,
+        heading: &str,
+        review_heading: &str,
+    ) -> Result<MemorySelection> {
         let mut dynamic = String::new();
-        let heading = request.framing.unwrap_or_default().heading();
+        let mut review = String::new();
         let mut used = 0_u32;
         let mut per_kind = BTreeMap::<String, u8>::new();
         let mut items = Vec::new();
@@ -369,10 +375,25 @@ impl ContextCompiler {
                 if diversity_pass && *kind_count >= 3 {
                     continue;
                 }
-                let (block, block_tokens) =
-                    self.memory_block(&candidate.memory, &mut compact_injections)?;
-                let heading_tokens = if dynamic.is_empty() {
-                    estimate_tokens(heading)
+                let review_entry = self.review_standards && candidate.memory.kind == "preference";
+                let (block, block_tokens) = if review_entry {
+                    let entry = format!("- MUST: {}\n", candidate.memory.claim);
+                    let tokens = estimate_tokens(&entry);
+                    (entry, tokens)
+                } else {
+                    self.memory_block(&candidate.memory, compact_injections)?
+                };
+                let target_empty = if review_entry {
+                    review.is_empty()
+                } else {
+                    dynamic.is_empty()
+                };
+                let heading_tokens = if target_empty {
+                    estimate_tokens(if review_entry {
+                        review_heading
+                    } else {
+                        heading
+                    })
                 } else {
                     0
                 };
@@ -383,11 +404,19 @@ impl ContextCompiler {
                 {
                     continue;
                 }
-                if dynamic.is_empty() {
-                    dynamic.push_str(heading);
-                    used = used.saturating_add(heading_tokens);
+                if review_entry {
+                    if review.is_empty() {
+                        review.push_str(review_heading);
+                        used = used.saturating_add(heading_tokens);
+                    }
+                    review.push_str(&block);
+                } else {
+                    if dynamic.is_empty() {
+                        dynamic.push_str(heading);
+                        used = used.saturating_add(heading_tokens);
+                    }
+                    dynamic.push_str(&block);
                 }
-                dynamic.push_str(&block);
                 used = used.saturating_add(block_tokens);
                 *kind_count += 1;
                 *consumed = true;
@@ -400,6 +429,57 @@ impl ContextCompiler {
                     why: candidate.why.clone(),
                 });
             }
+        }
+        Ok(MemorySelection {
+            dynamic,
+            review,
+            items,
+        })
+    }
+
+    fn compile_brain(&self, request: &ContextCompileRequest) -> Result<CompiledContext> {
+        let stable_budget = self
+            .stable_prefix_tokens
+            .min(request.token_budget.saturating_mul(15) / 100);
+        let stable_prefix = self.stable_prefix(&request.project_id, stable_budget)?;
+        let stable_tokens = estimate_tokens(&stable_prefix);
+        let remaining = request.token_budget.saturating_sub(stable_tokens);
+        let candidates = self.retriever.retrieve(&RetrievalRequest {
+            project_id: &request.project_id,
+            task_text: &request.task_text,
+            current_paths: &request.current_paths,
+            repository_root: request.repository_root.as_deref(),
+            head: request.head.as_deref(),
+            limit: 100,
+        })?;
+        let candidate_count = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
+        let mut compact_injections = if self.compact_injection {
+            let ids = candidates
+                .iter()
+                .map(|candidate| candidate.memory.id.clone())
+                .collect::<Vec<_>>();
+            MemoryStore::new(self.database.clone()).compact_injections(&ids)?
+        } else {
+            BTreeMap::new()
+        };
+        let heading = request.framing.unwrap_or_default().heading();
+        let selection = self.fill_memory_sections(
+            candidates,
+            &mut compact_injections,
+            remaining,
+            heading,
+            REVIEW_HEADING,
+        )?;
+        let mut dynamic = selection.dynamic;
+        let review = selection.review;
+        let items = selection.items;
+        // Review standards render LAST: adjacency to the conversation is the
+        // salience this section exists for.
+        if !review.is_empty() {
+            if !dynamic.is_empty() {
+                dynamic.push('\n');
+            }
+            dynamic.push_str(&review);
         }
         let selected_tokens = estimate_tokens(&format!("{stable_prefix}{dynamic}"));
         debug_assert!(selected_tokens <= request.token_budget);
@@ -880,6 +960,118 @@ mod tests {
             .promote(&memory.id, EpistemicState::Validated, false)
             .expect("validated");
         (temp, ContextCompiler::new(database, 6_000, 1_800), project)
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn review_standards_section_renders_preferences_imperatively_and_last() {
+        let temp = TempDir::new().expect("temp");
+        let root = temp.path().join("project");
+        std::fs::create_dir(&root).expect("project");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let project = ProjectRegistry::new(database.clone())
+            .resolve_or_register(&root)
+            .expect("project")
+            .project
+            .id;
+        let experience = ExperienceStore::new(database.clone());
+        let task = experience
+            .start_task(&project, "respect review standards", None)
+            .expect("task");
+        let evidence = experience
+            .record_evidence(
+                &project,
+                Some(&task.id),
+                None,
+                "test_result",
+                EvidenceStrength::Deterministic,
+                None,
+                Some("cargo test"),
+                Some(0),
+                b"pass",
+                &serde_json::json!({}),
+            )
+            .expect("evidence");
+        experience
+            .finish_task(&task.id, TaskOutcome::Success, Some(true), None)
+            .expect("finish");
+        let memories = MemoryStore::new(database.clone());
+        for (kind, claim) in [
+            ("lesson", "Cleanup runs during review standards checks"),
+            (
+                "preference",
+                "Review standards require terminal counters bumped",
+            ),
+        ] {
+            let memory = memories
+                .create_candidate(
+                    &project,
+                    &MemoryDraft {
+                        scope_type: "project".to_owned(),
+                        scope_id: project.to_string(),
+                        kind: kind.to_owned(),
+                        claim: claim.to_owned(),
+                        rationale: "review standards fixture".to_owned(),
+                        confidence: 0.5,
+                        importance: 0.9,
+                        tags: Vec::new(),
+                        valid_from_commit: None,
+                        valid_to_commit: None,
+                        trust_source: "agent_inference".to_owned(),
+                        evidence_ids: vec![evidence.id.clone()],
+                        source_task_ids: vec![task.id.clone()],
+                        node_ids: Vec::new(),
+                    },
+                )
+                .expect("memory");
+            for state in [
+                EpistemicState::Observed,
+                EpistemicState::Supported,
+                EpistemicState::Validated,
+            ] {
+                memories.promote(&memory.id, state, false).expect("promote");
+            }
+        }
+        let request = ContextCompileRequest {
+            request_id: "req-review".to_owned(),
+            project_id: project,
+            task_text: "respect review standards for terminal counters".to_owned(),
+            current_paths: Vec::new(),
+            token_budget: 4_000,
+            mode: ContextMode::Brain,
+            repository_root: None,
+            head: None,
+            task_id: None,
+            framing: None,
+        };
+        let plain = ContextCompiler::new(database.clone(), 6_000, 1_800)
+            .compile(&request)
+            .expect("plain");
+        assert!(!plain.dynamic_context.contains("# Team review standards"));
+        let mut request2 = request;
+        request2.request_id = "req-review-on".to_owned();
+        let sectioned = ContextCompiler::new(database, 6_000, 1_800)
+            .with_review_standards(true)
+            .compile(&request2)
+            .expect("sectioned");
+        let text = &sectioned.dynamic_context;
+        assert!(text.contains("# Team review standards"));
+        assert!(text.contains("- MUST: Review standards require terminal counters bumped"));
+        let review_at = text
+            .find("# Team review standards")
+            .expect("review section");
+        let memory_at = text
+            .find("# Validated engineering memory")
+            .expect("memory section");
+        assert!(review_at > memory_at, "review section must render last");
+        assert_eq!(
+            sectioned
+                .items
+                .iter()
+                .filter(|item| item.source_type == "memory")
+                .count(),
+            2
+        );
     }
 
     #[test]
