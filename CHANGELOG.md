@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Evidence
+
+- First end-to-end validation of the central claim on a frontier model:
+  with pinned project identity and real injection, all three brain-arm
+  compositions pass 18/18 tribal-knowledge fidelity probes that the
+  memoryless baseline fails 4/6 of; the review-standards rendering is the
+  fastest and cheapest arm. Earlier paired matrices are retroactively
+  annotated: their brain arms ran with prefix-only injection due to the
+  clone-identity fracture (see perf-evidence 2026-08-31).
+
 Everything below is the current state of the unreleased **0.1.0** pre-release.
 Nothing has shipped under a version tag yet, so there is no comparison base:
 the entries describe the shape of the product as it stands and the changes made
