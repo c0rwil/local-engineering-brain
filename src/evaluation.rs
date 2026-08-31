@@ -879,10 +879,12 @@ fn validate_relative(path: &Path, field: &str) -> Result<()> {
 }
 
 fn safe_environment() -> Vec<(String, String)> {
-    ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM"]
-        .into_iter()
-        .filter_map(|key| std::env::var(key).ok().map(|value| (key.to_owned(), value)))
-        .collect()
+    [
+        "PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME",
+    ]
+    .into_iter()
+    .filter_map(|key| std::env::var(key).ok().map(|value| (key.to_owned(), value)))
+    .collect()
 }
 
 fn prepare_artifact_dir(path: &Path) -> Result<()> {
