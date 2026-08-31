@@ -182,6 +182,33 @@ purge irreversibly removes content, FTS entries, links, and derived context refe
 retaining a content-free immutable audit event. Purge cannot rewrite pre-existing backup copies;
 the CLI reports that limitation explicitly.
 
+## Measured results
+
+Every claim below is backed by a dated evidence file in
+[`docs/perf-evidence/`](docs/perf-evidence/) with pinned model identity,
+verified injection telemetry, and honest controls (brain-off is the same
+model, runtime, and harness with zero injection).
+
+- **Frontier tier (Claude Code + Opus 4.8 through the LEB proxy):** on
+  tribal-knowledge fidelity probes — unwritten team conventions enforced by
+  mechanical style verifiers — the memoryless control passed 2/6 while every
+  brain-arm composition passed 6/6, at 36-100 s per task. Failure-stage
+  replay shows all control failures are pure style failures: fast models
+  solve the ticket and skip the unwritten rules (2026-08-31).
+- **Local tier (Qwen 27B on this machine):** on capability probes with
+  seeded episode lessons, brain 12/16 vs control 10/16 with 14% lower mean
+  wall time; wins align with the seeded lesson families and the brain arm
+  was never worse on any task. On fidelity probes the local bottleneck is
+  wall clock, not compliance: replay shows most timed-out runs had already
+  produced compliant patches, and the oriented brain arm finished in time
+  3/5 vs 1/5 (2026-08-31).
+- **Prompt-cache stability:** injected context is byte-stable per session
+  (session-pinned), measured at 11-24 consecutive cache hits per agentic
+  session against both local and Anthropic runtimes.
+- Null and superseded results are recorded with the same prominence,
+  including a retroactive annotation of every pre-identity-pinning brain
+  arm (prefix-only injection; see 2026-08-31 integrity note).
+
 ## Paired evaluation
 
 Copy [`bench.example.yaml`](bench.example.yaml), pin the model/runtime identity, and run:
