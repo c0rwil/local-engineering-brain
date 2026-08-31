@@ -89,6 +89,13 @@ protection), so bump-and-reinstall order matters: build, install, restart
   replacement; keep that wait if you touch the test.
 - `mtplx` subcommands: `pull`/`models` accept `--cache-dir`; `inspect` does
   not (it reads the default cache). `mtplx validate` does not exist.
+- Project identity: repos with only LOCAL-path remotes mint a NEW project id
+  per clone unless `.leb/project.toml` travels with the checkout (an
+  independent template repo and a clone are indistinguishable by content, so
+  no fallback heuristic is safe). Benchmark fixtures and seed scripts must
+  pin identity via that file — a brain snapshot is useless to an arm that
+  resolves a different project id. This silently blanked EVERY brain arm's
+  injection across the early paired matrices; see perf-evidence 2026-08-31.
 
 ## Benchmarking discipline
 

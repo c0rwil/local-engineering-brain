@@ -1227,6 +1227,42 @@ mod tests {
     }
 
     #[test]
+    fn copies_carrying_project_metadata_share_identity_across_remotes() {
+        // Benchmark-integrity contract: a `.leb/project.toml` traveling with
+        // a checkout pins identity even when clones carry different
+        // local-path remotes. Copies WITHOUT metadata and without a hosted
+        // remote deliberately mint new identities (an independent repo with
+        // an identical template history is indistinguishable from a clone).
+        let temp = TempDir::new().expect("temp dir");
+        let upstream = temp.path().join("upstream");
+        init_repo(&upstream);
+        run_git(temp.path(), &["clone", "-q", "upstream", "first"]);
+        run_git(temp.path(), &["clone", "-q", "upstream", "second"]);
+        let second = temp.path().join("second");
+        run_git(
+            &second,
+            &["remote", "set-url", "origin", "../upstream/.git"],
+        );
+
+        let registry = registry(&temp);
+        let seeded = registry
+            .resolve_or_register(&temp.path().join("first"))
+            .expect("first clone");
+        // Carry the metadata the way the benchmark fixture does.
+        fs::create_dir_all(second.join(".leb")).expect("metadata dir");
+        fs::copy(
+            temp.path().join("first/.leb/project.toml"),
+            second.join(".leb/project.toml"),
+        )
+        .expect("carry metadata");
+        let arm = registry.resolve_or_register(&second).expect("second clone");
+        assert_eq!(
+            seeded.project.id, arm.project.id,
+            "metadata-pinned copies must resolve to one project"
+        );
+    }
+
+    #[test]
     fn first_registration_returns_post_write_git_state() {
         let temp = TempDir::new().expect("temp dir");
         let repo = temp.path().join("repo");
