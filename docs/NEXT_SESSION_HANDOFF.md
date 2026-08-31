@@ -1,7 +1,35 @@
 # LEB — next-session handoff
 
-Paste-ready context for continuing Local Engineering Brain. Written 2026-08-29
-after V1 completion, DoD validation, and benchmark round 1.
+Paste-ready context for continuing Local Engineering Brain. Refreshed
+2026-08-31 after the re-validation program completed. Supersedes the
+2026-08-29 version below where they conflict.
+
+## Current state (2026-08-31)
+
+- Frontier arm is LIVE and green-lit: Claude Code + claude-opus-4-8 through
+  the LEB proxy (stored login; wrapper `agent-claude-frontier.sh`).
+  Opus is the fast iteration loop; the local Speed model is the shipping
+  runtime and re-validation target. Launch matrices with `caffeinate -dims`
+  from BACKGROUND commands only (foreground timeouts kill the process group).
+- FLAGSHIP: with pinned project identity, all Opus brain arms passed 18/18
+  tribal-fidelity probes vs 2/6 memoryless; locally brain 12/16 vs 10/16
+  and −14% wall on capability probes. Every pre-pinning brain-arm result is
+  void (prefix-only injection) — see perf-evidence 2026-08-31 files.
+- Identity contract: benchmark fixtures/seeds pin `.leb/project.toml`
+  (clone-identity fracture is unfixable by heuristics; documented in
+  CLAUDE.md, regression-tested).
+- Defaults: `context.review_standards_section` now defaults ON (best
+  measured composition). `max_injected_memories`, `compact_injection`,
+  `semantic_retrieval` remain opt-in pending fair tests.
+- In flight/queued: wall-calibrated local fidelity rerun (2700 s walls);
+  Opus multi-seed confirmation (opus-g2-off-s34.yaml /
+  opus-g2-review-s34.yaml in leb-bench-target) queued behind it.
+- Check `gh auth status` shows active account c0rwil before every push —
+  something external flips it to corwil-agi.
+
+---
+
+# Original 2026-08-29 handoff (historical)
 
 ## Where things stand
 
