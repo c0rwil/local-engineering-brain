@@ -131,7 +131,7 @@ pub struct ComparisonReport {
     pub paired_runs: u64,
     pub off: ModeSummary,
     pub brain: ModeSummary,
-    pub success_rate_delta: f64,
+    pub success_rate_delta: Option<f64>,
     pub mean_wall_time_delta_pct: Option<f64>,
     pub generated_at_ms: i64,
 }
@@ -228,10 +228,15 @@ fn run_with_environment_lookup(
 
     for (task_index, task) in config.tasks.iter().enumerate() {
         for (seed_index, seed) in config.seeds.iter().copied().enumerate() {
-            let order = if (task_index + seed_index) % 2 == 0 {
-                [EvaluationMode::Off, EvaluationMode::Brain]
+            let paired = config.modes.len() == 2;
+            let order: Vec<EvaluationMode> = if paired {
+                if (task_index + seed_index) % 2 == 0 {
+                    vec![EvaluationMode::Off, EvaluationMode::Brain]
+                } else {
+                    vec![EvaluationMode::Brain, EvaluationMode::Off]
+                }
             } else {
-                [EvaluationMode::Brain, EvaluationMode::Off]
+                config.modes.clone()
             };
             for mode in order {
                 ordinal = ordinal.saturating_add(1);
@@ -603,23 +608,38 @@ fn compare_records(
             .or_default()
             .insert(record.mode, record);
     }
-    if pairs.values().any(|pair| {
-        !pair.contains_key(&EvaluationMode::Off) || !pair.contains_key(&EvaluationMode::Brain)
-    }) {
+    let seen_modes = records
+        .iter()
+        .map(|record| record.mode)
+        .collect::<std::collections::BTreeSet<_>>();
+    let paired_config = seen_modes.len() == 2;
+    if paired_config
+        && pairs.values().any(|pair| {
+            !pair.contains_key(&EvaluationMode::Off) || !pair.contains_key(&EvaluationMode::Brain)
+        })
+    {
         return Err(Error::Config(
             "evaluation report requires one off and one brain run per task/seed".to_owned(),
         ));
     }
     let off = summarize(EvaluationMode::Off, records);
     let brain = summarize(EvaluationMode::Brain, records);
-    let wall_delta = (off.mean_wall_ms > 0.0)
+    // Deltas are meaningful only when both arms ran in THIS config; a
+    // single-arm config compares against a control recorded elsewhere.
+    let wall_delta = (paired_config && off.mean_wall_ms > 0.0)
         .then(|| ((brain.mean_wall_ms - off.mean_wall_ms) / off.mean_wall_ms) * 100.0);
+    let success_delta = paired_config.then_some(brain.success_rate - off.success_rate);
+    let paired_runs = if paired_config {
+        u64::try_from(pairs.len()).unwrap_or(u64::MAX)
+    } else {
+        0
+    };
     Ok(ComparisonReport {
         benchmark_id: benchmark_id.to_owned(),
         model_hash: model_hash.to_owned(),
         config_hash: config_hash.to_owned(),
-        paired_runs: u64::try_from(pairs.len()).unwrap_or(u64::MAX),
-        success_rate_delta: brain.success_rate - off.success_rate,
+        paired_runs,
+        success_rate_delta: success_delta,
         mean_wall_time_delta_pct: wall_delta,
         off,
         brain,
@@ -701,13 +721,12 @@ fn validate_config(config: &BenchmarkConfig) -> Result<()> {
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    if modes
-        != [EvaluationMode::Off, EvaluationMode::Brain]
-            .into_iter()
-            .collect()
-    {
+    if modes.is_empty() || modes.len() != config.modes.len() {
         return Err(Error::Config(
-            "paired evaluation modes must contain exactly `off` and `brain`".to_owned(),
+            "evaluation modes must be non-empty and free of duplicates: use `[off, brain]` \
+             for a paired run or a single mode for an unpaired arm (e.g. an A/B whose \
+             control lives in another config)"
+                .to_owned(),
         ));
     }
     for task in &config.tasks {
@@ -955,7 +974,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 
 fn comparison_markdown(report: &ComparisonReport) -> String {
     format!(
-        "# LEB paired evaluation: {}\n\nModel: `{}`  \nConfig: `{}`  \nPairs: {}\n\n| Mode | Runs | Successes | Success rate | Mean wall ms |\n|---|---:|---:|---:|---:|\n| off | {} | {} | {:.3} | {:.1} |\n| brain | {} | {} | {:.3} | {:.1} |\n\nSuccess-rate delta: **{:+.3}**  \nMean wall-time delta: **{}**\n",
+        "# LEB paired evaluation: {}\n\nModel: `{}`  \nConfig: `{}`  \nPairs: {}\n\n| Mode | Runs | Successes | Success rate | Mean wall ms |\n|---|---:|---:|---:|---:|\n| off | {} | {} | {:.3} | {:.1} |\n| brain | {} | {} | {:.3} | {:.1} |\n\nSuccess-rate delta: **{}**  \nMean wall-time delta: **{}**\n",
         report.benchmark_id,
         report.model_hash,
         report.config_hash,
@@ -968,7 +987,10 @@ fn comparison_markdown(report: &ComparisonReport) -> String {
         report.brain.successes,
         report.brain.success_rate,
         report.brain.mean_wall_ms,
-        report.success_rate_delta,
+        report.success_rate_delta.map_or_else(
+            || "n/a (single-arm)".to_owned(),
+            |value| format!("{value:+.3}")
+        ),
         report
             .mean_wall_time_delta_pct
             .map_or_else(|| "n/a".to_owned(), |value| format!("{value:+.2}%")),
@@ -1087,6 +1109,37 @@ mod tests {
     }
 
     #[test]
+    fn single_arm_runner_reports_without_pairing() {
+        let temp = TempDir::new().expect("temp");
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).expect("repo");
+        fs::write(repo.join("state"), "clean").expect("state");
+        let prompt = temp.path().join("prompt.txt");
+        fs::write(&prompt, "do the task").expect("prompt");
+        let config_path = temp.path().join("bench.yaml");
+        fs::write(
+            &config_path,
+            format!(
+                "benchmark_id: single\nmodel_hash: model-1\nmodes: [brain]\nseeds: [1, 2]\nwall_seconds: 5\nartifact_dir: artifacts\ntasks:\n  - id: task_1\n    repo: {}\n    prompt_file: {}\n    agent:\n      command: \"printf '%s' \\\"$LEB_MODE\\\" > mode\"\n    success:\n      command: \"test \\\"$(cat mode)\\\" = brain\"\n",
+                repo.display(),
+                prompt.display()
+            ),
+        )
+        .expect("config");
+        let output = temp.path().join("out");
+        let artifacts = run_with_environment_lookup(&config_path, Some(&output), |_| None)
+            .expect("single-arm run");
+        assert_eq!(artifacts.comparison.brain.runs, 2);
+        assert_eq!(artifacts.comparison.brain.successes, 2);
+        assert_eq!(artifacts.comparison.off.runs, 0);
+        assert_eq!(artifacts.comparison.paired_runs, 0);
+        assert!(artifacts.comparison.success_rate_delta.is_none());
+        assert!(artifacts.comparison.mean_wall_time_delta_pct.is_none());
+        let markdown = fs::read_to_string(&artifacts.comparison_markdown_path).expect("md");
+        assert!(markdown.contains("n/a (single-arm)"));
+    }
+
+    #[test]
     fn rejects_incomplete_control_modes_escaping_metrics_and_unsafe_env() {
         let mut config = BenchmarkConfig {
             benchmark_id: "safe".to_owned(),
@@ -1113,10 +1166,21 @@ mod tests {
                 limits: None,
             }],
         };
-        assert!(validate_config(&config).is_err());
+        // Single-arm mode is legal; the escaping metrics path is what fails.
+        let error = validate_config(&config).expect_err("escaping metrics path must fail");
+        assert!(error.to_string().contains("metrics"), "{error}");
+
+        config.tasks[0].metrics_file = None;
+        config.modes = Vec::new();
+        let error = validate_config(&config).expect_err("empty modes must fail");
+        assert!(error.to_string().contains("non-empty"));
+        config.modes = vec![EvaluationMode::Brain, EvaluationMode::Brain];
+        let error = validate_config(&config).expect_err("duplicate modes must fail");
+        assert!(error.to_string().contains("free of duplicates"));
+        config.modes = vec![EvaluationMode::Brain];
+        validate_config(&config).expect("single-arm config is legal");
 
         config.modes = vec![EvaluationMode::Off, EvaluationMode::Brain];
-        config.tasks[0].metrics_file = None;
         config.pass_env = vec!["PATH".to_owned()];
         let error = validate_config(&config).expect_err("arbitrary environment access must fail");
         assert!(error.to_string().contains("pass_env may contain only"));

@@ -828,11 +828,14 @@ fn run_eval(
                 println!("{}", serde_json::to_string_pretty(&artifacts.comparison)?);
             } else {
                 println!(
-                    "Paired runs: {}\nSuccess: off {:.1}% / brain {:.1}% ({:+.1} pp)\nReport: {}",
+                    "Paired runs: {}\nSuccess: off {:.1}% / brain {:.1}% ({})\nReport: {}",
                     artifacts.comparison.paired_runs,
                     artifacts.comparison.off.success_rate * 100.0,
                     artifacts.comparison.brain.success_rate * 100.0,
-                    artifacts.comparison.success_rate_delta * 100.0,
+                    artifacts.comparison.success_rate_delta.map_or_else(
+                        || "single-arm".to_owned(),
+                        |delta| format!("{:+.1} pp", delta * 100.0)
+                    ),
                     artifacts.comparison_markdown_path.display()
                 );
             }
