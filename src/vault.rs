@@ -373,14 +373,40 @@ impl VaultBuilder {
 
     fn group_edges(&self, project_id: &ProjectId) -> Result<Vec<(String, String, i64)>> {
         self.database.with_reader(|connection| {
+            // Two coupling signals, unioned: direct definition-to-definition
+            // edges (Graphify-style graphs), plus tree-sitter references
+            // resolved by label — tree-sitter records a CALLS target as an
+            // `ExternalReference` node located in the REFERENCING file, so
+            // the defining file must be recovered via the definition with the
+            // same label. The resolution join is the most expensive query in
+            // the vault (seconds on a ~20k-node repo); exports normally run
+            // in the lowest-priority background job, where that is fine.
             let mut statement = connection.prepare(
-                "SELECT s.file_path, t.file_path, COUNT(*) AS n
-                 FROM edges e
-                 JOIN nodes s ON s.id = e.source_id
-                 JOIN nodes t ON t.id = e.target_id
-                 WHERE e.project_id = ?1 AND e.tombstoned_at_ms IS NULL
-                   AND s.file_path IS NOT NULL AND t.file_path IS NOT NULL
-                 GROUP BY s.file_path, t.file_path",
+                "SELECT source_path, target_path, SUM(n) FROM (
+                     SELECT s.file_path AS source_path, t.file_path AS target_path,
+                            COUNT(*) AS n
+                     FROM edges e
+                     JOIN nodes s ON s.id = e.source_id
+                     JOIN nodes t ON t.id = e.target_id
+                     WHERE e.project_id = ?1 AND e.tombstoned_at_ms IS NULL
+                       AND t.kind <> 'ExternalReference'
+                       AND s.file_path IS NOT NULL AND t.file_path IS NOT NULL
+                       AND s.file_path <> t.file_path
+                     GROUP BY s.file_path, t.file_path
+                     UNION ALL
+                     SELECT s.file_path, d.file_path, COUNT(*)
+                     FROM edges e
+                     JOIN nodes s ON s.id = e.source_id
+                     JOIN nodes t ON t.id = e.target_id
+                        AND t.kind = 'ExternalReference'
+                     JOIN nodes d ON d.project_id = e.project_id
+                        AND d.kind IN ('Function', 'Type', 'Module', 'Interface')
+                        AND d.label = t.label AND d.tombstoned_at_ms IS NULL
+                     WHERE e.project_id = ?1 AND e.tombstoned_at_ms IS NULL
+                       AND s.file_path IS NOT NULL AND d.file_path IS NOT NULL
+                       AND s.file_path <> d.file_path
+                     GROUP BY s.file_path, d.file_path
+                 ) GROUP BY source_path, target_path",
             )?;
             let rows = statement
                 .query_map([project_id.as_str()], |row| {
