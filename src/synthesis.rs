@@ -105,12 +105,27 @@ pub struct SynthesizedProcedure {
     pub cross_project_hypothesis: bool,
 }
 
+/// One convention learned from repeated fail-then-pass corrections.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DistilledPreference {
+    pub memory: MemoryRecord,
+    /// The verification command whose fail→pass transition marked each
+    /// correcting episode.
+    pub correction_command: String,
+    pub supporting_episodes: Vec<TaskId>,
+    pub reused_existing: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SynthesisReport {
     pub project_id: ProjectId,
     /// Successful evidence-backed episodes examined in this bounded pass.
     pub examined_episodes: u32,
     pub procedures: Vec<SynthesizedProcedure>,
+    /// Conventions distilled from episodes (spec §16: learning the
+    /// engineer), not stored preferences replayed back.
+    #[serde(default)]
+    pub preferences: Vec<DistilledPreference>,
 }
 
 /// One successful, evidence-backed episode eligible for synthesis.
@@ -205,11 +220,184 @@ impl SynthesisStore {
                 procedures.push(result);
             }
         }
+        let preferences = self.distill_preferences(project_id, *options, &memories)?;
         Ok(SynthesisReport {
             project_id: project_id.clone(),
             examined_episodes: examined,
             procedures,
+            preferences,
         })
+    }
+
+    /// Learn team conventions from episodes instead of being told them.
+    ///
+    /// Signal: within one successful, user-accepted episode, a recorded
+    /// verification command FAILED and later PASSED — the fix in between is
+    /// what the convention demanded. When at least
+    /// `min_supporting_episodes` distinct episodes share the same
+    /// correcting command AND the same successful-attempt summary, that
+    /// summary becomes a candidate `preference` memory: evidence-linked,
+    /// capped at synthesized confidence, and subject to the exact same
+    /// promotion gates as an operator-written memory. Deterministic — no
+    /// model in the loop.
+    #[allow(clippy::too_many_lines)]
+    fn distill_preferences(
+        &self,
+        project_id: &ProjectId,
+        options: SynthesisOptions,
+        memories: &MemoryStore,
+    ) -> Result<Vec<DistilledPreference>> {
+        struct Correction {
+            task_id: String,
+            command: String,
+            summary: String,
+            passing_evidence: String,
+        }
+        let corrections = self.database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT t.id, fail.command,
+                        (SELECT a.strategy_summary FROM attempts a
+                          WHERE a.task_id = t.id AND a.outcome = 'success'
+                          ORDER BY a.ordinal DESC LIMIT 1),
+                        (SELECT pass.id FROM evidence pass
+                          WHERE pass.task_id = t.id AND pass.command = fail.command
+                            AND pass.exit_code = 0 AND pass.rowid > fail.rowid
+                          ORDER BY pass.rowid DESC LIMIT 1)
+                 FROM tasks t
+                 JOIN evidence fail ON fail.task_id = t.id
+                 WHERE t.project_id = ?1 AND t.status = 'success'
+                   AND t.accepted_by_user = 1
+                   AND fail.command IS NOT NULL
+                   AND fail.exit_code IS NOT NULL AND fail.exit_code <> 0
+                 ORDER BY t.completed_at_ms DESC, t.id
+                 LIMIT ?2",
+            )?;
+            let rows = statement
+                .query_map(
+                    params![
+                        project_id.as_str(),
+                        i64::try_from(MAX_SCANNED_EPISODES).unwrap_or(i64::MAX)
+                    ],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                        ))
+                    },
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows
+                .into_iter()
+                .filter_map(
+                    |(task_id, command, summary, passing)| match (summary, passing) {
+                        (Some(summary), Some(passing_evidence)) => Some(Correction {
+                            task_id,
+                            command: command.split_whitespace().collect::<Vec<_>>().join(" "),
+                            summary: summary.trim().to_owned(),
+                            passing_evidence,
+                        }),
+                        _ => None,
+                    },
+                )
+                .collect::<Vec<_>>())
+        })?;
+
+        // Group by correcting command; within a group, the claim must be the
+        // summary shared by at least the threshold of DISTINCT episodes —
+        // agreement, not just repetition.
+        let mut by_command = BTreeMap::<String, Vec<Correction>>::new();
+        for correction in corrections {
+            if correction.summary.is_empty() || correction.summary.len() > 500 {
+                continue;
+            }
+            by_command
+                .entry(correction.command.clone())
+                .or_default()
+                .push(correction);
+        }
+        let threshold = usize::try_from(options.min_supporting_episodes).unwrap_or(usize::MAX);
+        let mut distilled = Vec::new();
+        for (command, group) in by_command {
+            let mut by_summary = BTreeMap::<&str, BTreeMap<&str, &Correction>>::new();
+            for correction in &group {
+                by_summary
+                    .entry(correction.summary.as_str())
+                    .or_default()
+                    .insert(correction.task_id.as_str(), correction);
+            }
+            // Deterministic winner: largest distinct-episode agreement,
+            // lexicographically smallest summary on ties (BTreeMap order).
+            let Some((claim, supporters)) = by_summary
+                .iter()
+                .max_by(|a, b| a.1.len().cmp(&b.1.len()).then(b.0.cmp(a.0)))
+            else {
+                continue;
+            };
+            if supporters.len() < threshold {
+                continue;
+            }
+            let source_task_ids = supporters
+                .values()
+                .map(|correction| TaskId::parse(&correction.task_id))
+                .collect::<Result<Vec<_>>>()?;
+            let evidence_ids = supporters
+                .values()
+                .take(MAX_EVIDENCE_LINKS)
+                .map(|correction| EvidenceId::parse(&correction.passing_evidence))
+                .collect::<Result<Vec<_>>>()?;
+            let draft = MemoryDraft {
+                scope_type: "project".to_owned(),
+                scope_id: project_id.to_string(),
+                kind: "preference".to_owned(),
+                claim: (*claim).to_owned(),
+                rationale: format!(
+                    "Distilled from {} episodes where `{command}` failed before the fix \
+                     and passed after it; every supporting episode's successful attempt \
+                     stated this convention.",
+                    supporters.len()
+                ),
+                confidence: SYNTHESIZED_CONFIDENCE,
+                importance: 0.8,
+                tags: vec!["preference".to_owned(), "distilled".to_owned()],
+                valid_from_commit: None,
+                valid_to_commit: None,
+                trust_source: "agent_inference".to_owned(),
+                evidence_ids,
+                source_task_ids: source_task_ids.clone(),
+                node_ids: crate::learning::derive_node_links(
+                    &self.database,
+                    project_id,
+                    &source_task_ids,
+                    32,
+                )?,
+            };
+            let (memory, reused_existing) = if let Some(existing) =
+                memories.find_exact(project_id, "project", &draft.scope_id, "preference", claim)?
+            {
+                (
+                    memories.link_distillation(&existing.id, project_id, &draft)?,
+                    true,
+                )
+            } else {
+                let memory = memories.create_candidate(project_id, &draft)?;
+                EventStore::new(self.database.clone()).append(&DomainEvent::LearningDistilled {
+                    project_id: project_id.clone(),
+                    memory_id: memory.id.clone(),
+                    source_task_ids: source_task_ids.clone(),
+                    reused_existing: false,
+                })?;
+                (memory, false)
+            };
+            distilled.push(DistilledPreference {
+                memory,
+                correction_command: command,
+                supporting_episodes: source_task_ids,
+                reused_existing,
+            });
+        }
+        Ok(distilled)
     }
 
     /// Promote a validated procedure memory to the `skill` kind (spec §16.4).
@@ -1046,5 +1234,107 @@ mod tests {
             .promote_to_skill(&procedure.id, 2)
             .expect_err("skills are not procedures anymore");
         assert!(repeated.to_string().contains("not a procedure"));
+    }
+
+    fn correcting_episode(
+        database: &Database,
+        project: &ProjectId,
+        command: &str,
+        summary: &str,
+    ) -> TaskId {
+        let experience = ExperienceStore::new(database.clone());
+        let task = experience
+            .start_task(project, "apply the team convention", None)
+            .expect("task");
+        let attempt = experience
+            .record_attempt(&task.id, summary, AttemptOutcome::Success, &[])
+            .expect("attempt");
+        // The verification command fails first, then passes after the fix.
+        for exit_code in [1, 0] {
+            experience
+                .record_evidence(
+                    project,
+                    Some(&task.id),
+                    Some(&attempt.id),
+                    "style_check",
+                    EvidenceStrength::Deterministic,
+                    None,
+                    Some(command),
+                    Some(exit_code),
+                    if exit_code == 0 {
+                        b"ok".as_slice()
+                    } else {
+                        b"violation".as_slice()
+                    },
+                    &json!({}),
+                )
+                .expect("evidence");
+        }
+        experience
+            .finish_task(&task.id, TaskOutcome::Success, Some(true), None)
+            .expect("finish");
+        task.id
+    }
+
+    #[test]
+    fn preferences_distill_from_agreeing_fail_then_pass_episodes() {
+        let (_temp, database, project) = fixture();
+        let store = SynthesisStore::new(database.clone());
+        let claim = "Library code returns typed errors; unwrap stays in tests";
+        correcting_episode(
+            &database,
+            &project,
+            "bash scripts/style/no_unwrap.sh",
+            claim,
+        );
+        correcting_episode(
+            &database,
+            &project,
+            "bash scripts/style/no_unwrap.sh",
+            claim,
+        );
+        let report = store.synthesize(&project, &options(3)).expect("synthesize");
+        assert!(
+            report.preferences.is_empty(),
+            "two agreeing episodes are below a threshold of three"
+        );
+
+        correcting_episode(
+            &database,
+            &project,
+            "bash scripts/style/no_unwrap.sh",
+            claim,
+        );
+        let report = store.synthesize(&project, &options(3)).expect("synthesize");
+        assert_eq!(report.preferences.len(), 1);
+        let distilled = &report.preferences[0];
+        assert_eq!(distilled.memory.kind, "preference");
+        assert_eq!(distilled.memory.claim, claim);
+        assert_eq!(distilled.supporting_episodes.len(), 3);
+        assert!(distilled.memory.confidence <= 0.5, "synthesized cap");
+        assert!(!distilled.reused_existing);
+
+        // Idempotent: a rerun extends provenance instead of duplicating.
+        let rerun = store.synthesize(&project, &options(3)).expect("rerun");
+        assert_eq!(rerun.preferences.len(), 1);
+        assert!(rerun.preferences[0].reused_existing);
+    }
+
+    #[test]
+    fn disagreeing_summaries_and_pass_only_commands_distill_nothing() {
+        let (_temp, database, project) = fixture();
+        let store = SynthesisStore::new(database.clone());
+        // Same correcting command, three DIFFERENT summaries: no agreement.
+        correcting_episode(&database, &project, "bash check.sh", "use builders");
+        correcting_episode(&database, &project, "bash check.sh", "use typed errors");
+        correcting_episode(&database, &project, "bash check.sh", "prefer durations");
+        // A command that only ever passed is not a correction signal.
+        episode(&database, &project, "routine work", &["src/lib.rs"], true);
+        let report = store.synthesize(&project, &options(3)).expect("synthesize");
+        assert!(
+            report.preferences.is_empty(),
+            "{:?}",
+            report.preferences.len()
+        );
     }
 }

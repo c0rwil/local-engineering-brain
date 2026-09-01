@@ -896,8 +896,22 @@ fn run_synthesize(
             "Examined {} successful evidence-backed episodes in {}",
             report.examined_episodes, report.project_id
         );
-        if report.procedures.is_empty() {
-            println!("No procedure met the synthesis threshold.");
+        if report.procedures.is_empty() && report.preferences.is_empty() {
+            println!("Nothing met the synthesis thresholds.");
+        }
+        for preference in &report.preferences {
+            println!(
+                "{} preference {} [{} episodes, corrected by `{}`] {}",
+                if preference.reused_existing {
+                    "Extended"
+                } else {
+                    "Distilled"
+                },
+                preference.memory.id,
+                preference.supporting_episodes.len(),
+                preference.correction_command,
+                preference.memory.claim
+            );
         }
         for procedure in &report.procedures {
             println!(
