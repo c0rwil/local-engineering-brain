@@ -89,6 +89,7 @@ const API_SKILL_PROMOTE: &str = "/api/v1/synthesis/promote";
 const API_PROJECT_LINK: &str = "/api/v1/projects/link";
 const API_PROJECT_UNLINK: &str = "/api/v1/projects/unlink";
 const API_PROJECT_LINKS: &str = "/api/v1/projects/links";
+const API_VAULT_BUILD: &str = "/api/v1/vault/build";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -304,6 +305,14 @@ pub struct ProjectLinksRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectUnlinkResponse {
     pub removed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct VaultBuildRequest {
+    /// Build one project (plus the workspace overview), or every project
+    /// when `None`.
+    #[serde(default)]
+    pub project_id: Option<ProjectId>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -983,6 +992,39 @@ impl DaemonClient {
             .await
     }
 
+    /// Refresh a project's structural index against current Git state.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport, scanning, overload, or canonical storage errors.
+    pub async fn refresh_index(&self, path: &Path) -> Result<ProjectIndexResponse> {
+        self.request(
+            hyper::Method::POST,
+            API_INDEX_PROJECT,
+            Some(&ProjectIndexRequest {
+                path: path.to_path_buf(),
+                changed_paths: None,
+                provider: None,
+                graphify_export: None,
+                ensure_fresh: true,
+            }),
+        )
+        .await
+    }
+
+    /// Export the derived Obsidian vault (requires `vault.enabled`).
+    ///
+    /// # Errors
+    ///
+    /// Returns transport errors or a config error when the vault is disabled.
+    pub async fn build_vault(
+        &self,
+        request: &VaultBuildRequest,
+    ) -> Result<crate::vault::VaultReport> {
+        self.request(hyper::Method::POST, API_VAULT_BUILD, Some(request))
+            .await
+    }
+
     /// List a project's outgoing knowledge links.
     ///
     /// # Errors
@@ -1208,6 +1250,7 @@ where
         .route(API_PROJECT_LINK, post(link_project))
         .route(API_PROJECT_UNLINK, post(unlink_project))
         .route(API_PROJECT_LINKS, post(list_project_links))
+        .route(API_VAULT_BUILD, post(build_vault))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -1275,7 +1318,8 @@ async fn start_job_system(
             config.jobs.clone(),
             usize::try_from(config.semantic.max_scanned).unwrap_or(usize::MAX),
             Some(Arc::clone(&state.metrics)),
-        );
+        )
+        .with_vault_root(config.vault.enabled.then(|| config.vault.root.clone()));
         let runner = JobRunner::new(
             executor,
             state.scheduler.clone(),
@@ -1658,6 +1702,24 @@ async fn index_project(
     if let Some(cache) = &state.world_cache {
         cache.bump(&resolved.project.id);
     }
+    // Derived vault refresh: a durable, deduped background job keyed per
+    // project, so vault notes and diagrams track every graph change without
+    // blocking the index response. Requires jobs + vault to both be enabled.
+    if state.config.vault.enabled && state.config.vault.auto_refresh && state.config.jobs.enabled {
+        let queue = JobQueue::new(state.database.clone());
+        let enqueue = EnqueueJob {
+            job_type: JobType::VaultExport,
+            project_id: Some(resolved.project.id.clone()),
+            payload: serde_json::json!({}),
+            dedupe_key: format!("vault_export:{}", resolved.project.id),
+            max_attempts: state.config.jobs.max_attempts,
+        };
+        let _ = state
+            .scheduler
+            .submit(MutationPriority::BackgroundLearning, move || {
+                queue.enqueue(&enqueue, job_time_ms())
+            });
+    }
     Ok(Json(ProjectIndexResponse {
         resolved,
         index,
@@ -1980,6 +2042,25 @@ async fn list_project_links(
     let registry = ProjectRegistry::new(state.database.clone());
     let links = run_blocking(&state, move || registry.links(&request.project_id)).await?;
     Ok(Json(links))
+}
+
+async fn build_vault(
+    State(state): State<DaemonState>,
+    Json(request): Json<VaultBuildRequest>,
+) -> std::result::Result<Json<crate::vault::VaultReport>, ApiError> {
+    if !state.config.vault.enabled {
+        return Err(ApiError::from_core(&Error::Config(
+            "vault export is disabled; set vault.enabled = true".to_owned(),
+        )));
+    }
+    let builder =
+        crate::vault::VaultBuilder::new(state.database.clone(), state.config.vault.root.clone());
+    let report = run_blocking(&state, move || match &request.project_id {
+        Some(project_id) => builder.build_project(project_id),
+        None => builder.build_all(),
+    })
+    .await?;
+    Ok(Json(report))
 }
 
 async fn create_memory(

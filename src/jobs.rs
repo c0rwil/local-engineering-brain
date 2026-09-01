@@ -70,6 +70,10 @@ pub enum JobType {
     /// references a commit no longer known to the project or when their linked
     /// symbols drifted, so dependent memories get re-checked explicitly.
     EvidenceReverify,
+    /// Re-export the derived Obsidian vault for one project (plus the shared
+    /// workspace overview). Read-only against the canonical database; writes
+    /// only Markdown under the configured vault root.
+    VaultExport,
 }
 
 impl JobType {
@@ -80,6 +84,7 @@ impl JobType {
             Self::SemanticRebuild => "semantic_rebuild",
             Self::ConsolidationGc => "consolidation_gc",
             Self::EvidenceReverify => "evidence_reverify",
+            Self::VaultExport => "vault_export",
         }
     }
 
@@ -94,9 +99,10 @@ impl JobType {
             "semantic_rebuild" => Ok(Self::SemanticRebuild),
             "consolidation_gc" => Ok(Self::ConsolidationGc),
             "evidence_reverify" => Ok(Self::EvidenceReverify),
+            "vault_export" => Ok(Self::VaultExport),
             other => Err(Error::Config(format!(
                 "unsupported job type `{other}`; expected one of fts_integrity, \
-                 semantic_rebuild, consolidation_gc, evidence_reverify"
+                 semantic_rebuild, consolidation_gc, evidence_reverify, vault_export"
             ))),
         }
     }
@@ -110,13 +116,18 @@ impl JobType {
             Self::FtsIntegrity => 30,
             Self::SemanticRebuild => 20,
             Self::ConsolidationGc => 10,
+            // Cosmetic derived output; always yields to correctness work.
+            Self::VaultExport => 5,
         }
     }
 
     /// Whether this job type requires an explicit project scope.
     #[must_use]
     pub const fn requires_project(self) -> bool {
-        matches!(self, Self::SemanticRebuild | Self::EvidenceReverify)
+        matches!(
+            self,
+            Self::SemanticRebuild | Self::EvidenceReverify | Self::VaultExport
+        )
     }
 }
 
@@ -555,6 +566,8 @@ pub struct JobExecutor {
     /// Job-driven invalidations count toward the daemon's stale-injection
     /// signal; absent only in library/test contexts without a registry.
     metrics: Option<std::sync::Arc<MetricsRegistry>>,
+    /// Vault root for `vault_export` jobs; `None` fails those jobs cleanly.
+    vault_root: Option<std::path::PathBuf>,
 }
 
 impl JobExecutor {
@@ -574,7 +587,15 @@ impl JobExecutor {
             config,
             semantic_max_scanned,
             metrics,
+            vault_root: None,
         }
+    }
+
+    /// Enable `vault_export` jobs by providing the vault root directory.
+    #[must_use]
+    pub fn with_vault_root(mut self, vault_root: Option<std::path::PathBuf>) -> Self {
+        self.vault_root = vault_root;
+        self
     }
 
     /// Execute one claimed job and durably record its outcome. Never panics
@@ -613,6 +634,7 @@ impl JobExecutor {
             JobType::SemanticRebuild => self.run_semantic_rebuild(job),
             JobType::ConsolidationGc => self.run_consolidation_gc(now_ms),
             JobType::EvidenceReverify => self.run_evidence_reverify(job),
+            JobType::VaultExport => self.run_vault_export(job),
         }
     }
 
@@ -627,6 +649,17 @@ impl JobExecutor {
                 report.integrity
             )));
         }
+        Ok(serde_json::to_value(&report)?)
+    }
+
+    /// Re-export the derived Obsidian vault for the job's project.
+    fn run_vault_export(&self, job: &JobRecord) -> Result<serde_json::Value> {
+        let project_id = required_project(job)?;
+        let root = self.vault_root.clone().ok_or_else(|| {
+            Error::Config("vault export requires vault.enabled with a root".to_owned())
+        })?;
+        let report = crate::vault::VaultBuilder::new(self.database.clone(), root)
+            .build_project(&project_id)?;
         Ok(serde_json::to_value(&report)?)
     }
 

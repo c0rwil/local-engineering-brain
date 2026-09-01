@@ -25,6 +25,32 @@ pub struct Config {
     pub network: NetworkConfig,
     pub evaluation: EvaluationConfig,
     pub synthesis: SynthesisConfig,
+    pub vault: VaultConfig,
+}
+
+/// Derived Obsidian-vault knowledge export (`src/vault.rs`).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct VaultConfig {
+    /// Master switch. Off by default: the vault writes Markdown into
+    /// `root`, which is user-visible filesystem output.
+    pub enabled: bool,
+    /// Vault root directory. Point Obsidian at this folder.
+    pub root: PathBuf,
+    /// Re-export automatically (via a durable `vault_export` job) whenever a
+    /// structural scan changes a project's graph, so notes and mermaid
+    /// diagrams track the code without manual rebuilds.
+    pub auto_refresh: bool,
+}
+
+impl Default for VaultConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            root: PathBuf::from("~/.leb/vault"),
+            auto_refresh: true,
+        }
+    }
 }
 
 /// Conservative multi-episode procedure synthesis (spec §16.3–§16.5).
@@ -454,6 +480,9 @@ impl Config {
             config.network.local_only = local_only;
         }
         config.storage.db_path = expand_home(&config.storage.db_path, home)?;
+        if config.vault.enabled {
+            config.vault.root = expand_home(&config.vault.root, home)?;
+        }
         config.daemon.socket_path =
             if database_overridden && !socket_overridden && socket_was_default {
                 socket_for_database(&config.storage.db_path)

@@ -30,6 +30,7 @@ pub mod security;
 pub mod semantic;
 pub mod storage;
 pub mod synthesis;
+pub mod vault;
 pub mod world;
 
 pub use error::{Error, Result};

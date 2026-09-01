@@ -183,6 +183,12 @@ enum Commands {
         action: LinkAction,
     },
 
+    /// Export the derived Obsidian vault (notes + mermaid diagrams).
+    Vault {
+        #[command(subcommand)]
+        action: VaultAction,
+    },
+
     /// Create or verify transactionally consistent canonical backups.
     Backup {
         #[command(subcommand)]
@@ -238,6 +244,23 @@ enum LinkAction {
     List {
         #[arg(default_value = ".")]
         path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum VaultAction {
+    /// Refresh the structural index, then export vault notes and diagrams.
+    Build {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Export every registered project instead of just this one.
+        #[arg(long)]
+        all: bool,
+        /// `git pull --ff-only` first — only when the working tree is clean.
+        #[arg(long)]
+        pull: bool,
         #[arg(long)]
         json: bool,
     },
@@ -473,6 +496,7 @@ fn run(cli: Cli) -> Result<bool> {
             run_daemon_action(&overrides, socket_override.as_deref(), &action)
         }
         Commands::Link { action } => run_link(&overrides, socket_override.as_deref(), &action),
+        Commands::Vault { action } => run_vault(&overrides, socket_override.as_deref(), &action),
         Commands::Metrics { json } => run_metrics(&overrides, socket_override.as_deref(), json),
         Commands::Dashboard => run_dashboard(&overrides, socket_override.as_deref()),
         Commands::Index {
@@ -1453,6 +1477,84 @@ fn run_link(
         }
     }
     Ok(true)
+}
+
+fn run_vault(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    action: &VaultAction,
+) -> Result<bool> {
+    let VaultAction::Build {
+        path,
+        all,
+        pull,
+        json,
+    } = action;
+    let config_root = discover_project_root(path)?;
+    let mut config = Config::load_for(Some(&config_root), overrides)?;
+    apply_socket_override(&mut config, socket)?;
+    require_daemon(&config)?;
+    let client = client(&config);
+    if *pull {
+        pull_ff_only_if_clean(path)?;
+    }
+    let resolved = if *all {
+        None
+    } else {
+        let response = block_on(client.refresh_index(path))?;
+        Some(response.resolved.project.id)
+    };
+    let report = block_on(client.build_vault(&leb::daemon::VaultBuildRequest {
+        project_id: resolved,
+    }))?;
+    if *json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "Vault at {}: {} project(s), {} file(s) written, {} unchanged.",
+            report.root,
+            report.projects.len(),
+            report.files_written,
+            report.files_unchanged
+        );
+        println!("Open the vault root in Obsidian to browse notes and diagrams.");
+    }
+    Ok(true)
+}
+
+/// Fast-forward the repo only when the working tree is clean; skipping
+/// (with a notice) beats surprising a dirty checkout from a tool.
+fn pull_ff_only_if_clean(path: &Path) -> Result<()> {
+    let porcelain = std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["status", "--porcelain"])
+        .output()
+        .map_err(|error| leb::Error::Config(format!("git status: {error}")))?;
+    if !porcelain.status.success() {
+        return Err(leb::Error::Config(
+            "git status failed; is this a repository?".to_owned(),
+        ));
+    }
+    if !porcelain.stdout.is_empty() {
+        println!("Skipping --pull: working tree has local changes.");
+        return Ok(());
+    }
+    let pull = std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["pull", "--ff-only"])
+        .output()
+        .map_err(|error| leb::Error::Config(format!("git pull: {error}")))?;
+    if pull.status.success() {
+        println!("Pulled (fast-forward only).");
+    } else {
+        println!(
+            "Pull skipped: {}",
+            String::from_utf8_lossy(&pull.stderr).trim()
+        );
+    }
+    Ok(())
 }
 
 fn run_daemon_action(
