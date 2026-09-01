@@ -156,6 +156,38 @@
   #arch code { font-family: var(--mono); font-size: .84em; background: var(--chip); border-radius: .3rem; padding: .05rem .3rem; }
   #arch .provenance { color: var(--muted); font-size: .78rem; margin-bottom: .8rem; }
   .empty { color: var(--muted); font-size: .88rem; }
+  ul.memories { list-style: none; margin: .4rem 0 0; padding: 0; }
+  ul.memories li {
+    font-size: .85rem; margin: .35rem 0; padding-left: .8rem;
+    border-left: 2px solid var(--line); overflow-wrap: anywhere;
+  }
+  ul.memories .kind {
+    font-family: var(--mono); font-size: .7rem; color: var(--accent);
+    text-transform: uppercase; letter-spacing: .05em; margin-right: .35rem;
+  }
+  ul.memories .tags { color: var(--muted); font-size: .74rem; }
+  .stale-badge {
+    background: var(--chip); border: 1px solid var(--danger); color: var(--danger);
+    border-radius: .5rem; padding: .1rem .5rem; font-size: .74rem;
+  }
+  .fresh-badge {
+    background: var(--chip); border: 1px solid var(--line); color: var(--accent);
+    border-radius: .5rem; padding: .1rem .5rem; font-size: .74rem;
+  }
+  ol.activity { list-style: none; margin: 0; padding: 0; }
+  ol.activity li {
+    display: flex; gap: .7rem; align-items: baseline;
+    padding: .35rem 0; border-bottom: 1px solid var(--line);
+    font-size: .85rem;
+  }
+  ol.activity li:last-child { border-bottom: none; }
+  ol.activity time { color: var(--muted); font-size: .76rem; min-width: 6.5rem; font-variant-numeric: tabular-nums; }
+  ol.activity .etype { font-family: var(--mono); font-size: .74rem; color: var(--accent); }
+  ol.activity .eproj { color: var(--muted); }
+  #activity-panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: .8rem; padding: .8rem 1.1rem; max-height: 22rem; overflow-y: auto;
+  }
   footer { color: var(--muted); font-size: .78rem; text-align: center; padding: 2rem 0 1rem; }
 </style>
 </head>
@@ -178,6 +210,9 @@
 
   <h2 id="projects">Projects</h2>
   <div class="cards" id="cards"><p class="empty">Loading…</p></div>
+
+  <h2 id="activity">Recent Activity</h2>
+  <div id="activity-panel"><p class="empty">Loading…</p></div>
 
   <h2 id="architecture">Architecture Guide</h2>
   <div id="arch"><p class="empty">Loading…</p></div>
@@ -215,6 +250,7 @@ function matches(project, q) {
     project.name,
     ...project.facts.flatMap(f => [f.key, f.value, f.note || ""]),
     ...project.links.flatMap(l => [l.name, l.relation, l.note || ""]),
+    ...project.memories.flatMap(m => [m.kind, m.claim, ...m.tags]),
   ].join(" ").toLowerCase();
   return q.toLowerCase().split(/\s+/).every(term => hay.includes(term));
 }
@@ -296,6 +332,26 @@ function renderGraph(projects) {
 }
 
 /* ---- project cards ---- */
+function ago(ms) {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 90) return "just now";
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 129600) return `${Math.round(s / 3600)} h ago`;
+  return new Intl.DateTimeFormat(navigator.languages, { month: "short", day: "numeric" }).format(ms);
+}
+
+function memoryRows(project) {
+  if (!project.memories.length) return "";
+  const items = project.memories.map(m =>
+    `<li><span class="kind">${esc(m.kind)}</span>${esc(m.claim)}
+     ${m.tags.length ? `<span class="tags" translate="no">${esc(m.tags.join(" · "))}</span>` : ""}</li>`
+  ).join("");
+  return `<details open>
+    <summary>${project.memories.length} Validated ${project.memories.length === 1 ? "Memory" : "Memories"}</summary>
+    <ul class="memories">${items}</ul>
+  </details>`;
+}
+
 function factRows(project) {
   if (!project.facts.length) return `<p class="empty">No facts recorded yet.</p>`;
   return `<dl class="facts">` + project.facts.map(f =>
@@ -315,10 +371,12 @@ function card(project) {
   const selected = project.id === state.selected ? " selected" : "";
   return `<article class="card${selected}" id="card-${esc(project.id)}" aria-labelledby="h-${esc(project.id)}">
     <h3 id="h-${esc(project.id)}">${esc(project.name)}</h3>
-    <p class="meta">${project.validated_memories} validated memories · ${project.nodes.toLocaleString()} graph nodes
-      ${project.indexed_head ? ` · <code translate="no">${esc(project.indexed_head.slice(0, 10))}</code>` : ""}</p>
+    <p class="meta">${project.nodes.toLocaleString()} graph nodes
+      ${project.indexed_head ? ` · <code translate="no">${esc(project.indexed_head.slice(0, 10))}</code>` : ""}
+      ${project.indexed_at_ms ? ` · indexed ${esc(ago(project.indexed_at_ms))}` : " · never indexed"}</p>
     ${factRows(project)}
     ${linkRows(project)}
+    ${memoryRows(project)}
     <details>
       <summary>Add or Update Fact</summary>
       <form class="fact-form" data-id="${esc(project.id)}">
@@ -448,11 +506,37 @@ async function loadArchitecture() {
   const el = document.getElementById("arch");
   try {
     const doc = await api("/api/architecture");
-    el.innerHTML = doc.content
-      ? `<p class="provenance">Synthesized guide — regenerate with <code>leb architect</code>; the prose is derived, the facts it cites are canonical.</p>` + markdown(doc.content)
-      : `<p class="empty">No guide yet. Generate one with <code>leb architect --model &lt;model&gt;</code>.</p>`;
+    if (!doc.content) {
+      el.innerHTML = `<p class="empty">No guide yet. Generate one with <code>leb architect --claude</code>.</p>`;
+      return;
+    }
+    const badge = doc.stale === true
+      ? `<span class="stale-badge">Workspace changed since this was written — run <code>leb architect --claude</code></span>`
+      : doc.stale === false
+        ? `<span class="fresh-badge">Current with the workspace</span>`
+        : "";
+    el.innerHTML =
+      `<p class="provenance">Synthesized guide — the prose is derived, the facts it cites are canonical. ${badge}</p>`
+      + markdown(doc.content);
   } catch {
     el.innerHTML = `<p class="empty">Guide unavailable.</p>`;
+  }
+}
+
+async function loadActivity() {
+  const el = document.getElementById("activity-panel");
+  try {
+    const events = await api("/api/activity");
+    const label = t => t.toLowerCase().replace(/_/g, " ");
+    el.innerHTML = events.length
+      ? `<ol class="activity">` + events.map(e =>
+          `<li><time datetime="${new Date(e.created_at_ms).toISOString()}">${esc(ago(e.created_at_ms))}</time>
+           <span class="etype">${esc(label(e.event_type))}</span>
+           ${e.project_name ? `<span class="eproj">${esc(e.project_name)}</span>` : ""}</li>`
+        ).join("") + `</ol>`
+      : `<p class="empty">No recorded activity yet.</p>`;
+  } catch {
+    el.innerHTML = `<p class="empty">Activity unavailable.</p>`;
   }
 }
 
@@ -476,6 +560,13 @@ refresh().then(() => {
     `<p class="error">Could not reach the LEB daemon: ${esc(error.message)}. Start it with any <code>leb</code> command, then reload.</p>`;
 });
 loadArchitecture();
+loadActivity();
+// The encyclopedia stays alive: refresh quietly while the tab is visible.
+setInterval(() => {
+  if (document.hidden || !state.data) return;
+  refresh().catch(() => {});
+  loadActivity();
+}, 60_000);
 </script>
 </body>
 </html>

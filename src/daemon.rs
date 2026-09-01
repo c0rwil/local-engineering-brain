@@ -96,6 +96,7 @@ const API_FACT_UNSET: &str = "/api/v1/projects/facts/unset";
 const API_FACT_LIST: &str = "/api/v1/projects/facts/list";
 const API_ARCHITECT_DOSSIER: &str = "/api/v1/architect/dossier";
 const API_WORKSPACE: &str = "/api/v1/workspace";
+const API_ACTIVITY: &str = "/api/v1/workspace/activity";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -314,6 +315,15 @@ pub struct ProjectUnlinkResponse {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MemorySummary {
+    pub id: String,
+    pub kind: String,
+    pub claim: String,
+    pub confidence: f64,
+    pub tags: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WorkspaceProject {
     pub id: ProjectId,
     pub name: String,
@@ -321,8 +331,17 @@ pub struct WorkspaceProject {
     pub facts: Vec<crate::projects::ProjectFact>,
     pub links: Vec<LinkedProject>,
     pub validated_memories: i64,
+    pub memories: Vec<MemorySummary>,
     pub nodes: i64,
     pub indexed_head: Option<String>,
+    pub indexed_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ActivityEvent {
+    pub event_type: String,
+    pub project_name: Option<String>,
+    pub created_at_ms: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1068,6 +1087,16 @@ impl DaemonClient {
         .await
     }
 
+    /// Fetch the newest workspace events for activity feeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn workspace_activity(&self) -> Result<Vec<ActivityEvent>> {
+        self.request::<(), _>(hyper::Method::GET, API_ACTIVITY, None)
+            .await
+    }
+
     /// Fetch the whole-workspace snapshot for UIs.
     ///
     /// # Errors
@@ -1382,6 +1411,7 @@ where
         .route(API_FACT_LIST, post(list_facts))
         .route(API_ARCHITECT_DOSSIER, get(architect_dossier))
         .route(API_WORKSPACE, get(workspace_snapshot))
+        .route(API_ACTIVITY, get(workspace_activity))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -2214,6 +2244,9 @@ async fn workspace_snapshot(
                           WHERE n.project_id = p.id AND n.tombstoned_at_ms IS NULL),
                         (SELECT s.head FROM structural_scans s
                           WHERE s.project_id = p.id
+                          ORDER BY s.completed_at_ms DESC LIMIT 1),
+                        (SELECT s.completed_at_ms FROM structural_scans s
+                          WHERE s.project_id = p.id
                           ORDER BY s.completed_at_ms DESC LIMIT 1)
                  FROM projects p WHERE p.tombstoned_at_ms IS NULL
                  ORDER BY p.name, p.id",
@@ -2226,19 +2259,41 @@ async fn workspace_snapshot(
                         row.get::<_, i64>(2)?,
                         row.get::<_, i64>(3)?,
                         row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<i64>>(5)?,
                     ))
                 })?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(rows)
         })?;
         let mut projects = Vec::new();
-        for (id, name, validated_memories, nodes, indexed_head) in rows {
+        for (id, name, validated_memories, nodes, indexed_head, indexed_at_ms) in rows {
             let project_id = crate::ids::ProjectId::parse(&id)?;
             let primary_path = registry
                 .alias_paths(&project_id)?
                 .into_iter()
                 .find(|path| path.is_dir())
                 .map(|path| path.display().to_string());
+            let memories = database.with_reader(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT id, kind, claim, confidence, tags_json FROM memories
+                     WHERE project_id = ?1 AND status = 'active'
+                       AND epistemic_state = 'validated'
+                     ORDER BY known_from_ms DESC, id LIMIT 30",
+                )?;
+                let rows = statement
+                    .query_map([project_id.as_str()], |row| {
+                        Ok(MemorySummary {
+                            id: row.get(0)?,
+                            kind: row.get(1)?,
+                            claim: row.get(2)?,
+                            confidence: row.get(3)?,
+                            tags: serde_json::from_str(&row.get::<_, String>(4)?)
+                                .unwrap_or_default(),
+                        })
+                    })?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(rows)
+            })?;
             projects.push(WorkspaceProject {
                 facts: registry.facts(&project_id)?,
                 links: registry.links(&project_id)?,
@@ -2246,14 +2301,44 @@ async fn workspace_snapshot(
                 name,
                 primary_path,
                 validated_memories,
+                memories,
                 nodes,
                 indexed_head,
+                indexed_at_ms,
             });
         }
         Ok(WorkspaceSnapshot { projects })
     })
     .await?;
     Ok(Json(snapshot))
+}
+
+async fn workspace_activity(
+    State(state): State<DaemonState>,
+) -> std::result::Result<Json<Vec<ActivityEvent>>, ApiError> {
+    let database = state.database.clone();
+    let events = run_blocking(&state, move || {
+        database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT e.event_type, p.name, e.created_at_ms
+                 FROM events e
+                 LEFT JOIN projects p ON p.id = e.project_id
+                 ORDER BY e.sequence DESC LIMIT 60",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok(ActivityEvent {
+                        event_type: row.get(0)?,
+                        project_name: row.get(1)?,
+                        created_at_ms: row.get(2)?,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    })
+    .await?;
+    Ok(Json(events))
 }
 
 async fn architect_dossier(

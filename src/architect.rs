@@ -233,6 +233,19 @@ fn looks_like_route(literal: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "/_-{}:.$".contains(c))
 }
 
+/// Stable digest of a dossier, embedded in generated guides so UIs can tell
+/// when the workspace has drifted past the prose.
+#[must_use]
+pub fn dossier_digest(dossier: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::digest(dossier.as_bytes());
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
+}
+
 /// The fixed synthesis prompt. The model writes prose; the dossier supplies
 /// every fact it is allowed to rely on.
 #[must_use]

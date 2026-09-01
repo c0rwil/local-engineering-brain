@@ -310,6 +310,9 @@ impl VaultBuilder {
             }
         }
         out.push_str("```\n\n");
+        if self.root.join("ARCHITECTURE.md").is_file() {
+            out.push_str("[[ARCHITECTURE|Workspace architecture guide]]\n\n");
+        }
         for (_, name) in &projects {
             let _ = writeln!(out, "- [[{}/INDEX|{}]]", slug(name), md_safe(name));
         }

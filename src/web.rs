@@ -61,6 +61,9 @@ struct WebLinkScan {
 #[derive(Serialize)]
 struct ArchitectureDoc {
     content: Option<String>,
+    /// `Some(true)` when the workspace dossier has changed since the guide
+    /// was generated (facts, links, or code structure drifted).
+    stale: Option<bool>,
 }
 
 struct WebError(Error);
@@ -88,6 +91,7 @@ pub fn router(config: &Config) -> Router {
         .route("/", get(index))
         .route("/api/workspace", get(workspace))
         .route("/api/architecture", get(architecture))
+        .route("/api/activity", get(activity))
         .route("/api/facts/set", post(fact_set))
         .route("/api/facts/unset", post(fact_unset))
         .route("/api/linkscan", post(link_scan))
@@ -120,9 +124,35 @@ async fn workspace(
     Ok(Json(state.client().workspace().await?))
 }
 
+async fn activity(
+    State(state): State<WebState>,
+) -> std::result::Result<Json<Vec<crate::daemon::ActivityEvent>>, WebError> {
+    Ok(Json(state.client().workspace_activity().await?))
+}
+
 async fn architecture(State(state): State<WebState>) -> Json<ArchitectureDoc> {
     let content = std::fs::read_to_string(state.vault_root.join("ARCHITECTURE.md")).ok();
-    Json(ArchitectureDoc { content })
+    let drifted = match &content {
+        Some(content) => {
+            let recorded = content
+                .split_once("dossier-sha256: ")
+                .and_then(|(_, rest)| rest.get(..64));
+            match recorded {
+                Some(recorded) => state
+                    .client()
+                    .architect_dossier()
+                    .await
+                    .ok()
+                    .map(|dossier| crate::architect::dossier_digest(&dossier) != recorded),
+                None => None,
+            }
+        }
+        None => None,
+    };
+    Json(ArchitectureDoc {
+        content,
+        stale: drifted,
+    })
 }
 
 async fn fact_set(
