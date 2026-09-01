@@ -316,6 +316,37 @@ pub async fn synthesize(runtime_url: &str, model: &str, prompt: &str) -> Result<
         .ok_or_else(|| Error::Config("architect runtime returned no choices".to_owned()))
 }
 
+/// Synthesize via the local `claude` CLI (Claude Code stored login). This is
+/// an explicit user opt-in: the dossier leaves the machine through the
+/// user's own authenticated Claude session, exactly like asking Claude to
+/// read the same repos.
+///
+/// # Errors
+///
+/// Returns an error when the CLI is missing, exits nonzero, or produces no
+/// output.
+pub fn synthesize_with_claude_cli(model: &str, prompt: &str) -> Result<String> {
+    let output = std::process::Command::new("claude")
+        .args(["-p", prompt, "--model", model, "--max-turns", "1"])
+        .env_remove("ANTHROPIC_BASE_URL")
+        .env_remove("ANTHROPIC_API_KEY")
+        .env_remove("ANTHROPIC_AUTH_TOKEN")
+        .output()
+        .map_err(|error| Error::Config(format!("could not run the `claude` CLI: {error}")))?;
+    if !output.status.success() {
+        return Err(Error::Config(format!(
+            "`claude` exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if text.is_empty() {
+        return Err(Error::Config("`claude` produced no output".to_owned()));
+    }
+    Ok(text)
+}
+
 /// Enforce the same network stance as the proxy: a non-loopback runtime is
 /// only reachable when `network.local_only` was explicitly disabled.
 ///

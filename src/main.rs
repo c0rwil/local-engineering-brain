@@ -194,6 +194,11 @@ enum Commands {
         /// Print the deterministic dossier and prompt without calling a model.
         #[arg(long)]
         dry_run: bool,
+        /// Synthesize with the local `claude` CLI (your Claude subscription)
+        /// instead of the configured HTTP runtime. The dossier is sent
+        /// through your authenticated Claude session.
+        #[arg(long)]
+        claude: bool,
         /// Write here instead of `<vault root>/ARCHITECTURE.md`.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -573,6 +578,7 @@ fn run(cli: Cli) -> Result<bool> {
             path,
             model,
             dry_run,
+            claude,
             out,
             json,
         } => run_architect(
@@ -581,6 +587,7 @@ fn run(cli: Cli) -> Result<bool> {
             &path,
             model.as_deref(),
             dry_run,
+            claude,
             out.as_deref(),
             json,
         ),
@@ -1610,12 +1617,14 @@ fn run_link(
     Ok(true)
 }
 
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 fn run_architect(
     overrides: &ConfigOverrides,
     socket: Option<&Path>,
     path: &Path,
     model: Option<&str>,
     dry_run: bool,
+    claude: bool,
     out: Option<&Path>,
     json: bool,
 ) -> Result<bool> {
@@ -1629,24 +1638,39 @@ fn run_architect(
         println!("{prompt}");
         return Ok(true);
     }
-    let model = model
-        .map(str::to_owned)
-        .or_else(|| (!config.architect.model.is_empty()).then(|| config.architect.model.clone()))
-        .ok_or_else(|| {
-            leb::Error::Config(
-                "no model configured: pass --model or set architect.model".to_owned(),
-            )
-        })?;
-    leb::architect::enforce_local_only(&config.architect.runtime_url, config.network.local_only)?;
-    println!(
-        "Synthesizing with `{model}` via {} …",
-        config.architect.runtime_url
-    );
-    let synthesized = block_on(leb::architect::synthesize(
-        &config.architect.runtime_url,
-        &model,
-        &prompt,
-    ))?;
+    let synthesized;
+    let model = if claude {
+        let model = model.unwrap_or("claude-opus-4-8").to_owned();
+        println!("Synthesizing with `{model}` via the claude CLI …");
+        synthesized = leb::architect::synthesize_with_claude_cli(&model, &prompt)?;
+        model
+    } else {
+        let model = model
+            .map(str::to_owned)
+            .or_else(|| {
+                (!config.architect.model.is_empty()).then(|| config.architect.model.clone())
+            })
+            .ok_or_else(|| {
+                leb::Error::Config(
+                    "no model configured: pass --model, --claude, or set architect.model"
+                        .to_owned(),
+                )
+            })?;
+        leb::architect::enforce_local_only(
+            &config.architect.runtime_url,
+            config.network.local_only,
+        )?;
+        println!(
+            "Synthesizing with `{model}` via {} …",
+            config.architect.runtime_url
+        );
+        synthesized = block_on(leb::architect::synthesize(
+            &config.architect.runtime_url,
+            &model,
+            &prompt,
+        ))?;
+        model
+    };
     let destination = out.map_or_else(
         || config.vault.root.join("ARCHITECTURE.md"),
         Path::to_path_buf,

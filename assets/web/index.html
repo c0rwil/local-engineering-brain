@@ -89,8 +89,9 @@
   #graph .node.hosted rect { stroke: var(--accent); }
   #graph .node text { fill: var(--ink); font-size: 12.5px; cursor: pointer; }
   #graph .node .host { fill: var(--muted); font-size: 10.5px; }
-  #graph .edge path { stroke: var(--muted); fill: none; marker-end: url(#arrow); opacity: .75; }
-  #graph .edge text { fill: var(--muted); font-size: 10px; }
+  #graph .edge path { stroke: var(--muted); fill: none; marker-end: url(#arrow); opacity: .6; stroke-width: 1.2; }
+  #graph .edge .pill { fill: var(--panel); stroke: var(--line); }
+  #graph .edge text { fill: var(--muted); font-size: 10.5px; font-family: var(--mono); }
   #graph .node:hover rect, #graph .node:focus-visible rect { stroke: var(--focus); stroke-width: 2; }
   #graph .node:focus-visible { outline: none; }
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr)); gap: 1rem; }
@@ -172,7 +173,7 @@
 <main id="main">
   <h2 id="map">Service Map</h2>
   <div id="graph-panel" role="img" aria-label="Directed graph of repositories and their declared relationships">
-    <svg id="graph" width="880" height="420" viewBox="0 0 880 420" aria-hidden="true"></svg>
+    <svg id="graph" width="960" height="540" viewBox="0 0 960 540" aria-hidden="true"></svg>
   </div>
 
   <h2 id="projects">Projects</h2>
@@ -223,46 +224,66 @@ function hostOf(project) {
   return f ? f.value : "";
 }
 
-/* ---- service map: hand-rolled circular layout, no libraries ---- */
+/* ---- service map: hand-rolled layout, no libraries ---- */
 function renderGraph(projects) {
   const svg = document.getElementById("graph");
-  const W = 880, H = 420, cx = W / 2, cy = H / 2;
   const visible = projects.filter(p => matches(p, state.q));
-  const R = Math.min(cx, cy) - 64;
+  const linkedIds = new Set();
+  for (const p of visible) {
+    for (const l of p.links) {
+      if (visible.some(v => v.id === l.project_id)) { linkedIds.add(p.id); linkedIds.add(l.project_id); }
+    }
+  }
+  const ring = visible.filter(p => linkedIds.has(p.id));
+  const lone = visible.filter(p => !linkedIds.has(p.id));
+  const W = 960, ringH = ring.length ? 460 : 0, loneH = lone.length ? 80 : 0;
+  const H = Math.max(ringH + loneH + 20, 140);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", W); svg.setAttribute("height", H);
+  const cx = W / 2, cy = ringH / 2 + 10;
+  const R = Math.min(cx - 130, ringH / 2 - 56);
   const pos = new Map();
-  visible.forEach((p, i) => {
-    const a = (2 * Math.PI * i) / Math.max(visible.length, 1) - Math.PI / 2;
+  ring.forEach((p, i) => {
+    const a = (2 * Math.PI * i) / Math.max(ring.length, 1) - Math.PI / 2;
     pos.set(p.id, { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) });
+  });
+  lone.forEach((p, i) => {
+    const gap = W / (lone.length + 1);
+    pos.set(p.id, { x: gap * (i + 1), y: ringH + loneH / 2 + 6 });
   });
   let defs = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
       markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor" opacity="0.7"/></marker></defs>`;
   let edges = "";
-  for (const p of visible) {
+  for (const p of ring) {
     const from = pos.get(p.id);
     for (const l of p.links) {
       const to = pos.get(l.project_id);
       if (!to) continue;
       const dx = to.x - from.x, dy = to.y - from.y;
       const len = Math.hypot(dx, dy) || 1;
-      const pad = 62;
-      const x1 = from.x + (dx / len) * pad, y1 = from.y + (dy / len) * pad;
-      const x2 = to.x - (dx / len) * pad, y2 = to.y - (dy / len) * pad;
-      const mx = (x1 + x2) / 2 + (dy / len) * 22, my = (y1 + y2) / 2 - (dx / len) * 22;
+      const nx = dy / len, ny = -dx / len;            // perpendicular
+      const pad = 78;
+      const x1 = from.x + (dx / len) * pad + nx * 8, y1 = from.y + (dy / len) * pad + ny * 8;
+      const x2 = to.x - (dx / len) * pad + nx * 8, y2 = to.y - (dy / len) * pad + ny * 8;
+      const bow = 34;
+      const mx = (x1 + x2) / 2 + nx * bow, my = (y1 + y2) / 2 + ny * bow;
+      const lw = l.relation.length * 5.6 + 12;
       edges += `<g class="edge"><path d="M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}"/>
-        <text x="${mx}" y="${my - 4}" text-anchor="middle">${esc(l.relation)}</text></g>`;
+        <rect class="pill" x="${mx - lw / 2}" y="${my - 16}" width="${lw}" height="15" rx="7"/>
+        <text x="${mx}" y="${my - 5}" text-anchor="middle">${esc(l.relation)}</text></g>`;
     }
   }
   let nodes = "";
   for (const p of visible) {
     const { x, y } = pos.get(p.id);
     const host = hostOf(p);
-    const w = Math.max(p.name.length * 7.4 + 26, host.length * 6 + 20, 90);
+    const w = Math.max(p.name.length * 7.6 + 30, host.length * 6.2 + 24, 96);
     nodes += `<g class="node ${host ? "hosted" : ""}" tabindex="0" role="link"
         aria-label="Open ${esc(p.name)} details" data-id="${esc(p.id)}">
-      <rect x="${x - w / 2}" y="${y - 21}" width="${w}" height="${host ? 44 : 32}"/>
+      <rect x="${x - w / 2}" y="${y - 22}" width="${w}" height="${host ? 46 : 34}"/>
       <text x="${x}" y="${y - 2}" text-anchor="middle">${esc(p.name)}</text>
-      ${host ? `<text class="host" x="${x}" y="${y + 14}" text-anchor="middle" translate="no">${esc(host)}</text>` : ""}
+      ${host ? `<text class="host" x="${x}" y="${y + 15}" text-anchor="middle" translate="no">${esc(host)}</text>` : ""}
     </g>`;
   }
   svg.innerHTML = defs + edges + nodes;
