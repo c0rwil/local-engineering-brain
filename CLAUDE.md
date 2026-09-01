@@ -105,7 +105,11 @@ pauses macOS monotonic clocks, but idle-sleep mid-run stalls the model
 server and agents. Restart the MTPLX server before any matrix longer than
 ~10 runs — its RAM session bank grows per run and under memory pressure it
 defers generation past Claude Code's stream-idle timeout (this burned five
-runs once; see perf-evidence 2026-08-29).
+runs once; see perf-evidence 2026-08-29). After any server (re)start, warm
+it with a disposable headless task before the first scored run — cold-start
+runs flame out with zero edits (~500 output tokens, observed 3×). Local
+fidelity runs need walls ≥2700 s; shorter walls time out legitimate work
+and score it as failure (wall-calibration evidence 2026-08-31).
 
 Brain-off mode is the control group and must remain semantically untouched
 (spec P10). The evaluation harness (`src/evaluation.rs`, `leb eval run`)
