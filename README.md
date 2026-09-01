@@ -191,8 +191,9 @@ model, runtime, and harness with zero injection).
 
 - **Frontier tier (Claude Code + Opus 4.8 through the LEB proxy):** on
   tribal-knowledge fidelity probes — unwritten team conventions enforced by
-  mechanical style verifiers — the memoryless control passed 2/6 while every
-  brain-arm composition passed 6/6, at 36-100 s per task. Failure-stage
+  mechanical style verifiers — the memoryless control passed 5/12 across
+  four seeds while brain-arm compositions passed 24/24, at 36-100 s per
+  task. Failure-stage
   replay shows all control failures are pure style failures: fast models
   solve the ticket and skip the unwritten rules (2026-08-31).
 - **Local tier (Qwen 27B on this machine):** on capability probes with
