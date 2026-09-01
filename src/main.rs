@@ -1663,7 +1663,14 @@ fn run_vault(
         let response = block_on(client.refresh_index(path))?;
         Some(response.resolved.project.id)
     };
-    let report = block_on(client.build_vault(&leb::daemon::VaultBuildRequest {
+    // Vault exports run the expensive cross-module edge-resolution query per
+    // project; a full-workspace build legitimately exceeds the default
+    // request timeout, so this call gets a patient client.
+    let patient = DaemonClient::new(
+        &config.daemon.socket_path,
+        Duration::from_millis(config.daemon.request_timeout_ms.max(600_000)),
+    );
+    let report = block_on(patient.build_vault(&leb::daemon::VaultBuildRequest {
         project_id: resolved,
     }))?;
     if *json {
