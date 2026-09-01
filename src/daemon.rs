@@ -2251,7 +2251,12 @@ async fn build_vault(
     }
     let builder =
         crate::vault::VaultBuilder::new(state.database.clone(), state.config.vault.root.clone());
-    let report = run_blocking(&state, move || match &request.project_id {
+    // Full-workspace exports run the cross-module edge-resolution query for
+    // every project and legitimately outlive the default request deadline;
+    // the CLI pairs this with an equally patient client.
+    let deadline =
+        Duration::from_millis(state.config.daemon.request_timeout_ms).max(Duration::from_secs(600));
+    let report = run_blocking_with_timeout(&state, deadline, move || match &request.project_id {
         Some(project_id) => builder.build_project(project_id),
         None => builder.build_all(),
     })
