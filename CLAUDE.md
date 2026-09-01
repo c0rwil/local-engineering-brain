@@ -17,10 +17,10 @@ path, ever.
 | Install everything | `sh scripts/install.sh` (versioned releases under `~/.local/share/leb`, symlinks in `~/.local/bin`) |
 | Daemon status / stop | `leb daemon status --json` / `leb daemon stop` |
 | Diagnostics | `leb doctor --json` |
-| Index a repo | `leb index <path> --json` |
+| Index a repo | `leb index <path> --json` (local tree; add `--origin` for fetched origin/main via throwaway worktree) |
 | Compile context | `leb context "<query>" --path <repo> --budget N --json` |
 | Architecture facts (hosting, storage, role) | `leb fact set hosting.base_url api.example.com --path <repo>` / `leb fact list` — facts lead the stable prefix, feed hostname link inference, render in the vault |
-| Workspace encyclopedia (browser UI) | `leb web` → http://127.0.0.1:11436 — service map, facts, memories, activity, guide |
+| Workspace encyclopedia (browser UI) | always on at http://127.0.0.1:11436 while the daemon runs (`[web]` config); `leb web` for a custom port. Refresh buttons index origin/main by default |
 | Architecture guide (LLM synthesis) | `leb architect --claude` (opus via claude CLI) or `--model <m>` (local runtime); guide staleness tracked by dossier digest |
 | Link repos (cross-repo context) | `leb link add <target> --path <repo> --relation uses` / `leb link list` / auto-discovery: `leb link scan [--apply]` (definitive manifest deps auto-link on every `leb index`) |
 
