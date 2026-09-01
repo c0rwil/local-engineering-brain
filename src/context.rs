@@ -465,22 +465,32 @@ impl ContextCompiler {
         if linked_budget == 0 {
             return Ok(0);
         }
-        let links = crate::projects::ProjectRegistry::new(self.database.clone())
-            .links(&request.project_id)?;
+        let registry = crate::projects::ProjectRegistry::new(self.database.clone());
+        let links = registry.links(&request.project_id)?;
         let mut considered = 0_u32;
         for link in links.iter().take(MAX_LINKED_PROJECTS) {
             if linked_budget == 0 {
                 break;
             }
+            // Commit-validity bounds are relative to the LINKED repository's
+            // history, so resolve its local checkout (most recent alias that
+            // still exists) and validate against ITS HEAD. Distilled lessons
+            // always carry `valid_from_commit`; without this they would never
+            // travel between repos. A missing checkout degrades conservatively
+            // (commit-bounded memories are excluded, unbounded ones travel).
+            let linked_git = registry
+                .alias_paths(&link.project_id)?
+                .into_iter()
+                .find(|path| path.is_dir())
+                .and_then(|path| crate::projects::GitState::discover(&path).ok().flatten());
             let candidates = self.retriever.retrieve(&RetrievalRequest {
                 project_id: &link.project_id,
                 task_text: &request.task_text,
                 // Paths are repo-local; cross-repo structural overlap is
-                // meaningless, and commit-validity-scoped memories are
-                // conservatively excluded (no root/head for a foreign repo).
+                // meaningless.
                 current_paths: &[],
-                repository_root: None,
-                head: None,
+                repository_root: linked_git.as_ref().map(|git| git.repository_root.as_path()),
+                head: linked_git.as_ref().and_then(|git| git.head.as_deref()),
                 limit: 20,
             })?;
             considered = considered.saturating_add(u32::try_from(candidates.len()).unwrap_or(0));
@@ -1812,6 +1822,131 @@ mod tests {
         assert!(
             !without.dynamic_context.contains("Linked repository"),
             "linked injection must be off unless enabled"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn commit_bounded_linked_memories_validate_against_the_linked_repos_head() {
+        // Regression: distilled lessons always carry `valid_from_commit`
+        // relative to THEIR repository. The linked pass must resolve the
+        // linked repo's own checkout and HEAD; validating against the
+        // requesting repo (or nothing) silently drops every real lesson.
+        let run_git = |path: &std::path::Path, args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .output()
+                .expect("git");
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        let temp = TempDir::new().expect("temp");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let registry = ProjectRegistry::new(database.clone());
+        let root_a = temp.path().join("consumer");
+        let root_b = temp.path().join("provider");
+        std::fs::create_dir(&root_a).expect("a");
+        std::fs::create_dir(&root_b).expect("b");
+        run_git(&root_b, &["init", "-q"]);
+        run_git(&root_b, &["config", "user.email", "leb@example.invalid"]);
+        run_git(&root_b, &["config", "user.name", "LEB Tests"]);
+        std::fs::write(root_b.join("README.md"), "provider\n").expect("file");
+        run_git(&root_b, &["add", "README.md"]);
+        run_git(&root_b, &["commit", "-qm", "initial"]);
+        let head = String::from_utf8(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root_b)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .expect("git")
+                .stdout,
+        )
+        .expect("utf8")
+        .trim()
+        .to_owned();
+
+        let project_a = registry.resolve_or_register(&root_a).expect("a").project.id;
+        let project_b = registry.resolve_or_register(&root_b).expect("b").project.id;
+        let experience = ExperienceStore::new(database.clone());
+        let memories = MemoryStore::new(database.clone());
+        let task = experience
+            .start_task(&project_b, "queue draining", None)
+            .expect("task");
+        let evidence = experience
+            .record_evidence(
+                &project_b,
+                Some(&task.id),
+                None,
+                "test_result",
+                EvidenceStrength::Deterministic,
+                None,
+                Some("cargo test"),
+                Some(0),
+                b"pass",
+                &serde_json::json!({}),
+            )
+            .expect("evidence");
+        experience
+            .finish_task(&task.id, TaskOutcome::Success, Some(true), None)
+            .expect("finish");
+        let memory = memories
+            .create_candidate(
+                &project_b,
+                &MemoryDraft {
+                    scope_type: "project".to_owned(),
+                    scope_id: project_b.to_string(),
+                    kind: "lesson".to_owned(),
+                    claim: "Draining the provider queue requires a barrier flush first".to_owned(),
+                    rationale: "Regression test".to_owned(),
+                    confidence: 0.5,
+                    importance: 0.9,
+                    tags: vec!["queue".to_owned()],
+                    valid_from_commit: Some(head),
+                    valid_to_commit: None,
+                    trust_source: "agent_inference".to_owned(),
+                    evidence_ids: vec![evidence.id],
+                    source_task_ids: vec![task.id],
+                    node_ids: Vec::new(),
+                },
+            )
+            .expect("memory");
+        for state in [
+            EpistemicState::Observed,
+            EpistemicState::Supported,
+            EpistemicState::Validated,
+        ] {
+            memories.promote(&memory.id, state, false).expect("promote");
+        }
+        registry
+            .link(&project_a, &project_b, "uses", None)
+            .expect("link");
+        let compiled = ContextCompiler::new(database, 6_000, 1_800)
+            .with_linked_projects(true)
+            .compile(&ContextCompileRequest {
+                request_id: "req-linked-commit-bounded".to_owned(),
+                project_id: project_a,
+                task_text: "drain the provider queue safely".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 4_000,
+                mode: ContextMode::Brain,
+                repository_root: None,
+                head: None,
+                task_id: None,
+                framing: None,
+            })
+            .expect("compile");
+        assert!(
+            compiled
+                .dynamic_context
+                .contains("Draining the provider queue requires a barrier flush"),
+            "commit-bounded linked memory must validate against the linked repo's HEAD: {}",
+            compiled.dynamic_context
         );
     }
 }

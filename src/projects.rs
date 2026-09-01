@@ -374,6 +374,25 @@ impl ProjectRegistry {
         })
     }
 
+    /// Return a project's recorded checkout paths, most recently observed
+    /// first. Paths may no longer exist; callers must check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for storage failures.
+    pub fn alias_paths(&self, project_id: &ProjectId) -> Result<Vec<PathBuf>> {
+        self.database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT path FROM project_aliases WHERE project_id = ?1
+                 ORDER BY observed_at_ms DESC",
+            )?;
+            let rows = statement
+                .query_map([project_id.as_str()], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows.into_iter().map(PathBuf::from).collect())
+        })
+    }
+
     /// Find one active project by its stable ID.
     ///
     /// # Errors
