@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fafaf8" media="(prefers-color-scheme: light)">
+<title>LEB Workspace</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafaf8;
+    --panel: #ffffff;
+    --ink: #1a1d23;
+    --muted: #5c6470;
+    --line: #e4e2dc;
+    --accent: #0d5c46;
+    --accent-ink: #ffffff;
+    --chip: #eef2ee;
+    --danger: #9c2b2b;
+    --focus: #1d70f0;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0e14;
+      --panel: #131722;
+      --ink: #e8e6e1;
+      --muted: #8b93a1;
+      --line: #232936;
+      --accent: #3fae8c;
+      --accent-ink: #06130e;
+      --chip: #1a2028;
+      --danger: #e2726e;
+      --focus: #6ea8ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { animation: none !important; transition: none !important; }
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 -apple-system, "Segoe UI", system-ui, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  a.skip {
+    position: absolute; left: -9999px; top: 0;
+    background: var(--accent); color: var(--accent-ink);
+    padding: .5rem .75rem; border-radius: 0 0 .5rem 0; z-index: 10;
+  }
+  a.skip:focus-visible { left: 0; }
+  header {
+    display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; align-items: baseline;
+    padding: 1.1rem 1.5rem .9rem;
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; background: var(--bg); z-index: 5;
+  }
+  header h1 { font-size: 1.05rem; margin: 0; letter-spacing: .01em; }
+  header h1 .dot { color: var(--accent); }
+  header .sub { color: var(--muted); font-size: .85rem; }
+  .search { margin-left: auto; display: flex; align-items: center; gap: .4rem; }
+  .search input {
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: .55rem;
+    padding: .42rem .7rem; width: min(15rem, 40vw); font: inherit;
+  }
+  main { max-width: 74rem; margin: 0 auto; padding: 1.25rem 1.5rem 4rem; }
+  h2 {
+    font-size: .8rem; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); margin: 2.2rem 0 .8rem; text-wrap: balance;
+    scroll-margin-top: 5rem;
+  }
+  #graph-panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: .8rem; padding: .5rem; overflow-x: auto;
+  }
+  #graph { display: block; margin: 0 auto; max-width: 100%; }
+  #graph .node rect {
+    fill: var(--chip); stroke: var(--line); rx: 8;
+    cursor: pointer;
+  }
+  #graph .node.hosted rect { stroke: var(--accent); }
+  #graph .node text { fill: var(--ink); font-size: 12.5px; cursor: pointer; }
+  #graph .node .host { fill: var(--muted); font-size: 10.5px; }
+  #graph .edge path { stroke: var(--muted); fill: none; marker-end: url(#arrow); opacity: .75; }
+  #graph .edge text { fill: var(--muted); font-size: 10px; }
+  #graph .node:hover rect, #graph .node:focus-visible rect { stroke: var(--focus); stroke-width: 2; }
+  #graph .node:focus-visible { outline: none; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr)); gap: 1rem; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: .8rem; padding: 1rem 1.1rem; min-width: 0;
+    scroll-margin-top: 5rem;
+  }
+  .card.selected { border-color: var(--accent); }
+  .card h3 { margin: 0 0 .2rem; font-size: 1rem; overflow-wrap: break-word; }
+  .card .meta { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+  .card .meta code { font-family: var(--mono); font-size: .75rem; }
+  dl.facts { margin: .7rem 0 .2rem; display: grid; grid-template-columns: auto 1fr; gap: .15rem .7rem; }
+  dl.facts dt { color: var(--muted); font-size: .8rem; font-family: var(--mono); overflow-wrap: anywhere; }
+  dl.facts dd { margin: 0; font-size: .86rem; min-width: 0; overflow-wrap: anywhere; }
+  dl.facts dd .note { color: var(--muted); }
+  ul.links { list-style: none; margin: .5rem 0 0; padding: 0; }
+  ul.links li { font-size: .86rem; margin: .18rem 0; overflow-wrap: anywhere; }
+  ul.links .rel {
+    background: var(--chip); border-radius: .4rem; padding: .05rem .4rem;
+    font-family: var(--mono); font-size: .72rem; color: var(--muted);
+  }
+  details { margin-top: .8rem; }
+  summary {
+    cursor: pointer; color: var(--muted); font-size: .82rem;
+    border-radius: .4rem; padding: .15rem .2rem; user-select: none;
+  }
+  summary:hover { color: var(--ink); }
+  form.fact-form { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .6rem; }
+  form.fact-form label { display: block; font-size: .74rem; color: var(--muted); margin-bottom: .15rem; }
+  form.fact-form input {
+    width: 100%; background: var(--bg); color: var(--ink);
+    border: 1px solid var(--line); border-radius: .45rem;
+    padding: .38rem .55rem; font: inherit; font-size: .86rem;
+  }
+  form.fact-form .full { grid-column: 1 / -1; }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  button {
+    font: inherit; font-size: .85rem;
+    background: var(--accent); color: var(--accent-ink);
+    border: none; border-radius: .5rem; padding: .42rem .85rem;
+    cursor: pointer;
+  }
+  button.quiet { background: var(--chip); color: var(--ink); }
+  button:hover { filter: brightness(1.08); }
+  button:active { filter: brightness(.95); }
+  button[disabled] { opacity: .6; cursor: default; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .error { color: var(--danger); font-size: .8rem; }
+  .flash { color: var(--accent); font-size: .8rem; }
+  [aria-live] { min-height: 1.1rem; }
+  .scan-results { margin-top: .5rem; font-size: .84rem; }
+  .scan-results li { margin: .2rem 0; overflow-wrap: anywhere; }
+  #arch {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: .8rem; padding: 1.2rem 1.4rem; max-width: 100%;
+    overflow-x: auto;
+  }
+  #arch h1, #arch h2, #arch h3 { text-transform: none; letter-spacing: 0; color: var(--ink); }
+  #arch h1 { font-size: 1.25rem; margin: .2rem 0 .6rem; }
+  #arch h2 { font-size: 1.02rem; margin: 1.2rem 0 .4rem; }
+  #arch code { font-family: var(--mono); font-size: .84em; background: var(--chip); border-radius: .3rem; padding: .05rem .3rem; }
+  #arch .provenance { color: var(--muted); font-size: .78rem; margin-bottom: .8rem; }
+  .empty { color: var(--muted); font-size: .88rem; }
+  footer { color: var(--muted); font-size: .78rem; text-align: center; padding: 2rem 0 1rem; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to Content</a>
+<header>
+  <h1>LEB<span class="dot">·</span>Workspace</h1>
+  <span class="sub" id="summary">Loading…</span>
+  <div class="search">
+    <label for="q" class="sub">Filter</label>
+    <input id="q" type="search" name="workspace-filter" autocomplete="off" spellcheck="false"
+           placeholder="repo, fact, host…" aria-label="Filter projects, facts, and hosts">
+  </div>
+</header>
+<main id="main">
+  <h2 id="map">Service Map</h2>
+  <div id="graph-panel" role="img" aria-label="Directed graph of repositories and their declared relationships">
+    <svg id="graph" width="880" height="420" viewBox="0 0 880 420" aria-hidden="true"></svg>
+  </div>
+
+  <h2 id="projects">Projects</h2>
+  <div class="cards" id="cards"><p class="empty">Loading…</p></div>
+
+  <h2 id="architecture">Architecture Guide</h2>
+  <div id="arch"><p class="empty">Loading…</p></div>
+</main>
+<footer>Local Engineering Brain — local-only, evidence-grounded. Regenerate the guide with <code>leb architect</code>.</footer>
+
+<script>
+"use strict";
+const state = { data: null, q: "", selected: "" };
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function readUrl() {
+  const p = new URLSearchParams(location.search);
+  state.q = p.get("q") || "";
+  state.selected = p.get("p") || "";
+  const q = document.getElementById("q");
+  if (q.value !== state.q) q.value = state.q;
+}
+
+function writeUrl() {
+  const p = new URLSearchParams();
+  if (state.q) p.set("q", state.q);
+  if (state.selected) p.set("p", state.selected);
+  const qs = p.toString();
+  history.replaceState(null, "", qs ? "?" + qs : location.pathname);
+}
+
+function matches(project, q) {
+  if (!q) return true;
+  const hay = [
+    project.name,
+    ...project.facts.flatMap(f => [f.key, f.value, f.note || ""]),
+    ...project.links.flatMap(l => [l.name, l.relation, l.note || ""]),
+  ].join(" ").toLowerCase();
+  return q.toLowerCase().split(/\s+/).every(term => hay.includes(term));
+}
+
+function hostOf(project) {
+  const f = project.facts.find(f => f.key === "hosting.base_url");
+  return f ? f.value : "";
+}
+
+/* ---- service map: hand-rolled circular layout, no libraries ---- */
+function renderGraph(projects) {
+  const svg = document.getElementById("graph");
+  const W = 880, H = 420, cx = W / 2, cy = H / 2;
+  const visible = projects.filter(p => matches(p, state.q));
+  const R = Math.min(cx, cy) - 64;
+  const pos = new Map();
+  visible.forEach((p, i) => {
+    const a = (2 * Math.PI * i) / Math.max(visible.length, 1) - Math.PI / 2;
+    pos.set(p.id, { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) });
+  });
+  let defs = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor" opacity="0.7"/></marker></defs>`;
+  let edges = "";
+  for (const p of visible) {
+    const from = pos.get(p.id);
+    for (const l of p.links) {
+      const to = pos.get(l.project_id);
+      if (!to) continue;
+      const dx = to.x - from.x, dy = to.y - from.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const pad = 62;
+      const x1 = from.x + (dx / len) * pad, y1 = from.y + (dy / len) * pad;
+      const x2 = to.x - (dx / len) * pad, y2 = to.y - (dy / len) * pad;
+      const mx = (x1 + x2) / 2 + (dy / len) * 22, my = (y1 + y2) / 2 - (dx / len) * 22;
+      edges += `<g class="edge"><path d="M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}"/>
+        <text x="${mx}" y="${my - 4}" text-anchor="middle">${esc(l.relation)}</text></g>`;
+    }
+  }
+  let nodes = "";
+  for (const p of visible) {
+    const { x, y } = pos.get(p.id);
+    const host = hostOf(p);
+    const w = Math.max(p.name.length * 7.4 + 26, host.length * 6 + 20, 90);
+    nodes += `<g class="node ${host ? "hosted" : ""}" tabindex="0" role="link"
+        aria-label="Open ${esc(p.name)} details" data-id="${esc(p.id)}">
+      <rect x="${x - w / 2}" y="${y - 21}" width="${w}" height="${host ? 44 : 32}"/>
+      <text x="${x}" y="${y - 2}" text-anchor="middle">${esc(p.name)}</text>
+      ${host ? `<text class="host" x="${x}" y="${y + 14}" text-anchor="middle" translate="no">${esc(host)}</text>` : ""}
+    </g>`;
+  }
+  svg.innerHTML = defs + edges + nodes;
+  for (const node of svg.querySelectorAll(".node")) {
+    const open = () => { state.selected = node.dataset.id; writeUrl(); renderCards();
+      document.getElementById("card-" + node.dataset.id)?.scrollIntoView({ block: "start" }); };
+    node.addEventListener("click", open);
+    node.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+  }
+}
+
+/* ---- project cards ---- */
+function factRows(project) {
+  if (!project.facts.length) return `<p class="empty">No facts recorded yet.</p>`;
+  return `<dl class="facts">` + project.facts.map(f =>
+    `<dt translate="no">${esc(f.key)}</dt>
+     <dd translate="no">${esc(f.value)}${f.note ? ` <span class="note">— ${esc(f.note)}</span>` : ""}</dd>`
+  ).join("") + `</dl>`;
+}
+
+function linkRows(project) {
+  if (!project.links.length) return "";
+  return `<ul class="links">` + project.links.map(l =>
+    `<li><span class="rel">${esc(l.relation)}</span> ${esc(l.name)}${l.note ? ` <span class="note">— ${esc(l.note)}</span>` : ""}</li>`
+  ).join("") + `</ul>`;
+}
+
+function card(project) {
+  const selected = project.id === state.selected ? " selected" : "";
+  return `<article class="card${selected}" id="card-${esc(project.id)}" aria-labelledby="h-${esc(project.id)}">
+    <h3 id="h-${esc(project.id)}">${esc(project.name)}</h3>
+    <p class="meta">${project.validated_memories} validated memories · ${project.nodes.toLocaleString()} graph nodes
+      ${project.indexed_head ? ` · <code translate="no">${esc(project.indexed_head.slice(0, 10))}</code>` : ""}</p>
+    ${factRows(project)}
+    ${linkRows(project)}
+    <details>
+      <summary>Add or Update Fact</summary>
+      <form class="fact-form" data-id="${esc(project.id)}">
+        <div><label for="fk-${esc(project.id)}">Key</label>
+          <input id="fk-${esc(project.id)}" name="key" required autocomplete="off"
+                 spellcheck="false" placeholder="hosting.base_url…"></div>
+        <div><label for="fv-${esc(project.id)}">Value</label>
+          <input id="fv-${esc(project.id)}" name="value" required autocomplete="off"
+                 spellcheck="false" placeholder="api.example.com…"></div>
+        <div class="full"><label for="fn-${esc(project.id)}">Note (optional)</label>
+          <input id="fn-${esc(project.id)}" name="note" autocomplete="off"
+                 placeholder="production endpoint…"></div>
+        <div class="full row">
+          <button type="submit">Save Fact</button>
+          ${project.primary_path ? `<button type="button" class="quiet scan" data-id="${esc(project.id)}">Scan for Links</button>` : ""}
+          <span aria-live="polite" class="status"></span>
+        </div>
+      </form>
+      <div class="scan-results" aria-live="polite"></div>
+    </details>
+  </article>`;
+}
+
+function renderCards() {
+  const projects = state.data.projects.filter(p => matches(p, state.q));
+  const el = document.getElementById("cards");
+  el.innerHTML = projects.length
+    ? projects.map(card).join("")
+    : `<p class="empty">No projects match this filter.</p>`;
+  for (const form of el.querySelectorAll("form.fact-form")) {
+    form.addEventListener("submit", onSaveFact);
+  }
+  for (const btn of el.querySelectorAll("button.scan")) {
+    btn.addEventListener("click", onScan);
+  }
+  const total = state.data.projects.length;
+  const links = state.data.projects.reduce((n, p) => n + p.links.length, 0);
+  document.getElementById("summary").textContent =
+    `${total} repositories · ${links} links` + (state.q ? ` · showing ${projects.length}` : "");
+}
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? undefined : {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.text()) || res.statusText);
+  return res.json();
+}
+
+async function onSaveFact(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const status = form.querySelector(".status");
+  const key = form.elements.key.value.trim();
+  const value = form.elements.value.value.trim();
+  if (!key || !value) {
+    status.innerHTML = `<span class="error">Enter both a key and a value.</span>`;
+    form.elements[key ? "value" : "key"].focus();
+    return;
+  }
+  const button = form.querySelector("button[type=submit]");
+  button.disabled = true;
+  status.textContent = "Saving…";
+  try {
+    await api("/api/facts/set", {
+      project_id: form.dataset.id, key, value,
+      note: form.elements.note.value.trim() || null,
+    });
+    status.innerHTML = `<span class="flash">Saved.</span>`;
+    await refresh();
+  } catch (error) {
+    status.innerHTML = `<span class="error">${esc(error.message)} — check the key and try again.</span>`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function onScan(event) {
+  const button = event.currentTarget;
+  const results = button.closest("details").querySelector(".scan-results");
+  button.disabled = true;
+  results.textContent = "Scanning…";
+  try {
+    const report = await api("/api/linkscan", { project_id: button.dataset.id, apply: true });
+    const applied = report.applied.map(l =>
+      `<li><span class="flash">Linked</span> ${esc(l.name)} <span class="rel">${esc(l.relation)}</span></li>`);
+    const proposals = report.candidates.filter(c => !c.definitive).map(c =>
+      `<li>Proposal: ${esc(c.target_name)} <span class="rel">${esc(c.relation)}</span> — ${esc(c.evidence)}.
+       Confirm with <code>leb link add</code>.</li>`);
+    results.innerHTML = applied.length + proposals.length
+      ? `<ul>${applied.join("")}${proposals.join("")}</ul>`
+      : "No new link candidates in this repo's manifests or sources.";
+    if (applied.length) await refresh();
+  } catch (error) {
+    results.innerHTML = `<span class="error">${esc(error.message)} — is the daemon running?</span>`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/* ---- minimal markdown for the architecture guide ---- */
+function markdown(md) {
+  const lines = md.split("\n");
+  let html = "", list = false;
+  const inline = s => esc(s)
+    .replace(/`([^`]+)`/g, "<code translate=\"no\">$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  for (const line of lines) {
+    if (/^<!--/.test(line)) { continue; }
+    const h = line.match(/^(#{1,3})\s+(.*)/);
+    const li = line.match(/^\s*[-*]\s+(.*)/);
+    const ol = line.match(/^\s*\d+\.\s+(.*)/);
+    if (list && !li && !ol) { html += "</ul>"; list = false; }
+    if (h) html += `<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`;
+    else if (li || ol) {
+      if (!list) { html += "<ul>"; list = true; }
+      html += `<li>${inline((li || ol)[1])}</li>`;
+    }
+    else if (line.trim()) html += `<p>${inline(line)}</p>`;
+  }
+  if (list) html += "</ul>";
+  return html;
+}
+
+async function loadArchitecture() {
+  const el = document.getElementById("arch");
+  try {
+    const doc = await api("/api/architecture");
+    el.innerHTML = doc.content
+      ? `<p class="provenance">Synthesized guide — regenerate with <code>leb architect</code>; the prose is derived, the facts it cites are canonical.</p>` + markdown(doc.content)
+      : `<p class="empty">No guide yet. Generate one with <code>leb architect --model &lt;model&gt;</code>.</p>`;
+  } catch {
+    el.innerHTML = `<p class="empty">Guide unavailable.</p>`;
+  }
+}
+
+async function refresh() {
+  state.data = await api("/api/workspace");
+  renderGraph(state.data.projects);
+  renderCards();
+}
+
+document.getElementById("q").addEventListener("input", event => {
+  state.q = event.target.value.trim();
+  writeUrl();
+  if (state.data) { renderGraph(state.data.projects); renderCards(); }
+});
+
+readUrl();
+refresh().then(() => {
+  if (state.selected) document.getElementById("card-" + state.selected)?.scrollIntoView();
+}).catch(error => {
+  document.getElementById("cards").innerHTML =
+    `<p class="error">Could not reach the LEB daemon: ${esc(error.message)}. Start it with any <code>leb</code> command, then reload.</p>`;
+});
+loadArchitecture();
+</script>
+</body>
+</html>

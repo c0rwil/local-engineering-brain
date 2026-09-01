@@ -4,6 +4,7 @@
 //! configuration, canonical `SQLite` storage, immutable events, and project identity.
 
 #[doc(hidden)]
+pub mod architect;
 pub mod autostart;
 pub mod blobs;
 pub mod cache;
@@ -32,6 +33,7 @@ pub mod semantic;
 pub mod storage;
 pub mod synthesis;
 pub mod vault;
+pub mod web;
 pub mod world;
 
 pub use error::{Error, Result};

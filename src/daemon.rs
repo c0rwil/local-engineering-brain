@@ -94,6 +94,8 @@ const API_LINK_SCAN: &str = "/api/v1/projects/link-scan";
 const API_FACT_SET: &str = "/api/v1/projects/facts/set";
 const API_FACT_UNSET: &str = "/api/v1/projects/facts/unset";
 const API_FACT_LIST: &str = "/api/v1/projects/facts/list";
+const API_ARCHITECT_DOSSIER: &str = "/api/v1/architect/dossier";
+const API_WORKSPACE: &str = "/api/v1/workspace";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -309,6 +311,23 @@ pub struct ProjectLinksRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectUnlinkResponse {
     pub removed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorkspaceProject {
+    pub id: ProjectId,
+    pub name: String,
+    pub primary_path: Option<String>,
+    pub facts: Vec<crate::projects::ProjectFact>,
+    pub links: Vec<LinkedProject>,
+    pub validated_memories: i64,
+    pub nodes: i64,
+    pub indexed_head: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorkspaceSnapshot {
+    pub projects: Vec<WorkspaceProject>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1049,6 +1068,26 @@ impl DaemonClient {
         .await
     }
 
+    /// Fetch the whole-workspace snapshot for UIs.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn workspace(&self) -> Result<WorkspaceSnapshot> {
+        self.request::<(), _>(hyper::Method::GET, API_WORKSPACE, None)
+            .await
+    }
+
+    /// Fetch the deterministic workspace architecture dossier.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn architect_dossier(&self) -> Result<String> {
+        self.request::<(), _>(hyper::Method::GET, API_ARCHITECT_DOSSIER, None)
+            .await
+    }
+
     /// Set one curated architecture fact on a project.
     ///
     /// # Errors
@@ -1341,6 +1380,8 @@ where
         .route(API_FACT_SET, post(set_fact))
         .route(API_FACT_UNSET, post(unset_fact))
         .route(API_FACT_LIST, post(list_facts))
+        .route(API_ARCHITECT_DOSSIER, get(architect_dossier))
+        .route(API_WORKSPACE, get(workspace_snapshot))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -2155,6 +2196,72 @@ async fn list_project_links(
     let registry = ProjectRegistry::new(state.database.clone());
     let links = run_blocking(&state, move || registry.links(&request.project_id)).await?;
     Ok(Json(links))
+}
+
+async fn workspace_snapshot(
+    State(state): State<DaemonState>,
+) -> std::result::Result<Json<WorkspaceSnapshot>, ApiError> {
+    let database = state.database.clone();
+    let snapshot = run_blocking(&state, move || {
+        let registry = ProjectRegistry::new(database.clone());
+        let rows = database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT p.id, p.name,
+                        (SELECT COUNT(*) FROM memories m
+                          WHERE m.project_id = p.id AND m.status = 'active'
+                            AND m.epistemic_state = 'validated'),
+                        (SELECT COUNT(*) FROM nodes n
+                          WHERE n.project_id = p.id AND n.tombstoned_at_ms IS NULL),
+                        (SELECT s.head FROM structural_scans s
+                          WHERE s.project_id = p.id
+                          ORDER BY s.completed_at_ms DESC LIMIT 1)
+                 FROM projects p WHERE p.tombstoned_at_ms IS NULL
+                 ORDER BY p.name, p.id",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })?;
+        let mut projects = Vec::new();
+        for (id, name, validated_memories, nodes, indexed_head) in rows {
+            let project_id = crate::ids::ProjectId::parse(&id)?;
+            let primary_path = registry
+                .alias_paths(&project_id)?
+                .into_iter()
+                .find(|path| path.is_dir())
+                .map(|path| path.display().to_string());
+            projects.push(WorkspaceProject {
+                facts: registry.facts(&project_id)?,
+                links: registry.links(&project_id)?,
+                id: project_id,
+                name,
+                primary_path,
+                validated_memories,
+                nodes,
+                indexed_head,
+            });
+        }
+        Ok(WorkspaceSnapshot { projects })
+    })
+    .await?;
+    Ok(Json(snapshot))
+}
+
+async fn architect_dossier(
+    State(state): State<DaemonState>,
+) -> std::result::Result<Json<String>, ApiError> {
+    let database = state.database.clone();
+    let dossier = run_blocking(&state, move || crate::architect::build_dossier(&database)).await?;
+    Ok(Json(dossier))
 }
 
 async fn set_fact(

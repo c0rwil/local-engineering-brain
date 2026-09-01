@@ -183,10 +183,37 @@ enum Commands {
         action: LinkAction,
     },
 
+    /// Synthesize a CLAUDE.md-style workspace architecture guide with the
+    /// configured model (derived output; never evidence-gated memory).
+    Architect {
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        /// Model name for the configured runtime (overrides `architect.model`).
+        #[arg(long)]
+        model: Option<String>,
+        /// Print the deterministic dossier and prompt without calling a model.
+        #[arg(long)]
+        dry_run: bool,
+        /// Write here instead of `<vault root>/ARCHITECTURE.md`.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Curated per-project architecture facts (hosting, storage, role).
     Fact {
         #[command(subcommand)]
         action: FactAction,
+    },
+
+    /// Serve the local workspace browser (facts, links, architecture).
+    Web {
+        /// Loopback port to bind.
+        #[arg(long, default_value_t = 11436)]
+        port: u16,
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
     },
 
     /// Export the derived Obsidian vault (notes + mermaid diagrams).
@@ -542,7 +569,25 @@ fn run(cli: Cli) -> Result<bool> {
             run_daemon_action(&overrides, socket_override.as_deref(), &action)
         }
         Commands::Link { action } => run_link(&overrides, socket_override.as_deref(), &action),
+        Commands::Architect {
+            path,
+            model,
+            dry_run,
+            out,
+            json,
+        } => run_architect(
+            &overrides,
+            socket_override.as_deref(),
+            &path,
+            model.as_deref(),
+            dry_run,
+            out.as_deref(),
+            json,
+        ),
         Commands::Fact { action } => run_fact(&overrides, socket_override.as_deref(), &action),
+        Commands::Web { port, path } => {
+            run_web(&overrides, socket_override.as_deref(), &path, port)
+        }
         Commands::Vault { action } => run_vault(&overrides, socket_override.as_deref(), &action),
         Commands::Metrics { json } => run_metrics(&overrides, socket_override.as_deref(), json),
         Commands::Dashboard => run_dashboard(&overrides, socket_override.as_deref()),
@@ -1565,6 +1610,79 @@ fn run_link(
     Ok(true)
 }
 
+fn run_architect(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    path: &Path,
+    model: Option<&str>,
+    dry_run: bool,
+    out: Option<&Path>,
+    json: bool,
+) -> Result<bool> {
+    let config_root = discover_project_root(path)?;
+    let mut config = Config::load_for(Some(&config_root), overrides)?;
+    apply_socket_override(&mut config, socket)?;
+    require_daemon(&config)?;
+    let dossier = block_on(client(&config).architect_dossier())?;
+    let prompt = leb::architect::synthesis_prompt(&dossier);
+    if dry_run {
+        println!("{prompt}");
+        return Ok(true);
+    }
+    let model = model
+        .map(str::to_owned)
+        .or_else(|| (!config.architect.model.is_empty()).then(|| config.architect.model.clone()))
+        .ok_or_else(|| {
+            leb::Error::Config(
+                "no model configured: pass --model or set architect.model".to_owned(),
+            )
+        })?;
+    leb::architect::enforce_local_only(&config.architect.runtime_url, config.network.local_only)?;
+    println!(
+        "Synthesizing with `{model}` via {} …",
+        config.architect.runtime_url
+    );
+    let synthesized = block_on(leb::architect::synthesize(
+        &config.architect.runtime_url,
+        &model,
+        &prompt,
+    ))?;
+    let destination = out.map_or_else(
+        || config.vault.root.join("ARCHITECTURE.md"),
+        Path::to_path_buf,
+    );
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| leb::Error::Config(format!("architecture output dir: {error}")))?;
+    }
+    let document = format!(
+        "<!-- SYNTHESIZED by `leb architect` (model: {model}). Derived document -          regenerate at will; the dossier facts it cites are canonical, its prose is not. -->
+
+{synthesized}
+"
+    );
+    std::fs::write(&destination, &document)
+        .map_err(|error| leb::Error::Config(format!("architecture output: {error}")))?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&leb::architect::ArchitectReport {
+                model,
+                output_path: destination.display().to_string(),
+                dossier_bytes: dossier.len(),
+                synthesized_bytes: synthesized.len(),
+            })?
+        );
+    } else {
+        println!(
+            "Wrote {} ({} bytes).",
+            destination.display(),
+            document.len()
+        );
+    }
+    Ok(true)
+}
+
 fn run_fact(
     overrides: &ConfigOverrides,
     socket: Option<&Path>,
@@ -1635,6 +1753,21 @@ fn run_fact(
             }
         }
     }
+    Ok(true)
+}
+
+fn run_web(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    path: &Path,
+    port: u16,
+) -> Result<bool> {
+    let config_root = discover_project_root(path)?;
+    let mut config = Config::load_for(Some(&config_root), overrides)?;
+    apply_socket_override(&mut config, socket)?;
+    require_daemon(&config)?;
+    println!("LEB workspace browser: http://127.0.0.1:{port}  (Ctrl-C to stop)");
+    block_on(leb::web::serve(config, port))?;
     Ok(true)
 }
 

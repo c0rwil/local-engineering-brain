@@ -27,6 +27,30 @@ pub struct Config {
     pub synthesis: SynthesisConfig,
     pub vault: VaultConfig,
     pub links: LinksConfig,
+    pub architect: ArchitectConfig,
+}
+
+/// LLM-assisted architecture synthesis (`leb architect`, `src/architect.rs`).
+/// The output is a derived vault document, never evidence-gated memory.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ArchitectConfig {
+    /// OpenAI-compatible chat-completions endpoint. Non-loopback URLs are
+    /// refused unless `network.local_only = false` (same stance as the
+    /// proxy).
+    pub runtime_url: String,
+    /// Model name sent to the runtime. Empty means the CLI requires
+    /// `--model`.
+    pub model: String,
+}
+
+impl Default for ArchitectConfig {
+    fn default() -> Self {
+        Self {
+            runtime_url: "http://127.0.0.1:8010/v1/chat/completions".to_owned(),
+            model: String::new(),
+        }
+    }
 }
 
 /// Automatic cross-repository link discovery (`src/linkscan.rs`).
