@@ -202,7 +202,17 @@ model, runtime, and harness with zero injection).
   was never worse on any task. On fidelity probes the local bottleneck is
   wall clock, not compliance: replay shows most timed-out runs had already
   produced compliant patches, and the oriented brain arm finished in time
-  3/5 vs 1/5 (2026-08-31).
+  3/5 vs 1/5 (2026-08-31). At calibrated 2700 s walls across seeds 2-3
+  (all cells warmed and activity-verified), **brain passed 10/10 vs
+  control 7/10 with 33% lower mean wall time** — injected tribal knowledge
+  prevents the exploratory spirals that burn the clock (2026-09-01).
+- **Compact injection:** the deterministic compact rendering held success
+  parity at 33% fewer injected bytes on frontier A/B; it stays opt-in
+  until a fidelity-family A/B (2026-09-01).
+- **Real-repository recall:** seeded a production Rust backend's 11
+  operator-guide gotchas through the real learning pathway and probed with
+  natural, non-verbatim developer questions: 11/11 recall@1, fully local
+  (2026-09-01).
 - **Prompt-cache stability:** injected context is byte-stable per session
   (session-pinned), measured at 11-24 consecutive cache hits per agentic
   session against both local and Anthropic runtimes.
