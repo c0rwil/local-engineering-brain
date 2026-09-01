@@ -10,8 +10,8 @@ use leb::context::{ContextCompileRequest, ContextMode};
 use leb::daemon::{
     AttemptCreateRequest, EvidenceCreateRequest, JobEnqueueRequest, JobListRequest,
     MemoryCreateRequest, MemoryListRequest, MemoryPromoteRequest, ProjectExportRequest,
-    SemanticRebuildRequest, SynthesisRunRequest, TaskFinishRequest, TaskStartRequest,
-    WorldSearchRequest,
+    SemanticRebuildRequest, SkillPromoteRequest, SynthesisRunRequest, TaskFinishRequest,
+    TaskStartRequest, WorldSearchRequest,
 };
 use leb::daemon::{DaemonClient, ProjectStatus};
 use leb::doctor::DoctorReport;
@@ -169,6 +169,11 @@ enum Commands {
         path: PathBuf,
         #[arg(long)]
         json: bool,
+        /// Promote this validated procedure memory to the `skill` kind
+        /// instead of running synthesis (requires the configured number of
+        /// recorded distinct successful uses).
+        #[arg(long)]
+        promote: Option<String>,
     },
 
     /// Create or verify transactionally consistent canonical backups.
@@ -494,9 +499,17 @@ fn run(cli: Cli) -> Result<bool> {
             &tag,
             json,
         ),
-        Commands::Synthesize { path, json } => {
-            run_synthesize(&overrides, socket_override.as_deref(), &path, json)
-        }
+        Commands::Synthesize {
+            path,
+            json,
+            promote,
+        } => run_synthesize(
+            &overrides,
+            socket_override.as_deref(),
+            &path,
+            json,
+            promote.as_deref(),
+        ),
         Commands::Backup { action } => run_backup(&overrides, socket_override.as_deref(), &action),
         Commands::Export {
             destination,
@@ -656,10 +669,24 @@ fn run_synthesize(
     socket: Option<&Path>,
     path: &Path,
     json: bool,
+    promote: Option<&str>,
 ) -> Result<bool> {
     let root = discover_project_root(path)?;
     let config = load_daemon_config(overrides, socket, Some(&root))?;
     let client = client(&config);
+    if let Some(raw_id) = promote {
+        let memory_id = MemoryId::parse(raw_id)?;
+        let skill = block_on(client.promote_skill(&SkillPromoteRequest {
+            path: path.to_path_buf(),
+            memory_id,
+        }))?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&skill)?);
+        } else {
+            println!("Promoted {} to kind `{}`", skill.id, skill.kind);
+        }
+        return Ok(true);
+    }
     let report = block_on(client.run_synthesis(&SynthesisRunRequest {
         path: path.to_path_buf(),
     }))?;

@@ -85,6 +85,7 @@ const API_MEMORY_STATS: &str = "/api/v1/metrics/memories";
 const API_JOBS: &str = "/api/v1/jobs";
 const API_JOBS_LIST: &str = "/api/v1/jobs/list";
 const API_SYNTHESIS_RUN: &str = "/api/v1/synthesis/run";
+const API_SKILL_PROMOTE: &str = "/api/v1/synthesis/promote";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -367,6 +368,15 @@ pub struct SynthesisRunRequest {
     /// Project path; resolved and scoped like `projects/index`, so a project's
     /// own `.leb/config.toml` `[synthesis]` section governs its thresholds.
     pub path: PathBuf,
+}
+
+/// Promote a validated procedure memory to the `skill` kind after enough
+/// recorded distinct successful uses (spec 16.4). Thresholds come from the
+/// project-scoped `[synthesis]` configuration.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SkillPromoteRequest {
+    pub path: PathBuf,
+    pub memory_id: MemoryId,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -912,6 +922,16 @@ impl DaemonClient {
             .await
     }
 
+    /// Promote a validated, sufficiently-used procedure memory to a skill.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport, gating, overload, or canonical storage errors.
+    pub async fn promote_skill(&self, request: &SkillPromoteRequest) -> Result<MemoryRecord> {
+        self.request(hyper::Method::POST, API_SKILL_PROMOTE, Some(request))
+            .await
+    }
+
     /// Rebuild the derived semantic vector sidecar from canonical memories.
     ///
     /// # Errors
@@ -1039,6 +1059,7 @@ fn requires_terminal_ack(method: &hyper::Method, path: &str) -> bool {
         || path == API_SEMANTIC_REBUILD
         || path == API_JOBS
         || path == API_SYNTHESIS_RUN
+        || path == API_SKILL_PROMOTE
 }
 
 /// Serve the local API until `shutdown` resolves.
@@ -1120,6 +1141,7 @@ where
         .route(API_JOBS_LIST, post(list_jobs))
         .route("/api/v1/jobs/{id}", get(get_job))
         .route(API_SYNTHESIS_RUN, post(run_synthesis))
+        .route(API_SKILL_PROMOTE, post(promote_skill))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -2121,6 +2143,34 @@ async fn run_synthesis(
         .scheduler
         .submit(MutationPriority::BackgroundLearning, move || {
             store.synthesize(&project_id, &options)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
+async fn promote_skill(
+    State(state): State<DaemonState>,
+    Json(request): Json<SkillPromoteRequest>,
+) -> std::result::Result<Json<crate::memory::MemoryRecord>, ApiError> {
+    admit_work(&state, MutationPriority::BackgroundLearning)?;
+    let registry = ProjectRegistry::new(state.database.clone());
+    let path = request.path;
+    let resolve = state
+        .scheduler
+        .submit(MutationPriority::Interactive, move || {
+            registry.resolve_or_register(&path)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    let resolved = wait_for_mutation(&state, resolve).await?;
+    let scoped =
+        scoped_config(&state, &resolved.root).map_err(|error| ApiError::from_core(&error))?;
+    let min_distinct_uses = scoped.synthesis.min_distinct_uses;
+    let store = SynthesisStore::with_redactor(state.database.clone(), state.redactor.clone());
+    let memory_id = request.memory_id;
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::BackgroundLearning, move || {
+            store.promote_to_skill(&memory_id, min_distinct_uses)
         })
         .map_err(|error| ApiError::from_core(&error))?;
     Ok(Json(wait_for_mutation(&state, handle).await?))
@@ -3253,6 +3303,165 @@ mod tests {
             search_labels(&client, &project_id, "cached_renamed").await,
             ["cached_renamed"]
         );
+
+        drop(shutdown_sender);
+        let _ = server.await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[allow(clippy::too_many_lines)]
+    async fn procedure_promotes_to_skill_after_recorded_uses_via_api() {
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        std::fs::write(project.join("lib.rs"), "pub fn stage() {}\n").expect("source");
+        let config = test_config(&temp);
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+        let status = client.resolve_project(&project).await.expect("resolve");
+        let project_id = status.resolved.project.id.clone();
+        client.index_project(&project, None).await.expect("index");
+
+        // Three matching evidence-backed successful episodes -> procedure.
+        for ordinal in 0..3 {
+            let task = client
+                .start_task(&TaskStartRequest {
+                    project_id: project_id.clone(),
+                    prompt: format!("stage rollout {ordinal}"),
+                    session_id: None,
+                })
+                .await
+                .expect("task");
+            client
+                .record_attempt(
+                    &task.id,
+                    &AttemptCreateRequest {
+                        strategy_summary: "stage the rollout behind the flag".to_owned(),
+                        outcome: AttemptOutcome::Success,
+                        files: vec!["lib.rs".to_owned()],
+                    },
+                )
+                .await
+                .expect("attempt");
+            client
+                .record_evidence(&EvidenceCreateRequest {
+                    project_id: project_id.clone(),
+                    task_id: Some(task.id.clone()),
+                    attempt_id: None,
+                    kind: "test_result".to_owned(),
+                    strength: EvidenceStrength::Deterministic,
+                    commit_hash: None,
+                    command: Some("cargo test".to_owned()),
+                    exit_code: Some(0),
+                    artifact_text: "ok".to_owned(),
+                    metadata: serde_json::json!({}),
+                })
+                .await
+                .expect("evidence");
+            client
+                .finish_task(
+                    &task.id,
+                    &TaskFinishRequest {
+                        outcome: TaskOutcome::Success,
+                        accepted_by_user: Some(true),
+                        final_commit: None,
+                    },
+                )
+                .await
+                .expect("finish");
+        }
+        let report = client
+            .run_synthesis(&SynthesisRunRequest {
+                path: project.clone(),
+            })
+            .await
+            .expect("synthesis");
+        assert_eq!(report.procedures.len(), 1);
+        let procedure_id = report.procedures[0].memory.id.clone();
+
+        // Premature promotion must refuse: not validated, no recorded uses.
+        let premature = client
+            .promote_skill(&SkillPromoteRequest {
+                path: project.clone(),
+                memory_id: procedure_id.clone(),
+            })
+            .await;
+        assert!(premature.is_err(), "gating must refuse premature promotion");
+
+        // Validate the procedure via human override, then record three
+        // distinct successful uses through task-declared compiles.
+        for state in [
+            crate::memory::EpistemicState::Observed,
+            crate::memory::EpistemicState::Supported,
+            crate::memory::EpistemicState::Validated,
+        ] {
+            client
+                .promote_memory(
+                    &procedure_id,
+                    &MemoryPromoteRequest {
+                        target: state,
+                        human_override: true,
+                    },
+                )
+                .await
+                .expect("promote");
+        }
+        for ordinal in 0..3 {
+            let task = client
+                .start_task(&TaskStartRequest {
+                    project_id: project_id.clone(),
+                    prompt: format!("apply staged rollout {ordinal}"),
+                    session_id: None,
+                })
+                .await
+                .expect("use task");
+            let compiled = client
+                .compile_context(&ContextCompileRequest {
+                    request_id: format!("use-{ordinal}"),
+                    project_id: project_id.clone(),
+                    task_text: "stage the rollout behind the flag".to_owned(),
+                    current_paths: Vec::new(),
+                    token_budget: 2_000,
+                    mode: ContextMode::Brain,
+                    repository_root: None,
+                    head: None,
+                    task_id: Some(task.id.clone()),
+                    framing: None,
+                })
+                .await
+                .expect("compile");
+            assert!(
+                compiled
+                    .items
+                    .iter()
+                    .any(|item| item.source_id == procedure_id.to_string()),
+                "procedure must inject for its own strategy text"
+            );
+            client
+                .finish_task(
+                    &task.id,
+                    &TaskFinishRequest {
+                        outcome: TaskOutcome::Success,
+                        accepted_by_user: Some(true),
+                        final_commit: None,
+                    },
+                )
+                .await
+                .expect("finish use");
+        }
+        let skill = client
+            .promote_skill(&SkillPromoteRequest {
+                path: project.clone(),
+                memory_id: procedure_id.clone(),
+            })
+            .await
+            .expect("skill promotion");
+        assert_eq!(skill.kind, "skill");
 
         drop(shutdown_sender);
         let _ = server.await;
