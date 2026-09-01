@@ -90,6 +90,7 @@ const API_PROJECT_LINK: &str = "/api/v1/projects/link";
 const API_PROJECT_UNLINK: &str = "/api/v1/projects/unlink";
 const API_PROJECT_LINKS: &str = "/api/v1/projects/links";
 const API_VAULT_BUILD: &str = "/api/v1/vault/build";
+const API_LINK_SCAN: &str = "/api/v1/projects/link-scan";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -305,6 +306,14 @@ pub struct ProjectLinksRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectUnlinkResponse {
     pub removed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct LinkScanRequest {
+    pub path: PathBuf,
+    /// Apply the definitive candidates as links (name matches never apply).
+    #[serde(default)]
+    pub apply: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1012,6 +1021,19 @@ impl DaemonClient {
         .await
     }
 
+    /// Scan a repository's manifests for links to other registered projects.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn scan_links(
+        &self,
+        request: &LinkScanRequest,
+    ) -> Result<crate::linkscan::LinkScanReport> {
+        self.request(hyper::Method::POST, API_LINK_SCAN, Some(request))
+            .await
+    }
+
     /// Export the derived Obsidian vault (requires `vault.enabled`).
     ///
     /// # Errors
@@ -1251,6 +1273,7 @@ where
         .route(API_PROJECT_UNLINK, post(unlink_project))
         .route(API_PROJECT_LINKS, post(list_project_links))
         .route(API_VAULT_BUILD, post(build_vault))
+        .route(API_LINK_SCAN, post(scan_links))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -1702,6 +1725,29 @@ async fn index_project(
     if let Some(cache) = &state.world_cache {
         cache.bump(&resolved.project.id);
     }
+    // Auto-link discovery: definitive manifest signals (path deps,
+    // submodules) auto-apply with evidence in the note; name matches are
+    // proposals only, surfaced by `leb link scan`.
+    if state.config.links.auto_scan {
+        let database = state.database.clone();
+        let project_id = resolved.project.id.clone();
+        let root = resolved.root.clone();
+        if let Ok(candidates) = run_blocking(&state, move || {
+            crate::linkscan::scan(&database, &project_id, &root)
+        })
+        .await
+            && candidates.iter().any(|candidate| candidate.definitive)
+        {
+            let database = state.database.clone();
+            let project_id = resolved.project.id.clone();
+            let _ = state
+                .scheduler
+                .submit(MutationPriority::BackgroundLearning, move || {
+                    crate::linkscan::apply_definitive(&database, &project_id, &candidates)
+                });
+        }
+    }
+
     // Derived vault refresh: a durable, deduped background job keyed per
     // project, so vault notes and diagrams track every graph change without
     // blocking the index response. Requires jobs + vault to both be enabled.
@@ -2042,6 +2088,46 @@ async fn list_project_links(
     let registry = ProjectRegistry::new(state.database.clone());
     let links = run_blocking(&state, move || registry.links(&request.project_id)).await?;
     Ok(Json(links))
+}
+
+async fn scan_links(
+    State(state): State<DaemonState>,
+    Json(request): Json<LinkScanRequest>,
+) -> std::result::Result<Json<crate::linkscan::LinkScanReport>, ApiError> {
+    let registry = ProjectRegistry::new(state.database.clone());
+    let path = request.path;
+    let resolve = state
+        .scheduler
+        .submit(MutationPriority::Interactive, move || {
+            registry.resolve_or_register(&path)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    let resolved = wait_for_mutation(&state, resolve).await?;
+    let database = state.database.clone();
+    let project_id = resolved.project.id.clone();
+    let root = resolved.root.clone();
+    let candidates = run_blocking(&state, move || {
+        crate::linkscan::scan(&database, &project_id, &root)
+    })
+    .await?;
+    let applied = if request.apply {
+        let database = state.database.clone();
+        let project_id = resolved.project.id.clone();
+        let to_apply = candidates.clone();
+        let handle = state
+            .scheduler
+            .submit(MutationPriority::Interactive, move || {
+                crate::linkscan::apply_definitive(&database, &project_id, &to_apply)
+            })
+            .map_err(|error| ApiError::from_core(&error))?;
+        wait_for_mutation(&state, handle).await?
+    } else {
+        Vec::new()
+    };
+    Ok(Json(crate::linkscan::LinkScanReport {
+        candidates,
+        applied,
+    }))
 }
 
 async fn build_vault(

@@ -19,6 +19,7 @@ pub mod export;
 pub mod ids;
 pub mod jobs;
 pub mod learning;
+pub mod linkscan;
 pub mod mcp;
 pub mod memory;
 pub mod metrics;

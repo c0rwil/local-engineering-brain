@@ -26,6 +26,25 @@ pub struct Config {
     pub evaluation: EvaluationConfig,
     pub synthesis: SynthesisConfig,
     pub vault: VaultConfig,
+    pub links: LinksConfig,
+}
+
+/// Automatic cross-repository link discovery (`src/linkscan.rs`).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LinksConfig {
+    /// After each structural index, scan the repo's own manifests (Cargo
+    /// path deps, npm `file:` deps, pip editable installs, git submodules)
+    /// and auto-link DEFINITIVE matches to registered projects, with the
+    /// evidence recorded in the link note. Name-only matches are never
+    /// auto-applied — `leb link scan` surfaces them as proposals.
+    pub auto_scan: bool,
+}
+
+impl Default for LinksConfig {
+    fn default() -> Self {
+        Self { auto_scan: true }
+    }
 }
 
 /// Derived Obsidian-vault knowledge export (`src/vault.rs`).

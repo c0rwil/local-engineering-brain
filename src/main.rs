@@ -247,6 +247,16 @@ enum LinkAction {
         #[arg(long)]
         json: bool,
     },
+    /// Discover links from the repo's own manifests (path deps, submodules).
+    Scan {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Apply definitive candidates (name matches always stay proposals).
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1396,6 +1406,7 @@ fn run_status(
     Ok(true)
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_link(
     overrides: &ConfigOverrides,
     socket: Option<&Path>,
@@ -1404,7 +1415,8 @@ fn run_link(
     let source_path = match action {
         LinkAction::Add { path, .. }
         | LinkAction::Remove { path, .. }
-        | LinkAction::List { path, .. } => path,
+        | LinkAction::List { path, .. }
+        | LinkAction::Scan { path, .. } => path,
     };
     let config_root = discover_project_root(source_path)?;
     let mut config = Config::load_for(Some(&config_root), overrides)?;
@@ -1452,6 +1464,43 @@ fn run_link(
                 println!("Unlinked `{}`.", target_project.name);
             } else {
                 println!("No link to `{}` existed.", target_project.name);
+            }
+        }
+        LinkAction::Scan { path, apply, json } => {
+            let report = block_on(client.scan_links(&leb::daemon::LinkScanRequest {
+                path: path.clone(),
+                apply: *apply,
+            }))?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else if report.candidates.is_empty() && report.applied.is_empty() {
+                println!("No link candidates found in this repo's manifests.");
+            } else {
+                for link in &report.applied {
+                    println!("LINKED  {}  ({})", link.name, link.relation);
+                }
+                for candidate in &report.candidates {
+                    if candidate.definitive && *apply {
+                        continue;
+                    }
+                    let status = if candidate.definitive {
+                        "definitive"
+                    } else {
+                        "proposal"
+                    };
+                    println!(
+                        "{status}  {}  ({})  — {}",
+                        candidate.target_name, candidate.relation, candidate.evidence
+                    );
+                }
+                if !*apply
+                    && report
+                        .candidates
+                        .iter()
+                        .any(|candidate| candidate.definitive)
+                {
+                    println!("Run `leb link scan --apply` to create the definitive links.");
+                }
             }
         }
         LinkAction::List { json, .. } => {
