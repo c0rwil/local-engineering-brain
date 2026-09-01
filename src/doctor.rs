@@ -118,6 +118,55 @@ impl DoctorReport {
             });
         }
 
+        checks.push(DoctorCheck {
+            name: "workspace_browser".to_owned(),
+            status: CheckStatus::Pass,
+            detail: if config.web.enabled {
+                format!(
+                    "served by the daemon at http://127.0.0.1:{} (loopback only)",
+                    config.web.port
+                )
+            } else {
+                "disabled ([web] enabled = false); `leb web` still works manually".to_owned()
+            },
+        });
+
+        checks.push(DoctorCheck {
+            name: "commit_watcher".to_owned(),
+            status: CheckStatus::Pass,
+            detail: if config.watch.enabled {
+                let origin = if config.watch.origin_poll_secs == 0 {
+                    "origin polling disabled".to_owned()
+                } else {
+                    format!("origin every {} s", config.watch.origin_poll_secs)
+                };
+                format!(
+                    "committed-HEAD refresh every {} s; {origin}",
+                    config.watch.local_poll_secs
+                )
+            } else {
+                "disabled ([watch] enabled = false); indexes refresh only on use".to_owned()
+            },
+        });
+
+        checks.push(DoctorCheck {
+            name: "vault_export".to_owned(),
+            status: CheckStatus::Pass,
+            detail: if config.vault.enabled {
+                format!(
+                    "Obsidian vault at {} (auto-refresh {})",
+                    config.vault.root.display(),
+                    if config.vault.auto_refresh {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                )
+            } else {
+                "disabled ([vault] enabled = false)".to_owned()
+            },
+        });
+
         Self { ok: false, checks }
     }
 
