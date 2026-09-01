@@ -85,6 +85,7 @@ fn project_dossier(
     let facts = registry
         .facts(project_id)?
         .into_iter()
+        .filter(|fact| !fact.key.starts_with("internal."))
         .map(|fact| (fact.key, fact.value, fact.note))
         .collect();
     let links = registry

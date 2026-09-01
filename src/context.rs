@@ -454,6 +454,7 @@ impl ContextCompiler {
     /// spends leftover budget; every section names its source repository and
     /// relation so the model can attribute cross-repo constraints. Returns
     /// the number of linked candidates considered.
+    #[allow(clippy::too_many_lines)]
     fn fill_linked_sections(
         &self,
         request: &ContextCompileRequest,
@@ -509,7 +510,12 @@ impl ContextCompiler {
                 context_safe(&link.name),
                 context_safe(&link.relation)
             );
-            for fact in registry.facts(&link.project_id)?.into_iter().take(5) {
+            for fact in registry
+                .facts(&link.project_id)?
+                .into_iter()
+                .filter(|fact| !fact.key.starts_with("internal."))
+                .take(5)
+            {
                 let _ = writeln!(
                     heading,
                     "- {}: {}",

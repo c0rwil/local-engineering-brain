@@ -174,7 +174,11 @@ impl VaultBuilder {
         let groups = self.module_groups(project_id)?;
         let edges = self.group_edges(project_id)?;
         let links = registry.links(project_id)?;
-        let facts = registry.facts(project_id)?;
+        let facts = registry
+            .facts(project_id)?
+            .into_iter()
+            .filter(|fact| !fact.key.starts_with("internal."))
+            .collect::<Vec<_>>();
         let memory_count = self.validated_memory_count(project_id)?;
 
         let mut out = String::new();
