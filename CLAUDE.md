@@ -20,6 +20,8 @@ path, ever.
 | Index a repo | `leb index <path> --json` |
 | Compile context | `leb context "<query>" --path <repo> --budget N --json` |
 | Architecture facts (hosting, storage, role) | `leb fact set hosting.base_url api.example.com --path <repo>` / `leb fact list` — facts lead the stable prefix, feed hostname link inference, render in the vault |
+| Workspace encyclopedia (browser UI) | `leb web` → http://127.0.0.1:11436 — service map, facts, memories, activity, guide |
+| Architecture guide (LLM synthesis) | `leb architect --claude` (opus via claude CLI) or `--model <m>` (local runtime); guide staleness tracked by dossier digest |
 | Link repos (cross-repo context) | `leb link add <target> --path <repo> --relation uses` / `leb link list` / auto-discovery: `leb link scan [--apply]` (definitive manifest deps auto-link on every `leb index`) |
 
 Tests are hermetic: no network, no live model, no pre-existing daemon needed.
