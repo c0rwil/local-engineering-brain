@@ -1279,19 +1279,21 @@ mod tests {
         .expect("command");
         assert!(result.status.success());
         let pid = fs::read_to_string(temp.path().join("child.pid")).expect("pid");
-        // SIGKILL is delivered before run_command returns, but on Linux the
-        // orphaned child stays a zombie (kill -0 still succeeds) until the
-        // reaper collects it. Poll for eventual disappearance instead of
-        // asserting instantaneously.
+        // SIGKILL is delivered before run_command returns, but the orphaned
+        // child may linger as a zombie until whatever it was reparented to
+        // collects it — CI runners can act as slow subreapers, so `kill -0`
+        // (which succeeds on zombies) is the wrong probe. A process that is
+        // gone OR in state Z is terminated for our purposes; only a live,
+        // runnable process is a cleanup failure.
         let mut alive = true;
         for _ in 0..100 {
-            alive = Command::new("/bin/kill")
-                .args(["-0", pid.trim()])
-                .stdout(Stdio::null())
+            let output = Command::new("ps")
+                .args(["-o", "state=", "-p", pid.trim()])
                 .stderr(Stdio::null())
-                .status()
-                .expect("kill probe")
-                .success();
+                .output()
+                .expect("ps probe");
+            let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            alive = output.status.success() && !state.is_empty() && !state.starts_with('Z');
             if !alive {
                 break;
             }
