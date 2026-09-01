@@ -187,6 +187,34 @@
   .modsyms li { overflow-wrap: anywhere; }
   .modsyms .k { font-family: var(--mono); font-size: .72rem; color: var(--accent); margin-right: .3rem; }
   .local-toggle { color: var(--muted); font-size: .78rem; display: inline-flex; gap: .3rem; align-items: center; }
+  .view-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: .55rem; overflow: hidden; }
+  .view-toggle button {
+    background: var(--panel); color: var(--muted); border: none; border-radius: 0;
+    padding: .32rem .7rem; font-size: .8rem;
+  }
+  .view-toggle button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  .card h3 button {
+    all: unset; cursor: pointer; color: inherit; font: inherit;
+  }
+  .card h3 button:hover { color: var(--accent); text-decoration: underline; }
+  .card h3 button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: .2rem; }
+  dialog#svc-modal {
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 1rem;
+    width: min(62rem, calc(100vw - 2rem)); max-height: calc(100vh - 3rem);
+    padding: 1.3rem 1.6rem; overscroll-behavior: contain;
+  }
+  dialog#svc-modal::backdrop { background: rgb(0 0 0 / .55); }
+  #svc-modal .modal-head { display: flex; align-items: baseline; gap: .8rem; }
+  #svc-modal .modal-head h3 { margin: 0; font-size: 1.15rem; }
+  #svc-modal .modal-head .host { color: var(--muted); font-family: var(--mono); font-size: .82rem; }
+  #svc-modal .modal-head form { margin-left: auto; }
+  #svc-modal section h4 {
+    font-size: .74rem; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin: 1.1rem 0 .4rem;
+  }
+  #svc-modal .guide { font-size: .9rem; }
+  #svc-modal .guide code { font-family: var(--mono); background: var(--chip); border-radius: .3rem; padding: .05rem .3rem; font-size: .84em; }
   .local-toggle input { accent-color: var(--accent); }
   .modmap { overflow-x: auto; margin-top: .5rem; }
   .modmap svg { display: block; }
@@ -217,6 +245,10 @@
 <header>
   <h1>LEB<span class="dot">·</span>Workspace</h1>
   <span class="sub" id="summary">Loading…</span>
+  <div class="view-toggle" role="group" aria-label="Graph view source">
+    <button type="button" id="view-origin" aria-pressed="true">origin/main</button>
+    <button type="button" id="view-local" aria-pressed="false">Local Checkout</button>
+  </div>
   <div class="search">
     <label for="q" class="sub">Filter</label>
     <input id="q" type="search" name="workspace-filter" autocomplete="off" spellcheck="false"
@@ -249,11 +281,19 @@
   <h2 id="architecture">Architecture Guide</h2>
   <div id="arch"><p class="empty">Loading…</p></div>
 </main>
+<dialog id="svc-modal" aria-labelledby="svc-modal-title">
+  <div class="modal-head">
+    <h3 id="svc-modal-title"></h3>
+    <span class="host" translate="no"></span>
+    <form method="dialog"><button class="quiet" aria-label="Close service details">Close</button></form>
+  </div>
+  <div class="modal-body"></div>
+</dialog>
 <footer>Local Engineering Brain — local-only, evidence-grounded. Regenerate the guide with <code>leb architect</code>.</footer>
 
 <script>
 "use strict";
-const state = { data: null, q: "", selected: "" };
+const state = { data: null, q: "", selected: "", view: "origin", guideMd: "" };
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
@@ -264,14 +304,38 @@ function readUrl() {
   const p = new URLSearchParams(location.search);
   state.q = p.get("q") || "";
   state.selected = p.get("p") || "";
+  state.view = p.get("view") === "local" ? "local" : "origin";
   const q = document.getElementById("q");
   if (q.value !== state.q) q.value = state.q;
+  syncViewButtons();
+}
+
+function syncViewButtons() {
+  document.getElementById("view-origin").setAttribute("aria-pressed", String(state.view === "origin"));
+  document.getElementById("view-local").setAttribute("aria-pressed", String(state.view === "local"));
+}
+
+function setView(view) {
+  state.view = view;
+  syncViewButtons();
+  moduleMapCache.clear();
+  writeUrl();
+  if (state.data) renderCards();
+}
+
+/// The project id whose GRAPH backs the current view (facts, links, and
+/// memories always come from the real project).
+function graphIdOf(project) {
+  return state.view === "origin" && project.origin_view
+    ? project.origin_view.project_id
+    : project.id;
 }
 
 function writeUrl() {
   const p = new URLSearchParams();
   if (state.q) p.set("q", state.q);
   if (state.selected) p.set("p", state.selected);
+  if (state.view === "local") p.set("view", "local");
   const qs = p.toString();
   history.replaceState(null, "", qs ? "?" + qs : location.pathname);
 }
@@ -384,6 +448,19 @@ function memoryRows(project) {
   </details>`;
 }
 
+function viewMeta(project) {
+  if (state.view === "origin") {
+    const v = project.origin_view;
+    if (!v) return `no origin/main snapshot yet — Refresh from origin/main below`;
+    return `origin/main · ${v.nodes.toLocaleString()} graph nodes
+      ${v.indexed_head ? ` · <code translate="no">${esc(v.indexed_head.slice(0, 10))}</code>` : ""}
+      ${v.indexed_at_ms ? ` · indexed ${esc(ago(v.indexed_at_ms))}` : ""}`;
+  }
+  return `local checkout · ${project.nodes.toLocaleString()} graph nodes
+    ${project.indexed_head ? ` · <code translate="no">${esc(project.indexed_head.slice(0, 10))}</code>` : ""}
+    ${project.indexed_at_ms ? ` · indexed ${esc(ago(project.indexed_at_ms))}` : " · never indexed"}`;
+}
+
 function factRows(project) {
   if (!project.facts.length) return `<p class="empty">No facts recorded yet.</p>`;
   return `<dl class="facts">` + project.facts.map(f =>
@@ -402,10 +479,9 @@ function linkRows(project) {
 function card(project) {
   const selected = project.id === state.selected ? " selected" : "";
   return `<article class="card${selected}" id="card-${esc(project.id)}" aria-labelledby="h-${esc(project.id)}">
-    <h3 id="h-${esc(project.id)}">${esc(project.name)}</h3>
-    <p class="meta">${project.nodes.toLocaleString()} graph nodes
-      ${project.indexed_head ? ` · <code translate="no">${esc(project.indexed_head.slice(0, 10))}</code>` : ""}
-      ${project.indexed_at_ms ? ` · indexed ${esc(ago(project.indexed_at_ms))}` : " · never indexed"}</p>
+    <h3 id="h-${esc(project.id)}"><button type="button" class="open-svc" data-id="${esc(project.id)}"
+      aria-haspopup="dialog">${esc(project.name)}</button></h3>
+    <p class="meta">${viewMeta(project)}</p>
     ${factRows(project)}
     ${linkRows(project)}
     ${memoryRows(project)}
@@ -469,12 +545,16 @@ function renderCards() {
     det.addEventListener("toggle", () => {
       if (det.open && !det.dataset.loaded) {
         det.dataset.loaded = "1";
-        loadModuleMap(det.dataset.id, det.querySelector(".modmap"));
+        const project = state.data.projects.find(p => p.id === det.dataset.id);
+        loadModuleMap(graphIdOf(project), det.querySelector(".modmap"));
       }
     }, { once: false });
   }
   for (const btn of el.querySelectorAll("button.reindex")) {
     btn.addEventListener("click", onReindex);
+  }
+  for (const btn of el.querySelectorAll("button.open-svc")) {
+    btn.addEventListener("click", () => openServiceModal(btn.dataset.id));
   }
   const total = state.data.projects.length;
   const links = state.data.projects.reduce((n, p) => n + p.links.length, 0);
@@ -671,6 +751,45 @@ function renderModuleMap(map) {
   return out + "</svg>";
 }
 
+/* ---- per-service detail modal ---- */
+function guideSectionFor(name) {
+  if (!state.guideMd) return "";
+  const clean = state.guideMd.replace(/<!--[\s\S]*?-->/g, "");
+  const lines = clean.split("\n");
+  const start = lines.findIndex(l => /^###\s/.test(l) && l.toLowerCase().includes(name.toLowerCase()));
+  if (start < 0) return "";
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##/.test(lines[i])) { end = i; break; }
+  }
+  return lines.slice(start + 1, end).join("\n").trim();
+}
+
+function openServiceModal(projectId) {
+  const project = state.data.projects.find(p => p.id === projectId);
+  if (!project) return;
+  state.selected = projectId; writeUrl();
+  const modal = document.getElementById("svc-modal");
+  modal.querySelector("#svc-modal-title").textContent = project.name;
+  modal.querySelector(".host").textContent = hostOf(project);
+  const guide = guideSectionFor(project.name);
+  const view = state.view === "origin" && project.origin_view ? "origin/main" : "local checkout";
+  modal.querySelector(".modal-body").innerHTML = `
+    <p class="meta">${viewMeta(project)}</p>
+    ${guide ? `<section><h4>From the Architecture Guide</h4><div class="guide">${markdown(guide)}</div></section>` : ""}
+    ${project.facts.length ? `<section><h4>Facts</h4>${factRows(project)}</section>` : ""}
+    ${project.links.length ? `<section><h4>Linked Repositories</h4>${linkRows(project)}</section>` : ""}
+    ${project.memories.length ? `<section><h4>Validated Memories</h4>
+      <ul class="memories">${project.memories.map(m =>
+        `<li><span class="kind">${esc(m.kind)}</span>${esc(m.claim)}</li>`).join("")}</ul></section>` : ""}
+    <section><h4>Module Map (${esc(view)})</h4>
+      <div class="modmap" role="img" aria-label="Module dependency diagram for ${esc(project.name)}">Loading…</div>
+    </section>`;
+  modal.showModal();
+  loadModuleMap(graphIdOf(project), modal.querySelector(".modmap"));
+  modal.addEventListener("close", () => { state.selected = ""; writeUrl(); }, { once: true });
+}
+
 /* ---- minimal markdown for the architecture guide ---- */
 function markdown(md) {
   const lines = md.replace(/<!--[\s\S]*?-->/g, "").split("\n");
@@ -702,6 +821,7 @@ async function loadArchitecture() {
       el.innerHTML = `<p class="empty">No guide yet. Generate one with <code>leb architect --claude</code>.</p>`;
       return;
     }
+    state.guideMd = doc.content;
     const badge = doc.stale === true
       ? `<span class="stale-badge">Workspace changed since this was written — run <code>leb architect --claude</code></span>`
       : doc.stale === false
@@ -745,8 +865,10 @@ document.getElementById("q").addEventListener("input", event => {
 });
 
 readUrl();
+document.getElementById("view-origin").addEventListener("click", () => setView("origin"));
+document.getElementById("view-local").addEventListener("click", () => setView("local"));
 refresh().then(() => {
-  if (state.selected) document.getElementById("card-" + state.selected)?.scrollIntoView();
+  if (state.selected) openServiceModal(state.selected);
 }).catch(error => {
   document.getElementById("cards").innerHTML =
     `<p class="error">Could not reach the LEB daemon: ${esc(error.message)}. Start it with any <code>leb</code> command, then reload.</p>`;

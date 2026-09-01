@@ -142,7 +142,9 @@ impl VaultBuilder {
     pub fn build_all(&self) -> Result<VaultReport> {
         let ids = self.database.with_reader(|connection| {
             let mut statement = connection.prepare(
-                "SELECT id FROM projects WHERE tombstoned_at_ms IS NULL ORDER BY name, id",
+                "SELECT id FROM projects p WHERE p.tombstoned_at_ms IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id AND pf.key = 'internal.view_of')
+                 ORDER BY p.name, p.id",
             )?;
             let rows = statement
                 .query_map([], |row| row.get::<_, String>(0))?
@@ -325,8 +327,9 @@ impl VaultBuilder {
     fn render_workspace(&self, registry: &ProjectRegistry) -> Result<String> {
         let projects = self.database.with_reader(|connection| {
             let mut statement = connection.prepare(
-                "SELECT id, name FROM projects WHERE tombstoned_at_ms IS NULL
-                 ORDER BY name, id",
+                "SELECT id, name FROM projects p WHERE p.tombstoned_at_ms IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id AND pf.key = 'internal.view_of')
+                 ORDER BY p.name, p.id",
             )?;
             let rows = statement
                 .query_map([], |row| {

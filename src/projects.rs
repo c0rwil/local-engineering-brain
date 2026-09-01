@@ -465,6 +465,25 @@ impl ProjectRegistry {
         })
     }
 
+    /// Whether this project is a derived view (an origin/main shadow) of
+    /// another project, marked by the internal `internal.view_of` fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors.
+    pub fn is_view_project(&self, project_id: &ProjectId) -> Result<bool> {
+        self.database.with_reader(|connection| {
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM project_facts
+                     WHERE project_id = ?1 AND key = 'internal.view_of')",
+                    [project_id.as_str()],
+                    |row| row.get(0),
+                )
+                .map_err(Error::from)
+        })
+    }
+
     /// Return a project's recorded checkout paths, most recently observed
     /// first. Paths may no longer exist; callers must check.
     ///

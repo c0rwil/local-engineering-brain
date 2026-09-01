@@ -128,8 +128,10 @@ fn known_projects(
 ) -> Result<Vec<KnownProject>> {
     let rows = database.with_reader(|connection| {
         let mut statement = connection.prepare(
-            "SELECT id, name, canonical_remote FROM projects
-             WHERE tombstoned_at_ms IS NULL ORDER BY name, id",
+            "SELECT id, name, canonical_remote FROM projects p
+             WHERE p.tombstoned_at_ms IS NULL
+               AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id AND pf.key = 'internal.view_of')
+             ORDER BY p.name, p.id",
         )?;
         let rows = statement
             .query_map([], |row| {

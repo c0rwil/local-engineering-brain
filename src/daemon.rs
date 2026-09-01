@@ -99,6 +99,7 @@ const API_WORKSPACE: &str = "/api/v1/workspace";
 const API_ACTIVITY: &str = "/api/v1/workspace/activity";
 const API_MODULE_MAP: &str = "/api/v1/projects/module-map";
 const API_MODULE_SYMBOLS: &str = "/api/v1/projects/module-symbols";
+const API_ORIGIN_REFRESH: &str = "/api/v1/projects/origin-refresh";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -326,6 +327,14 @@ pub struct MemorySummary {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OriginViewInfo {
+    pub project_id: ProjectId,
+    pub indexed_head: Option<String>,
+    pub indexed_at_ms: Option<i64>,
+    pub nodes: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WorkspaceProject {
     pub id: ProjectId,
     pub name: String,
@@ -337,6 +346,8 @@ pub struct WorkspaceProject {
     pub nodes: i64,
     pub indexed_head: Option<String>,
     pub indexed_at_ms: Option<i64>,
+    /// The shared-truth (origin/main) snapshot, when one has been indexed.
+    pub origin_view: Option<OriginViewInfo>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -354,6 +365,16 @@ pub struct WorkspaceSnapshot {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ModuleMapRequest {
     pub project_id: ProjectId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OriginRefreshRequest {
+    pub project_id: ProjectId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OriginRefreshResponse {
+    pub reference: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1115,6 +1136,19 @@ impl DaemonClient {
         .await
     }
 
+    /// Refresh a project's shared-truth (origin/main) view.
+    ///
+    /// # Errors
+    ///
+    /// Returns git, transport, or storage errors.
+    pub async fn origin_refresh(
+        &self,
+        request: &OriginRefreshRequest,
+    ) -> Result<OriginRefreshResponse> {
+        self.request(hyper::Method::POST, API_ORIGIN_REFRESH, Some(request))
+            .await
+    }
+
     /// List a module group's defined symbols and the memories anchored there.
     ///
     /// # Errors
@@ -1462,6 +1496,7 @@ where
         .route(API_ACTIVITY, get(workspace_activity))
         .route(API_MODULE_MAP, post(project_module_map))
         .route(API_MODULE_SYMBOLS, post(project_module_symbols))
+        .route(API_ORIGIN_REFRESH, post(origin_refresh_handler))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -1519,6 +1554,24 @@ async fn start_job_system(
     tokio::task::spawn_blocking(move || recovery.wait())
         .await
         .map_err(|error| Error::Daemon(format!("job recovery task failed: {error}")))??;
+
+    if config.watch.enabled {
+        let state_dir = config
+            .storage
+            .db_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("worktrees");
+        let origin_poll = (config.watch.origin_poll_secs > 0)
+            .then(|| std::time::Duration::from_secs(config.watch.origin_poll_secs));
+        tokio::spawn(watch_loop(
+            config.daemon.socket_path.clone(),
+            state.database.clone(),
+            state_dir,
+            std::time::Duration::from_secs(config.watch.local_poll_secs.max(5)),
+            origin_poll,
+        ));
+    }
 
     // The workspace browser rides inside the daemon: loopback-only, and a
     // busy port degrades to a warning instead of failing the daemon.
@@ -1925,10 +1978,15 @@ async fn index_project(
     if let Some(cache) = &state.world_cache {
         cache.bump(&resolved.project.id);
     }
+    let is_view_project = ProjectRegistry::new(state.database.clone())
+        .is_view_project(&resolved.project.id)
+        .unwrap_or(false);
     // Auto-link discovery: definitive manifest signals (path deps,
     // submodules) auto-apply with evidence in the note; name matches are
-    // proposals only, surfaced by `leb link scan`.
-    if state.config.links.auto_scan {
+    // proposals only, surfaced by `leb link scan`. Shadow origin-views are
+    // documentation snapshots, not real projects — they never link or
+    // export a vault folder of their own.
+    if state.config.links.auto_scan && !is_view_project {
         let database = state.database.clone();
         let project_id = resolved.project.id.clone();
         let root = resolved.root.clone();
@@ -2290,6 +2348,7 @@ async fn list_project_links(
     Ok(Json(links))
 }
 
+#[allow(clippy::too_many_lines)]
 async fn workspace_snapshot(
     State(state): State<DaemonState>,
 ) -> std::result::Result<Json<WorkspaceSnapshot>, ApiError> {
@@ -2311,6 +2370,7 @@ async fn workspace_snapshot(
                           WHERE s.project_id = p.id
                           ORDER BY s.completed_at_ms DESC LIMIT 1)
                  FROM projects p WHERE p.tombstoned_at_ms IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id AND pf.key = 'internal.view_of')
                  ORDER BY p.name, p.id",
             )?;
             let rows = statement
@@ -2356,9 +2416,51 @@ async fn workspace_snapshot(
                     .collect::<std::result::Result<Vec<_>, _>>()?;
                 Ok(rows)
             })?;
+            let facts = registry.facts(&project_id)?;
+            let origin_view = facts
+                .iter()
+                .find(|fact| fact.key == "internal.origin_view")
+                .and_then(|fact| crate::ids::ProjectId::parse(&fact.value).ok())
+                .and_then(|shadow_id| {
+                    database
+                        .with_reader(|connection| {
+                            use rusqlite::OptionalExtension as _;
+                            let scan = connection
+                                .query_row(
+                                    "SELECT head, completed_at_ms FROM structural_scans
+                                     WHERE project_id = ?1
+                                     ORDER BY completed_at_ms DESC LIMIT 1",
+                                    [shadow_id.as_str()],
+                                    |row| {
+                                        Ok((
+                                            row.get::<_, Option<String>>(0)?,
+                                            row.get::<_, Option<i64>>(1)?,
+                                        ))
+                                    },
+                                )
+                                .optional()?;
+                            let nodes = connection.query_row(
+                                "SELECT COUNT(*) FROM nodes
+                                 WHERE project_id = ?1 AND tombstoned_at_ms IS NULL",
+                                [shadow_id.as_str()],
+                                |row| row.get::<_, i64>(0),
+                            )?;
+                            Ok(scan.map(|(indexed_head, indexed_at_ms)| OriginViewInfo {
+                                project_id: shadow_id.clone(),
+                                indexed_head,
+                                indexed_at_ms,
+                                nodes,
+                            }))
+                        })
+                        .ok()
+                        .flatten()
+                });
             projects.push(WorkspaceProject {
-                facts: registry.facts(&project_id)?,
                 links: registry.links(&project_id)?,
+                facts: facts
+                    .into_iter()
+                    .filter(|fact| !fact.key.starts_with("internal."))
+                    .collect(),
                 id: project_id,
                 name,
                 primary_path,
@@ -2367,6 +2469,7 @@ async fn workspace_snapshot(
                 nodes,
                 indexed_head,
                 indexed_at_ms,
+                origin_view,
             });
         }
         Ok(WorkspaceSnapshot { projects })
@@ -2388,6 +2491,50 @@ async fn project_module_map(
     })
     .await?;
     Ok(Json(map))
+}
+
+async fn origin_refresh_handler(
+    State(state): State<DaemonState>,
+    Json(request): Json<OriginRefreshRequest>,
+) -> std::result::Result<Json<OriginRefreshResponse>, ApiError> {
+    let registry = ProjectRegistry::new(state.database.clone());
+    let project = registry
+        .find_by_id(&request.project_id)
+        .map_err(|error| ApiError::from_core(&error))?
+        .ok_or_else(|| {
+            ApiError::from_core(&Error::Config(format!(
+                "unknown project `{}`",
+                request.project_id
+            )))
+        })?;
+    let repo = registry
+        .alias_paths(&request.project_id)
+        .map_err(|error| ApiError::from_core(&error))?
+        .into_iter()
+        .find(|path| path.is_dir())
+        .ok_or_else(|| {
+            ApiError::from_core(&Error::Config(
+                "this project has no known local checkout".to_owned(),
+            ))
+        })?;
+    let state_dir = state
+        .config
+        .storage
+        .db_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("worktrees");
+    let reference = refresh_origin_view(
+        &state.config.daemon.socket_path,
+        &state.database,
+        &state_dir,
+        &request.project_id,
+        &project.name,
+        &repo,
+    )
+    .await
+    .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(OriginRefreshResponse { reference }))
 }
 
 async fn project_module_symbols(
@@ -3213,6 +3360,150 @@ fn bind_socket(path: &Path, max_connections: usize) -> Result<(BoundedUnixListen
         },
         guard,
     ))
+}
+
+/// Refresh (or create) a project's shared-truth origin/main view: fetch,
+/// materialize a throwaway worktree, pin a SHADOW project identity into it,
+/// and index that. The developer's checkout and the project's own (local)
+/// graph are untouched — the two views never overwrite each other.
+///
+/// # Errors
+///
+/// Returns git, transport, or storage errors.
+pub async fn refresh_origin_view(
+    socket_path: &Path,
+    database: &Database,
+    state_dir: &Path,
+    project_id: &ProjectId,
+    project_name: &str,
+    repo_path: &Path,
+) -> Result<String> {
+    let registry = ProjectRegistry::new(database.clone());
+    let existing = registry
+        .facts(project_id)?
+        .into_iter()
+        .find(|fact| fact.key == "internal.origin_view")
+        .and_then(|fact| ProjectId::parse(&fact.value).ok());
+    let shadow_id = existing.clone().unwrap_or_else(ProjectId::new);
+
+    let repo = repo_path.to_path_buf();
+    let worktrees = state_dir.to_path_buf();
+    let worktree = tokio::task::spawn_blocking(move || {
+        crate::gitref::checkout_origin_default(&repo, &worktrees)
+    })
+    .await
+    .map_err(|error| Error::Daemon(format!("worktree task: {error}")))??;
+    let reference = worktree.reference.clone();
+    let metadata_dir = worktree.path().join(".leb");
+    std::fs::create_dir_all(&metadata_dir)
+        .map_err(|error| Error::Daemon(format!("shadow metadata dir: {error}")))?;
+    std::fs::write(
+        metadata_dir.join("project.toml"),
+        format!("project_id = \"{shadow_id}\"\nname = \"{project_name}@origin\"\n"),
+    )
+    .map_err(|error| Error::Daemon(format!("shadow metadata: {error}")))?;
+
+    let client = DaemonClient::new(socket_path, std::time::Duration::from_secs(300));
+    client.refresh_index(worktree.path()).await?;
+    if existing.is_none() {
+        client
+            .set_fact(&FactSetRequest {
+                project_id: project_id.clone(),
+                key: "internal.origin_view".to_owned(),
+                value: shadow_id.to_string(),
+                note: Some("shared-truth view marker (managed by LEB)".to_owned()),
+            })
+            .await?;
+        client
+            .set_fact(&FactSetRequest {
+                project_id: shadow_id.clone(),
+                key: "internal.view_of".to_owned(),
+                value: project_id.to_string(),
+                note: Some("origin/main snapshot of the real project".to_owned()),
+            })
+            .await?;
+    }
+    drop(worktree);
+    Ok(reference)
+}
+
+/// Commit-driven auto refresh. Compares committed HEADs only — uncommitted
+/// edits never trigger a scan — and, on a slower cadence, fetches origin to
+/// keep the shared-truth views current.
+async fn watch_loop(
+    socket_path: PathBuf,
+    database: Database,
+    state_dir: PathBuf,
+    local_poll: std::time::Duration,
+    origin_poll: Option<std::time::Duration>,
+) {
+    let client = DaemonClient::new(&socket_path, std::time::Duration::from_secs(300));
+    let mut last_origin = std::time::Instant::now();
+    loop {
+        tokio::time::sleep(local_poll).await;
+        let Ok(snapshot) = client.workspace().await else {
+            continue;
+        };
+        for project in &snapshot.projects {
+            let Some(path) = project.primary_path.as_deref() else {
+                continue;
+            };
+            let repo = PathBuf::from(path);
+            let repo_probe = repo.clone();
+            let Ok(Ok(head)) =
+                tokio::task::spawn_blocking(move || crate::gitref::head_commit(&repo_probe)).await
+            else {
+                continue;
+            };
+            if project.indexed_head.as_deref() != Some(head.as_str()) {
+                eprintln!(
+                    "watch: {} committed HEAD moved to {} - refreshing index",
+                    project.name,
+                    &head[..head.len().min(10)]
+                );
+                let _ = client.refresh_index(&repo).await;
+            }
+        }
+        if let Some(origin_poll) = origin_poll {
+            if last_origin.elapsed() >= origin_poll {
+                last_origin = std::time::Instant::now();
+                for project in &snapshot.projects {
+                    let (Some(path), Some(view)) = (
+                        project.primary_path.as_deref(),
+                        project.origin_view.as_ref(),
+                    ) else {
+                        continue;
+                    };
+                    let repo = PathBuf::from(path);
+                    let probe = repo.clone();
+                    let Ok(Ok(remote)) = tokio::task::spawn_blocking(move || {
+                        let _ = crate::gitref::fetch_origin(&probe);
+                        crate::gitref::origin_commit(&probe)
+                    })
+                    .await
+                    else {
+                        continue;
+                    };
+                    if view.indexed_head.as_deref() != Some(remote.as_str()) {
+                        eprintln!(
+                            "watch: {} origin default moved to {} - refreshing shared-truth view",
+                            project.name,
+                            &remote[..remote.len().min(10)]
+                        );
+                        let _ = refresh_origin_view(
+                            &socket_path,
+                            &database,
+                            &state_dir,
+                            &project.id,
+                            &project.name,
+                            &repo,
+                        )
+                        .await;
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

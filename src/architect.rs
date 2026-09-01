@@ -55,7 +55,9 @@ pub fn build_dossier(database: &Database) -> Result<String> {
     let registry = ProjectRegistry::new(database.clone());
     let projects = database.with_reader(|connection| {
         let mut statement = connection.prepare(
-            "SELECT id, name FROM projects WHERE tombstoned_at_ms IS NULL ORDER BY name, id",
+            "SELECT id, name FROM projects p WHERE p.tombstoned_at_ms IS NULL
+               AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id AND pf.key = 'internal.view_of')
+             ORDER BY p.name, p.id",
         )?;
         let rows = statement
             .query_map([], |row| {

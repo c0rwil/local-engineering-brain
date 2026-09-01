@@ -29,6 +29,33 @@ pub struct Config {
     pub links: LinksConfig,
     pub architect: ArchitectConfig,
     pub web: WebConfig,
+    pub watch: WatchConfig,
+}
+
+/// Automatic commit-driven refresh (`src/daemon.rs` watcher task).
+/// Uncommitted edits never trigger anything: the watcher compares committed
+/// HEADs only, so the encyclopedia follows commits and branch switches.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WatchConfig {
+    /// Run the watcher inside the daemon.
+    pub enabled: bool,
+    /// How often to compare each checkout's committed HEAD with its last
+    /// indexed head (cheap: one `git rev-parse` per repo).
+    pub local_poll_secs: u64,
+    /// How often to fetch `origin` and refresh the shared-truth view when
+    /// the remote default branch has advanced. 0 disables origin polling.
+    pub origin_poll_secs: u64,
+}
+
+impl Default for WatchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            local_poll_secs: 30,
+            origin_poll_secs: 900,
+        }
+    }
 }
 
 /// The embedded workspace browser (`src/web.rs`), served by the daemon so

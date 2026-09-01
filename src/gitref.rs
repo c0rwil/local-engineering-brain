@@ -60,6 +60,31 @@ fn git(repo: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
+/// The checkout's committed HEAD (uncommitted changes do not move it).
+///
+/// # Errors
+///
+/// Returns an error when the path is not a git repository.
+pub fn head_commit(repo: &Path) -> Result<String> {
+    git(repo, &["rev-parse", "HEAD"])
+}
+
+/// The commit currently at the remote default branch ref, WITHOUT fetching.
+///
+/// # Errors
+///
+/// Returns an error when no origin default branch is known.
+pub fn origin_commit(repo: &Path) -> Result<String> {
+    let reference = origin_default_ref(repo)?;
+    git(repo, &["rev-parse", &reference])
+}
+
+/// Fetch `origin` quietly; failures (offline) are reported, not fatal.
+#[must_use]
+pub fn fetch_origin(repo: &Path) -> bool {
+    git(repo, &["fetch", "--quiet", "origin"]).is_ok()
+}
+
 /// The remote default branch ref (`origin/main`, `origin/master`, …).
 ///
 /// # Errors
