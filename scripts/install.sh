@@ -25,7 +25,7 @@ fi
 trap 'rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT INT TERM
 
 SOURCE_HASH=$(
-  find "${PROJECT_ROOT}/src" "${PROJECT_ROOT}/scripts" \
+  find "${PROJECT_ROOT}/src" "${PROJECT_ROOT}/scripts" "${PROJECT_ROOT}/assets" \
     "${PROJECT_ROOT}/Cargo.toml" "${PROJECT_ROOT}/Cargo.lock" \
     -type f -print0 \
     | sort -z \
