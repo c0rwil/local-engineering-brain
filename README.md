@@ -225,6 +225,11 @@ model, runtime, and harness with zero injection).
 - **Compact injection:** the deterministic compact rendering held success
   parity at 33% fewer injected bytes on frontier A/B; it stays opt-in
   until a fidelity-family A/B (2026-09-01).
+- **Learning the engineer:** preferences distilled purely from episodes
+  (fail-then-pass verification + agreeing attempt summaries; no operator
+  claim, no LLM) pass the same promotion gates and reproduce the seeded
+  effect: distilled-brain 4/4 vs control 3/4 at 41% lower wall on the
+  convention probes (2026-09-02).
 - **Real-repository recall:** seeded a production Rust backend's 11
   operator-guide gotchas through the real learning pathway and probed with
   natural, non-verbatim developer questions: 11/11 recall@1, fully local

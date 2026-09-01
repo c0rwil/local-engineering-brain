@@ -52,8 +52,9 @@ Launchers: claude-mtplx (Speed), claude-mtplx-quality (Q8). MTPLX on
 
 ## Open threads
 
-1. Preference-distillation benchmark (can LEB *learn* conventions from
-   episodes rather than being told) — last big unproven spec axis.
+1. ~~Preference distillation~~ DONE 2026-09-02: deterministic
+   fail-then-pass mining, unit-tested, benchmarked (distilled-brain 4/4
+   vs off 3/4, −41% wall; docs/perf-evidence/2026-09-02).
 2. Route-overlap link proposals (served vs consumed paths) as a
    complement to hostname inference; LLM-assisted proposals could ride
    the same confirm-before-link pathway.
