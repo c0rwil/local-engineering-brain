@@ -180,7 +180,9 @@ pub struct ContextConfig {
     /// rendering (perf-evidence 2026-08-31). Disable for ablation.
     pub review_standards_section: bool,
     /// Render validated memories from the deterministic derived compact
-    /// projection. Disabled by default for an exact verbose-mode ablation.
+    /// projection. Default ON since 2026-09-01: success parity in both the
+    /// capability A/B (−33% injected bytes) and the fidelity-family gate
+    /// (6/6 vs 6/6); disable for a verbose-mode ablation.
     pub compact_injection: bool,
     /// Also inject relevance-gated memories from explicitly linked projects
     /// (`leb link add`), each under a heading naming the source repository.
@@ -340,7 +342,7 @@ impl Default for ContextConfig {
             semantic_retrieval: false,
             max_injected_memories: 0,
             review_standards_section: true,
-            compact_injection: false,
+            compact_injection: true,
             include_linked_projects: true,
         }
     }
@@ -895,19 +897,22 @@ mod tests {
     }
 
     #[test]
-    fn compact_injection_is_an_explicit_opt_in() {
-        assert!(!Config::default().context.compact_injection);
+    fn compact_injection_defaults_on_and_stays_ablatable() {
+        // Default ON since the 2026-09-01 A/B pair (capability parity at
+        // −33% bytes; fidelity-gate parity 6/6 vs 6/6). The verbose ablation
+        // must remain one flag away.
+        assert!(Config::default().context.compact_injection);
         let temp = TempDir::new().expect("temp dir");
-        let enabled = temp.path().join("compact.toml");
-        fs::write(&enabled, "[context]\ncompact_injection = true\n").expect("config");
+        let disabled = temp.path().join("compact.toml");
+        fs::write(&disabled, "[context]\ncompact_injection = false\n").expect("config");
         let config = Config::load_layers(
-            Some(&enabled),
+            Some(&disabled),
             None,
             &ConfigOverrides::default(),
             temp.path(),
         )
         .expect("compact injection is configurable");
-        assert!(config.context.compact_injection);
+        assert!(!config.context.compact_injection);
     }
 
     #[test]
