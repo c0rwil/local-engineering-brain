@@ -524,7 +524,14 @@ function renderCards() {
     .map(d => d.closest(".card")?.id).filter(Boolean));
   el.innerHTML = projects.length
     ? projects.map(card).join("")
-    : `<p class="empty">No projects match this filter.</p>`;
+    : state.data.projects.length
+      ? `<p class="empty">No projects match this filter.</p>`
+      : `<div id="onboard"><p><strong>No repositories registered yet.</strong></p>
+         <p>Index your first repo and this page fills itself in:</p>
+         <p><code>leb index ~/code/your-repo</code></p>
+         <p>Then link related repos (<code>leb link scan --apply</code> finds most of them),
+         record where services are hosted (<code>leb fact set hosting.base_url api.example.com</code>),
+         and reload.</p></div>`;
   for (const det of el.querySelectorAll("details.modmap-details")) {
     if (openMaps.has(det.dataset.id)) {
       det.open = true;

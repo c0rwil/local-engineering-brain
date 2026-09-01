@@ -176,6 +176,7 @@ impl ProjectRegistry {
     /// # Errors
     ///
     /// Returns an error for storage or metadata-persistence failures.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn resolve_observation(
         &self,
         observation: ProjectObservation,
@@ -260,12 +261,20 @@ impl ProjectRegistry {
             })?;
         }
 
-        let alias = root.to_string_lossy().into_owned();
-        if !self.project_has_alias(&project.id, &alias)? {
-            self.events.append(&DomainEvent::ProjectAliasAdded {
-                project_id: project.id.clone(),
-                path: alias,
-            })?;
+        // Derived views (origin/main shadows) live in throwaway worktrees:
+        // recording those paths would grow one dead alias per refresh, and a
+        // shadow is only ever addressed by id anyway.
+        let is_derived_view = metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.derived_view.unwrap_or(false));
+        if !is_derived_view {
+            let alias = root.to_string_lossy().into_owned();
+            if !self.project_has_alias(&project.id, &alias)? {
+                self.events.append(&DomainEvent::ProjectAliasAdded {
+                    project_id: project.id.clone(),
+                    path: alias,
+                })?;
+            }
         }
 
         let metadata_was_persisted = metadata.is_none();

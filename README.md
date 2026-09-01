@@ -10,6 +10,22 @@ retrieval, bounded context compilation, OpenAI/Anthropic proxying, MCP, CLI insp
 backup/export, and paired evaluation. The detailed contract is in
 [`LOCAL_ENGINEERING_BRAIN_SPEC.md`](LOCAL_ENGINEERING_BRAIN_SPEC.md).
 
+Beyond the core, LEB is a **living engineering encyclopedia** for multi-repo workspaces:
+
+- **Workspace browser** at `http://127.0.0.1:11436` whenever the daemon runs: an SVG service
+  map of repositories and their declared relations, clickable service pages (facts, links,
+  validated memories, per-module dependency diagrams), an activity feed from the event log,
+  and a synthesized architecture guide that flags itself when the workspace drifts past it.
+- **Two graph views that never overwrite each other**: documentation defaults to fetched
+  `origin/main` (indexed in throwaway worktrees — no checkout is ever touched), toggleable to
+  the local branch; agent-facing context always follows the local tree being edited.
+- **Commit-driven freshness**: a daemon watcher re-indexes on commits and branch switches
+  (never on uncommitted edits) and periodically refreshes the shared-truth views, so diagrams,
+  links, and the Obsidian vault export update without any manual step.
+- **Automatic cross-repo linking**: manifest path deps, submodules, and references to other
+  services' declared hostnames (`leb fact set hosting.base_url …`) create evidence-stamped
+  links; linked repos' validated knowledge then injects into each other's compiled context.
+
 ## Architecture
 
 ```text

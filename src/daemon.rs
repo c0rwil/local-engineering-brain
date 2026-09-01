@@ -3441,6 +3441,29 @@ async fn watch_loop(
 ) {
     let client = DaemonClient::new(&socket_path, std::time::Duration::from_secs(300));
     let mut last_origin = std::time::Instant::now();
+    // Crash hygiene: a refresh interrupted mid-flight leaves a dangling
+    // worktree directory plus stale worktree metadata in the source repos.
+    // Clean both once at startup; every live refresh cleans up after itself.
+    {
+        let cleanup_dir = state_dir.clone();
+        let cleanup_client = DaemonClient::new(&socket_path, std::time::Duration::from_secs(60));
+        let _ = std::fs::remove_dir_all(&cleanup_dir);
+        if let Ok(snapshot) = cleanup_client.workspace().await {
+            for project in &snapshot.projects {
+                if let Some(path) = project.primary_path.as_deref() {
+                    let repo = PathBuf::from(path);
+                    let _ = tokio::task::spawn_blocking(move || {
+                        std::process::Command::new("git")
+                            .arg("-C")
+                            .arg(&repo)
+                            .args(["worktree", "prune"])
+                            .output()
+                    })
+                    .await;
+                }
+            }
+        }
+    }
     loop {
         tokio::time::sleep(local_poll).await;
         let Ok(snapshot) = client.workspace().await else {

@@ -19,6 +19,8 @@ path, ever.
 | Diagnostics | `leb doctor --json` |
 | Index a repo | `leb index <path> --json` (local tree; add `--origin` for fetched origin/main via throwaway worktree) |
 | Compile context | `leb context "<query>" --path <repo> --budget N --json` |
+| Auto-freshness | daemon watcher re-indexes on commits/branch switches (`[watch]`, local 30s / origin 900s; committed HEADs only) |
+| Graph views | web defaults to fetched origin/main (shadow projects, `derived_view` metadata); local-checkout view via header toggle; agent context always local |
 | Architecture facts (hosting, storage, role) | `leb fact set hosting.base_url api.example.com --path <repo>` / `leb fact list` — facts lead the stable prefix, feed hostname link inference, render in the vault |
 | Workspace encyclopedia (browser UI) | always on at http://127.0.0.1:11436 while the daemon runs (`[web]` config); `leb web` for a custom port. Refresh buttons index origin/main by default |
 | Architecture guide (LLM synthesis) | `leb architect --claude` (opus via claude CLI) or `--model <m>` (local runtime); guide staleness tracked by dossier digest |
