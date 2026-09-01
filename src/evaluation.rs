@@ -576,9 +576,12 @@ fn reserve_loopback_port() -> Result<u16> {
 
 #[cfg(unix)]
 fn terminate_process_group(process_group: u32, graceful_wait: bool) {
+    // `--` is required for the negative (process-group) pid to be treated as
+    // an operand by procps kill on Linux; BSD kill accepts it too. Without it
+    // the group kill silently fails on Linux and background children survive.
     let group = format!("-{process_group}");
     let _ = Command::new("/bin/kill")
-        .args(["-TERM", &group])
+        .args(["-TERM", "--", &group])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
@@ -586,7 +589,7 @@ fn terminate_process_group(process_group: u32, graceful_wait: bool) {
         std::thread::sleep(Duration::from_millis(250));
     }
     let _ = Command::new("/bin/kill")
-        .args(["-KILL", &group])
+        .args(["-KILL", "--", &group])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
