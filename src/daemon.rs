@@ -98,6 +98,7 @@ const API_ARCHITECT_DOSSIER: &str = "/api/v1/architect/dossier";
 const API_WORKSPACE: &str = "/api/v1/workspace";
 const API_ACTIVITY: &str = "/api/v1/workspace/activity";
 const API_MODULE_MAP: &str = "/api/v1/projects/module-map";
+const API_MODULE_SYMBOLS: &str = "/api/v1/projects/module-symbols";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -353,6 +354,27 @@ pub struct WorkspaceSnapshot {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ModuleMapRequest {
     pub project_id: ProjectId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ModuleSymbolsRequest {
+    pub project_id: ProjectId,
+    /// A module-map group label (directory prefix like `src/auth`).
+    pub group: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ModuleSymbol {
+    pub kind: String,
+    pub label: String,
+    pub file_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ModuleSymbols {
+    pub symbols: Vec<ModuleSymbol>,
+    /// Validated memories anchored (via their linked nodes) inside this module.
+    pub memories: Vec<MemorySummary>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1093,6 +1115,16 @@ impl DaemonClient {
         .await
     }
 
+    /// List a module group's defined symbols and the memories anchored there.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn module_symbols(&self, request: &ModuleSymbolsRequest) -> Result<ModuleSymbols> {
+        self.request(hyper::Method::POST, API_MODULE_SYMBOLS, Some(request))
+            .await
+    }
+
     /// Compute a project's module map (expensive; seconds on large repos).
     ///
     /// # Errors
@@ -1429,6 +1461,7 @@ where
         .route(API_WORKSPACE, get(workspace_snapshot))
         .route(API_ACTIVITY, get(workspace_activity))
         .route(API_MODULE_MAP, post(project_module_map))
+        .route(API_MODULE_SYMBOLS, post(project_module_symbols))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -2343,6 +2376,73 @@ async fn project_module_map(
     })
     .await?;
     Ok(Json(map))
+}
+
+async fn project_module_symbols(
+    State(state): State<DaemonState>,
+    Json(request): Json<ModuleSymbolsRequest>,
+) -> std::result::Result<Json<ModuleSymbols>, ApiError> {
+    if request.group.len() > 200 || request.group.contains('%') || request.group.contains('_') {
+        // The group feeds a LIKE prefix; module labels never contain
+        // wildcards, so reject rather than escape.
+        return Err(ApiError::from_core(&Error::Config(
+            "invalid module group".to_owned(),
+        )));
+    }
+    let database = state.database.clone();
+    let result = run_blocking(&state, move || {
+        let prefix = format!("{}/%", request.group);
+        database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT kind, label, file_path FROM nodes
+                 WHERE project_id = ?1 AND tombstoned_at_ms IS NULL
+                   AND kind IN ('Function', 'Type', 'Interface', 'Module')
+                   AND file_path IS NOT NULL
+                   AND (file_path LIKE ?2 OR file_path = ?3)
+                 ORDER BY kind, label LIMIT 60",
+            )?;
+            let symbols = statement
+                .query_map(
+                    rusqlite::params![request.project_id.as_str(), prefix, request.group],
+                    |row| {
+                        Ok(ModuleSymbol {
+                            kind: row.get(0)?,
+                            label: row.get(1)?,
+                            file_path: row.get(2)?,
+                        })
+                    },
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let mut memory_statement = connection.prepare(
+                "SELECT DISTINCT m.id, m.kind, m.claim, m.confidence, m.tags_json
+                 FROM memories m
+                 JOIN memory_nodes mn ON mn.memory_id = m.id
+                 JOIN nodes n ON n.id = mn.node_id
+                 WHERE m.project_id = ?1 AND m.status = 'active'
+                   AND m.epistemic_state = 'validated'
+                   AND (n.file_path LIKE ?2 OR n.file_path = ?3)
+                 ORDER BY m.known_from_ms DESC LIMIT 20",
+            )?;
+            let memories = memory_statement
+                .query_map(
+                    rusqlite::params![request.project_id.as_str(), prefix, request.group],
+                    |row| {
+                        Ok(MemorySummary {
+                            id: row.get(0)?,
+                            kind: row.get(1)?,
+                            claim: row.get(2)?,
+                            confidence: row.get(3)?,
+                            tags: serde_json::from_str(&row.get::<_, String>(4)?)
+                                .unwrap_or_default(),
+                        })
+                    },
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(ModuleSymbols { symbols, memories })
+        })
+    })
+    .await?;
+    Ok(Json(result))
 }
 
 async fn workspace_activity(

@@ -174,6 +174,18 @@
     background: var(--chip); border: 1px solid var(--line); color: var(--accent);
     border-radius: .5rem; padding: .1rem .5rem; font-size: .74rem;
   }
+  #onboard {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: .8rem; padding: 1rem 1.3rem; font-size: .9rem;
+  }
+  #onboard ol { margin: .4rem 0 0; padding-left: 1.2rem; }
+  #onboard li { margin: .3rem 0; }
+  #onboard code { font-family: var(--mono); background: var(--chip); border-radius: .3rem; padding: .05rem .35rem; font-size: .82em; }
+  .modsyms { margin-top: .6rem; font-size: .82rem; }
+  .modsyms h4 { margin: .5rem 0 .2rem; font-size: .76rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .modsyms ul { margin: 0; padding-left: 1rem; }
+  .modsyms li { overflow-wrap: anywhere; }
+  .modsyms .k { font-family: var(--mono); font-size: .72rem; color: var(--accent); margin-right: .3rem; }
   .modmap { overflow-x: auto; margin-top: .5rem; }
   .modmap svg { display: block; }
   .modmap .m-node rect { fill: var(--chip); stroke: var(--line); rx: 6; }
@@ -210,6 +222,17 @@
   </div>
 </header>
 <main id="main">
+  <h2 id="start">Start Here</h2>
+  <div id="onboard">
+    <p>This page is generated from the live code graph — it cannot go stale. To work with the brain from a terminal or agent:</p>
+    <ol>
+      <li><strong>See what the brain knows about a task</strong>: <code>leb context "&lt;task&gt;" --path &lt;repo&gt;</code> prints the exact context it would inject, with a why for every item.</li>
+      <li><strong>Code with injected memory</strong>: launch <code>claude-mtplx</code> (Claude Code through the LEB proxy) — validated lessons, team standards, and linked-repo knowledge inject automatically. The <code>leb</code> MCP server adds recall, impact, and outcome tools.</li>
+      <li><strong>Teach it</strong>: after finishing real work, <code>leb learn "&lt;lesson&gt;" --task … --evidence …</code>; only evidence-backed lessons ever inject. Record deployment facts with <code>leb fact set</code>.</li>
+      <li><strong>Keep everything fresh</strong>: any <code>leb index</code> (or the Refresh Index buttons below) updates diagrams, links, and the Obsidian vault automatically.</li>
+    </ol>
+  </div>
+
   <h2 id="map">Service Map</h2>
   <div id="graph-panel" role="img" aria-label="Directed graph of repositories and their declared relationships">
     <svg id="graph" width="960" height="540" viewBox="0 0 960 540" aria-hidden="true"></svg>
@@ -402,7 +425,8 @@ function card(project) {
                  placeholder="production endpoint…"></div>
         <div class="full row">
           <button type="submit">Save Fact</button>
-          ${project.primary_path ? `<button type="button" class="quiet scan" data-id="${esc(project.id)}">Scan for Links</button>` : ""}
+          ${project.primary_path ? `<button type="button" class="quiet scan" data-id="${esc(project.id)}">Scan for Links</button>
+          <button type="button" class="quiet reindex" data-id="${esc(project.id)}">Refresh Index</button>` : ""}
           <span aria-live="polite" class="status"></span>
         </div>
       </form>
@@ -445,6 +469,9 @@ function renderCards() {
         loadModuleMap(det.dataset.id, det.querySelector(".modmap"));
       }
     }, { once: false });
+  }
+  for (const btn of el.querySelectorAll("button.reindex")) {
+    btn.addEventListener("click", onReindex);
   }
   const total = state.data.projects.length;
   const links = state.data.projects.reduce((n, p) => n + p.links.length, 0);
@@ -513,6 +540,26 @@ async function onScan(event) {
   }
 }
 
+async function onReindex(event) {
+  const button = event.currentTarget;
+  const status = button.closest("form")?.querySelector(".status");
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "Refreshing…";
+  try {
+    const result = await api("/api/reindex", { project_id: button.dataset.id });
+    moduleMapCache.delete(button.dataset.id);
+    if (status) status.innerHTML = `<span class="flash">Index refreshed (${result.nodes_written} nodes written).</span>`;
+    await refresh();
+    loadActivity();
+  } catch (error) {
+    if (status) status.innerHTML = `<span class="error">${esc(error.message)}</span>`;
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
 /* ---- per-service module map: layered left-to-right SVG ---- */
 const moduleMapCache = new Map();
 
@@ -524,7 +571,32 @@ async function loadModuleMap(projectId, el) {
       map = await api("/api/modulemap", { project_id: projectId });
       moduleMapCache.set(projectId, map);
     }
-    el.innerHTML = renderModuleMap(map);
+    el.innerHTML = renderModuleMap(map) + `<div class="modsyms" aria-live="polite"></div>`;
+    for (const node of el.querySelectorAll(".m-node")) {
+      node.style.cursor = "pointer";
+      node.setAttribute("tabindex", "0");
+      node.setAttribute("role", "button");
+      node.setAttribute("aria-label", `Show symbols in ${node.dataset.group}`);
+      const open = () => loadModuleSymbols(projectId, node.dataset.group, el.querySelector(".modsyms"));
+      node.addEventListener("click", open);
+      node.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+    }
+  } catch (error) {
+    el.innerHTML = `<span class="error">${esc(error.message)}</span>`;
+  }
+}
+
+async function loadModuleSymbols(projectId, group, el) {
+  el.textContent = `Loading ${group}…`;
+  try {
+    const detail = await api("/api/modulesymbols", { project_id: projectId, group });
+    const syms = detail.symbols.map(s =>
+      `<li><span class="k">${esc(s.kind)}</span>${esc(s.label)} <span class="tags">${esc(s.file_path)}</span></li>`).join("");
+    const mems = detail.memories.map(m =>
+      `<li><span class="k">${esc(m.kind)}</span>${esc(m.claim)}</li>`).join("");
+    el.innerHTML = `<h4>${esc(group)} — ${detail.symbols.length} symbol${detail.symbols.length === 1 ? "" : "s"}</h4>
+      ${syms ? `<ul>${syms}</ul>` : `<p class="empty">No defined symbols recorded.</p>`}
+      ${mems ? `<h4>Memories Anchored Here</h4><ul>${mems}</ul>` : ""}`;
   } catch (error) {
     el.innerHTML = `<span class="error">${esc(error.message)}</span>`;
   }
@@ -583,7 +655,7 @@ function renderModuleMap(map) {
     const p = pos.get(g.label);
     if (!p) continue;
     const label = g.label.length > 20 ? g.label.slice(0, 19) + "…" : g.label;
-    out += `<g class="m-node">
+    out += `<g class="m-node" data-group="${esc(g.label)}">
       <rect x="${p.x - 72}" y="${p.y - 17}" width="144" height="34"/>
       <text x="${p.x}" y="${p.y - 1}" text-anchor="middle" translate="no">${esc(label)}</text>
       <text class="count" x="${p.x}" y="${p.y + 11}" text-anchor="middle">${g.nodes.toLocaleString()} nodes</text>

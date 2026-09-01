@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::Config;
 use crate::daemon::{
     DaemonClient, FactSetRequest, FactUnsetRequest, LinkScanRequest, ModuleMapRequest,
+    ModuleSymbolsRequest,
 };
 use crate::error::{Error, Result};
 use crate::ids::ProjectId;
@@ -95,6 +96,8 @@ pub fn router(config: &Config) -> Router {
         .route("/api/architecture", get(architecture))
         .route("/api/activity", get(activity))
         .route("/api/modulemap", post(module_map))
+        .route("/api/modulesymbols", post(module_symbols))
+        .route("/api/reindex", post(reindex))
         .route("/api/facts/set", post(fact_set))
         .route("/api/facts/unset", post(fact_unset))
         .route("/api/linkscan", post(link_scan))
@@ -145,6 +148,56 @@ async fn module_map(
             })
             .await?,
     ))
+}
+
+#[derive(Deserialize)]
+struct WebModuleSymbols {
+    project_id: ProjectId,
+    group: String,
+}
+
+async fn module_symbols(
+    State(state): State<WebState>,
+    Json(request): Json<WebModuleSymbols>,
+) -> std::result::Result<Json<crate::daemon::ModuleSymbols>, WebError> {
+    Ok(Json(
+        state
+            .client()
+            .module_symbols(&ModuleSymbolsRequest {
+                project_id: request.project_id,
+                group: request.group,
+            })
+            .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct WebReindex {
+    project_id: ProjectId,
+}
+
+async fn reindex(
+    State(state): State<WebState>,
+    Json(request): Json<WebReindex>,
+) -> std::result::Result<Json<serde_json::Value>, WebError> {
+    let snapshot = state.client().workspace().await?;
+    let path = snapshot
+        .projects
+        .iter()
+        .find(|project| project.id == request.project_id)
+        .and_then(|project| project.primary_path.clone())
+        .ok_or_else(|| {
+            WebError(Error::Config(
+                "this project has no known local checkout to refresh".to_owned(),
+            ))
+        })?;
+    // Index scans can outlive the default deadline on large repos.
+    let patient = DaemonClient::new(&state.socket_path, Duration::from_secs(300));
+    let response = patient.refresh_index(std::path::Path::new(&path)).await?;
+    Ok(Json(serde_json::json!({
+        "nodes_written": response.index.nodes_written,
+        "head": response.resolved.git.and_then(|git| git.head),
+    })))
 }
 
 async fn activity(
