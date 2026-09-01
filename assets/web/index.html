@@ -414,9 +414,24 @@ function card(project) {
 function renderCards() {
   const projects = state.data.projects.filter(p => matches(p, state.q));
   const el = document.getElementById("cards");
+  // Survive re-renders (filtering, the 60 s auto-refresh): remember which
+  // sections were open so an engineer mid-read never loses their place.
+  const openMaps = new Set([...el.querySelectorAll("details.modmap-details[open]")].map(d => d.dataset.id));
+  const openForms = new Set([...el.querySelectorAll("details:not(.modmap-details)[open]")]
+    .map(d => d.closest(".card")?.id).filter(Boolean));
   el.innerHTML = projects.length
     ? projects.map(card).join("")
     : `<p class="empty">No projects match this filter.</p>`;
+  for (const det of el.querySelectorAll("details.modmap-details")) {
+    if (openMaps.has(det.dataset.id)) {
+      det.open = true;
+      det.dataset.loaded = "1";
+      loadModuleMap(det.dataset.id, det.querySelector(".modmap"));
+    }
+  }
+  for (const det of el.querySelectorAll("details:not(.modmap-details)")) {
+    if (openForms.has(det.closest(".card")?.id)) det.open = true;
+  }
   for (const form of el.querySelectorAll("form.fact-form")) {
     form.addEventListener("submit", onSaveFact);
   }
