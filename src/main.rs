@@ -183,6 +183,12 @@ enum Commands {
         action: LinkAction,
     },
 
+    /// Curated per-project architecture facts (hosting, storage, role).
+    Fact {
+        #[command(subcommand)]
+        action: FactAction,
+    },
+
     /// Export the derived Obsidian vault (notes + mermaid diagrams).
     Vault {
         #[command(subcommand)]
@@ -254,6 +260,36 @@ enum LinkAction {
         /// Apply definitive candidates (name matches always stay proposals).
         #[arg(long)]
         apply: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum FactAction {
+    /// Set or update one fact (e.g. `hosting.base_url api.example.com`).
+    Set {
+        key: String,
+        value: String,
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove one fact.
+    Unset {
+        key: String,
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List this project's facts.
+    List {
+        #[arg(default_value = ".")]
+        path: PathBuf,
         #[arg(long)]
         json: bool,
     },
@@ -506,6 +542,7 @@ fn run(cli: Cli) -> Result<bool> {
             run_daemon_action(&overrides, socket_override.as_deref(), &action)
         }
         Commands::Link { action } => run_link(&overrides, socket_override.as_deref(), &action),
+        Commands::Fact { action } => run_fact(&overrides, socket_override.as_deref(), &action),
         Commands::Vault { action } => run_vault(&overrides, socket_override.as_deref(), &action),
         Commands::Metrics { json } => run_metrics(&overrides, socket_override.as_deref(), json),
         Commands::Dashboard => run_dashboard(&overrides, socket_override.as_deref()),
@@ -1521,6 +1558,79 @@ fn run_link(
                         "{}  ({}){}  [{}]",
                         link.name, link.relation, note, link.project_id
                     );
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
+fn run_fact(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    action: &FactAction,
+) -> Result<bool> {
+    let source_path = match action {
+        FactAction::Set { path, .. }
+        | FactAction::Unset { path, .. }
+        | FactAction::List { path, .. } => path,
+    };
+    let config_root = discover_project_root(source_path)?;
+    let mut config = Config::load_for(Some(&config_root), overrides)?;
+    apply_socket_override(&mut config, socket)?;
+    require_daemon(&config)?;
+    let client = client(&config);
+    let project_id = block_on(client.resolve_project(source_path))?
+        .resolved
+        .project
+        .id;
+    match action {
+        FactAction::Set {
+            key,
+            value,
+            note,
+            json,
+            ..
+        } => {
+            let fact = block_on(client.set_fact(&leb::daemon::FactSetRequest {
+                project_id,
+                key: key.clone(),
+                value: value.clone(),
+                note: note.clone(),
+            }))?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&fact)?);
+            } else {
+                println!("Set {} = {}", fact.key, fact.value);
+            }
+        }
+        FactAction::Unset { key, json, .. } => {
+            let removed = block_on(client.unset_fact(&leb::daemon::FactUnsetRequest {
+                project_id,
+                key: key.clone(),
+            }))?
+            .removed;
+            if *json {
+                println!("{}", serde_json::json!({ "removed": removed }));
+            } else if removed {
+                println!("Removed `{key}`.");
+            } else {
+                println!("No fact `{key}` existed.");
+            }
+        }
+        FactAction::List { json, .. } => {
+            let facts = block_on(client.list_facts(&leb::daemon::FactListRequest { project_id }))?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&facts)?);
+            } else if facts.is_empty() {
+                println!("No facts recorded.");
+            } else {
+                for fact in facts {
+                    let note = fact
+                        .note
+                        .map(|note| format!("  — {note}"))
+                        .unwrap_or_default();
+                    println!("{} = {}{note}", fact.key, fact.value);
                 }
             }
         }

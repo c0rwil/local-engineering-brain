@@ -1,6 +1,7 @@
 //! Token-bounded deterministic context compilation.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -503,11 +504,19 @@ impl ContextCompiler {
             } else {
                 BTreeMap::new()
             };
-            let heading = format!(
+            let mut heading = format!(
                 "# Linked repository `{}` ({}) - validated knowledge that applies across repos\n",
                 context_safe(&link.name),
                 context_safe(&link.relation)
             );
+            for fact in registry.facts(&link.project_id)?.into_iter().take(5) {
+                let _ = writeln!(
+                    heading,
+                    "- {}: {}",
+                    context_safe(&fact.key),
+                    context_safe(&fact.value)
+                );
+            }
             let mut section = String::new();
             let mut section_count = 0_usize;
             for candidate in candidates {
@@ -689,7 +698,15 @@ impl ContextCompiler {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?;
             let facts = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-            Ok((project_name, facts))
+            let mut fact_statement = connection.prepare(
+                "SELECT key, value FROM project_facts
+                 WHERE project_id = ?1 ORDER BY key LIMIT 24",
+            )?;
+            let fact_rows = fact_statement.query_map([project_id.as_str()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            let curated = fact_rows.collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok((project_name, facts, curated))
         })?;
         let mut output = String::new();
         append_if_fits(
@@ -700,6 +717,17 @@ impl ContextCompiler {
             ),
             budget,
         );
+        // Curated architecture facts (deployment hosts, hosting, storage)
+        // lead: they are the highest-signal lines an engineer needs first.
+        for (key, value) in facts.2 {
+            if !append_if_fits(
+                &mut output,
+                &format!("- {}: {}\n", context_safe(&key), context_safe(&value)),
+                budget,
+            ) {
+                break;
+            }
+        }
         for (kind, label) in facts.1 {
             if !append_if_fits(
                 &mut output,

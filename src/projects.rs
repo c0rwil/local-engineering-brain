@@ -63,6 +63,14 @@ pub struct ProjectRecord {
     pub created_at_ms: i64,
 }
 
+/// One curated architecture fact (`hosting.base_url` -> `api.example.com`).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ProjectFact {
+    pub key: String,
+    pub value: String,
+    pub note: Option<String>,
+}
+
 /// One directed project link, resolved to the target's display name so
 /// injection labels and CLI listings never expose bare IDs alone.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -371,6 +379,89 @@ impl ProjectRegistry {
                 });
             }
             Ok(links)
+        })
+    }
+
+    /// Set (or update) one curated architecture fact for a project.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unknown projects, invalid bounds, or storage
+    /// failures.
+    pub fn set_fact(
+        &self,
+        project_id: &ProjectId,
+        key: &str,
+        value: &str,
+        note: Option<&str>,
+    ) -> Result<ProjectFact> {
+        let key = key.trim();
+        if key.is_empty() || key.len() > 64 {
+            return Err(Error::Config("fact key must be 1-64 characters".to_owned()));
+        }
+        let value = value.trim();
+        if value.is_empty() || value.len() > 500 {
+            return Err(Error::Config(
+                "fact value must be 1-500 characters".to_owned(),
+            ));
+        }
+        if note.is_some_and(|note| note.len() > 500) {
+            return Err(Error::Config(
+                "fact note must be at most 500 bytes".to_owned(),
+            ));
+        }
+        self.find_by_id(project_id)?
+            .ok_or_else(|| Error::Config(format!("unknown project `{project_id}`")))?;
+        self.events.append(&DomainEvent::ProjectFactSet {
+            project_id: project_id.clone(),
+            key: key.to_owned(),
+            value: value.to_owned(),
+            note: note.map(str::to_owned),
+        })?;
+        Ok(ProjectFact {
+            key: key.to_owned(),
+            value: value.to_owned(),
+            note: note.map(str::to_owned),
+        })
+    }
+
+    /// Remove one fact. Returns `true` when it existed.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors.
+    pub fn unset_fact(&self, project_id: &ProjectId, key: &str) -> Result<bool> {
+        let existed = self.facts(project_id)?.iter().any(|fact| fact.key == key);
+        if existed {
+            self.events.append(&DomainEvent::ProjectFactUnset {
+                project_id: project_id.clone(),
+                key: key.to_owned(),
+            })?;
+        }
+        Ok(existed)
+    }
+
+    /// List a project's facts in key order.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors.
+    pub fn facts(&self, project_id: &ProjectId) -> Result<Vec<ProjectFact>> {
+        self.database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT key, value, note FROM project_facts
+                 WHERE project_id = ?1 ORDER BY key",
+            )?;
+            let rows = statement
+                .query_map([project_id.as_str()], |row| {
+                    Ok(ProjectFact {
+                        key: row.get(0)?,
+                        value: row.get(1)?,
+                        note: row.get(2)?,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
         })
     }
 
@@ -1493,5 +1584,45 @@ mod tests {
         assert!(registry.unlink(&a, &b).expect("unlink"));
         assert!(!registry.unlink(&a, &b).expect("second unlink is a no-op"));
         assert!(registry.links(&a).expect("empty").is_empty());
+    }
+
+    #[test]
+    fn project_facts_roundtrip_with_validation() {
+        let temp = TempDir::new().expect("temp dir");
+        let registry = registry(&temp);
+        let root = temp.path().join("svc");
+        fs::create_dir_all(&root).expect("dir");
+        let id = registry.resolve_or_register(&root).expect("svc").project.id;
+
+        assert!(registry.set_fact(&id, "", "x", None).is_err());
+        assert!(registry.set_fact(&id, "k", "", None).is_err());
+        assert!(
+            registry
+                .set_fact(&ProjectId::new(), "k", "v", None)
+                .is_err()
+        );
+
+        registry
+            .set_fact(&id, "hosting.base_url", "api.example.com", Some("prod"))
+            .expect("set");
+        registry
+            .set_fact(&id, "hosting.provider", "gcp", None)
+            .expect("set");
+        let facts = registry.facts(&id).expect("facts");
+        assert_eq!(facts.len(), 2);
+        assert_eq!(facts[0].key, "hosting.base_url");
+        assert_eq!(facts[0].note.as_deref(), Some("prod"));
+
+        // Upsert replaces the value in place.
+        registry
+            .set_fact(&id, "hosting.provider", "aws", None)
+            .expect("update");
+        let facts = registry.facts(&id).expect("facts");
+        assert_eq!(facts.len(), 2);
+        assert_eq!(facts[1].value, "aws");
+
+        assert!(registry.unset_fact(&id, "hosting.provider").expect("unset"));
+        assert!(!registry.unset_fact(&id, "hosting.provider").expect("gone"));
+        assert_eq!(registry.facts(&id).expect("facts").len(), 1);
     }
 }

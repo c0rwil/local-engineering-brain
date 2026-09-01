@@ -58,9 +58,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "project_links",
         include_str!("migrations/0010_project_links.sql"),
     ),
+    (
+        11,
+        "project_facts",
+        include_str!("migrations/0011_project_facts.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 10;
+pub const LATEST_MIGRATION_VERSION: i64 = 11;
 
 /// Reopenable handle to the canonical database.
 ///

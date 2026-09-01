@@ -91,6 +91,9 @@ const API_PROJECT_UNLINK: &str = "/api/v1/projects/unlink";
 const API_PROJECT_LINKS: &str = "/api/v1/projects/links";
 const API_VAULT_BUILD: &str = "/api/v1/vault/build";
 const API_LINK_SCAN: &str = "/api/v1/projects/link-scan";
+const API_FACT_SET: &str = "/api/v1/projects/facts/set";
+const API_FACT_UNSET: &str = "/api/v1/projects/facts/unset";
+const API_FACT_LIST: &str = "/api/v1/projects/facts/list";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -305,6 +308,31 @@ pub struct ProjectLinksRequest {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectUnlinkResponse {
+    pub removed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FactSetRequest {
+    pub project_id: ProjectId,
+    pub key: String,
+    pub value: String,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FactUnsetRequest {
+    pub project_id: ProjectId,
+    pub key: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FactListRequest {
+    pub project_id: ProjectId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FactUnsetResponse {
     pub removed: bool,
 }
 
@@ -1021,6 +1049,39 @@ impl DaemonClient {
         .await
     }
 
+    /// Set one curated architecture fact on a project.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or validation errors.
+    pub async fn set_fact(&self, request: &FactSetRequest) -> Result<crate::projects::ProjectFact> {
+        self.request(hyper::Method::POST, API_FACT_SET, Some(request))
+            .await
+    }
+
+    /// Remove one curated architecture fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn unset_fact(&self, request: &FactUnsetRequest) -> Result<FactUnsetResponse> {
+        self.request(hyper::Method::POST, API_FACT_UNSET, Some(request))
+            .await
+    }
+
+    /// List a project's curated architecture facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn list_facts(
+        &self,
+        request: &FactListRequest,
+    ) -> Result<Vec<crate::projects::ProjectFact>> {
+        self.request(hyper::Method::POST, API_FACT_LIST, Some(request))
+            .await
+    }
+
     /// Scan a repository's manifests for links to other registered projects.
     ///
     /// # Errors
@@ -1174,6 +1235,8 @@ fn requires_terminal_ack(method: &hyper::Method, path: &str) -> bool {
         || path == API_INDEX_PROJECT
         || path == API_PROJECT_LINK
         || path == API_PROJECT_UNLINK
+        || path == API_FACT_SET
+        || path == API_FACT_UNSET
         || path == API_MEMORY_CREATE
         || path.starts_with(&format!("{API_MEMORY_CREATE}/"))
         || path == API_TASKS
@@ -1195,6 +1258,7 @@ fn requires_terminal_ack(method: &hyper::Method, path: &str) -> bool {
 ///
 /// Returns an error when canonical storage or the Unix socket cannot be safely
 /// initialized, or when the HTTP server exits abnormally.
+#[allow(clippy::too_many_lines)]
 pub async fn serve_until<F>(config: Config, external_shutdown: F) -> Result<()>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -1274,6 +1338,9 @@ where
         .route(API_PROJECT_LINKS, post(list_project_links))
         .route(API_VAULT_BUILD, post(build_vault))
         .route(API_LINK_SCAN, post(scan_links))
+        .route(API_FACT_SET, post(set_fact))
+        .route(API_FACT_UNSET, post(unset_fact))
+        .route(API_FACT_LIST, post(list_facts))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -2088,6 +2155,49 @@ async fn list_project_links(
     let registry = ProjectRegistry::new(state.database.clone());
     let links = run_blocking(&state, move || registry.links(&request.project_id)).await?;
     Ok(Json(links))
+}
+
+async fn set_fact(
+    State(state): State<DaemonState>,
+    Json(request): Json<FactSetRequest>,
+) -> std::result::Result<Json<crate::projects::ProjectFact>, ApiError> {
+    let registry = ProjectRegistry::new(state.database.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::Interactive, move || {
+            registry.set_fact(
+                &request.project_id,
+                &request.key,
+                &request.value,
+                request.note.as_deref(),
+            )
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
+async fn unset_fact(
+    State(state): State<DaemonState>,
+    Json(request): Json<FactUnsetRequest>,
+) -> std::result::Result<Json<FactUnsetResponse>, ApiError> {
+    let registry = ProjectRegistry::new(state.database.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::Interactive, move || {
+            registry.unset_fact(&request.project_id, &request.key)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    let removed = wait_for_mutation(&state, handle).await?;
+    Ok(Json(FactUnsetResponse { removed }))
+}
+
+async fn list_facts(
+    State(state): State<DaemonState>,
+    Json(request): Json<FactListRequest>,
+) -> std::result::Result<Json<Vec<crate::projects::ProjectFact>>, ApiError> {
+    let registry = ProjectRegistry::new(state.database.clone());
+    let facts = run_blocking(&state, move || registry.facts(&request.project_id)).await?;
+    Ok(Json(facts))
 }
 
 async fn scan_links(

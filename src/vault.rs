@@ -120,6 +120,7 @@ impl VaultBuilder {
         let groups = self.module_groups(project_id)?;
         let edges = self.group_edges(project_id)?;
         let links = registry.links(project_id)?;
+        let facts = registry.facts(project_id)?;
         let memory_count = self.validated_memory_count(project_id)?;
 
         let mut out = String::new();
@@ -146,6 +147,23 @@ impl VaultBuilder {
                 .collect::<Vec<_>>()
                 .join(", ");
             let _ = writeln!(out, "- Graph: {summary}");
+        }
+
+        if !facts.is_empty() {
+            out.push_str("\n## Architecture facts\n\n");
+            for fact in &facts {
+                let note = fact
+                    .note
+                    .as_deref()
+                    .map(|note| format!(" — {}", md_safe(note)))
+                    .unwrap_or_default();
+                let _ = writeln!(
+                    out,
+                    "- **{}**: {}{note}",
+                    md_safe(&fact.key),
+                    md_safe(&fact.value)
+                );
+            }
         }
 
         if !links.is_empty() {

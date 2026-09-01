@@ -42,6 +42,16 @@ pub enum DomainEvent {
         project_id: ProjectId,
         linked_project_id: ProjectId,
     },
+    ProjectFactSet {
+        project_id: ProjectId,
+        key: String,
+        value: String,
+        note: Option<String>,
+    },
+    ProjectFactUnset {
+        project_id: ProjectId,
+        key: String,
+    },
     StructuralScanApplied {
         project_id: ProjectId,
         scan_id: String,
@@ -129,6 +139,8 @@ impl DomainEvent {
             Self::ProjectTombstoned { .. } => "PROJECT_TOMBSTONED",
             Self::ProjectLinked { .. } => "PROJECT_LINKED",
             Self::ProjectUnlinked { .. } => "PROJECT_UNLINKED",
+            Self::ProjectFactSet { .. } => "PROJECT_FACT_SET",
+            Self::ProjectFactUnset { .. } => "PROJECT_FACT_UNSET",
             Self::StructuralScanApplied { .. } => "STRUCTURAL_SCAN_APPLIED",
             Self::GitHistoryIngested { .. } => "GIT_HISTORY_INGESTED",
             Self::TaskStarted { .. } => "TASK_STARTED",
@@ -151,6 +163,8 @@ impl DomainEvent {
             | Self::ProjectTombstoned { project_id }
             | Self::ProjectLinked { project_id, .. }
             | Self::ProjectUnlinked { project_id, .. }
+            | Self::ProjectFactSet { project_id, .. }
+            | Self::ProjectFactUnset { project_id, .. }
             | Self::StructuralScanApplied { project_id, .. }
             | Self::GitHistoryIngested { project_id, .. }
             | Self::TaskStarted { project_id, .. }
@@ -181,6 +195,8 @@ impl DomainEvent {
             | "PROJECT_TOMBSTONED"
             | "PROJECT_LINKED"
             | "PROJECT_UNLINKED"
+            | "PROJECT_FACT_SET"
+            | "PROJECT_FACT_UNSET"
             | "STRUCTURAL_SCAN_APPLIED"
             | "GIT_HISTORY_INGESTED"
             | "TASK_STARTED"
@@ -477,6 +493,8 @@ impl EventStore {
                 }
                 DomainEvent::ProjectLinked { .. }
                 | DomainEvent::ProjectUnlinked { .. }
+                | DomainEvent::ProjectFactSet { .. }
+                | DomainEvent::ProjectFactUnset { .. }
                 | DomainEvent::StructuralScanApplied { .. }
                 | DomainEvent::GitHistoryIngested { .. }
                 | DomainEvent::TaskStarted { .. }
@@ -608,6 +626,27 @@ fn apply_project_projection(
             transaction.execute(
                 "DELETE FROM project_links WHERE project_id = ?1 AND linked_project_id = ?2",
                 params![project_id.as_str(), linked_project_id.as_str()],
+            )?;
+        }
+        DomainEvent::ProjectFactSet {
+            project_id,
+            key,
+            value,
+            note,
+        } => {
+            transaction.execute(
+                "INSERT INTO project_facts(project_id, key, value, note, updated_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(project_id, key)
+                 DO UPDATE SET value = excluded.value, note = excluded.note,
+                               updated_at_ms = excluded.updated_at_ms",
+                params![project_id.as_str(), key, value, note, created_at_ms],
+            )?;
+        }
+        DomainEvent::ProjectFactUnset { project_id, key } => {
+            transaction.execute(
+                "DELETE FROM project_facts WHERE project_id = ?1 AND key = ?2",
+                params![project_id.as_str(), key],
             )?;
         }
         DomainEvent::StructuralScanApplied { .. }

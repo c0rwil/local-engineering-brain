@@ -49,6 +49,10 @@ struct KnownProject {
     name: String,
     canonical_remote: Option<String>,
     roots: Vec<PathBuf>,
+    /// Deployment hostnames declared as `hosting.*` facts. A repo whose
+    /// source references one of these hosts is declaring an API dependency
+    /// on the owning service.
+    hosts: Vec<String>,
 }
 
 /// Scan one repository's manifests for links to other registered projects.
@@ -75,6 +79,7 @@ pub fn scan(
     scan_package_json(root, &known, &mut candidates);
     scan_gitmodules(root, &known, &mut candidates);
     scan_requirements(root, &known, &mut candidates);
+    scan_hostnames(root, &known, &mut candidates);
     candidates.retain(|candidate| !existing.contains(&candidate.target_project_id));
     // One candidate per target: keep the strongest (definitive first).
     candidates.sort_by(|a, b| {
@@ -148,11 +153,18 @@ fn known_projects(
             .into_iter()
             .filter_map(|path| fs::canonicalize(path).ok())
             .collect();
+        let hosts = registry
+            .facts(&id)?
+            .into_iter()
+            .filter(|fact| fact.key.starts_with("hosting."))
+            .filter_map(|fact| normalize_host(&fact.value))
+            .collect();
         known.push(KnownProject {
             id,
             name,
             canonical_remote,
             roots,
+            hosts,
         });
     }
     Ok(known)
@@ -371,6 +383,96 @@ fn scan_requirements(root: &Path, known: &[KnownProject], candidates: &mut Vec<L
     }
 }
 
+/// Extract a bare lowercase hostname from a fact value that may be a URL.
+/// Values without a dot (or that are localhost) are not usable as
+/// cross-repo evidence and are dropped.
+fn normalize_host(value: &str) -> Option<String> {
+    let value = value.trim().to_ascii_lowercase();
+    let value = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+        .unwrap_or(&value);
+    let host = value
+        .split(['/', ':', '?'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    (host.contains('.') && !host.starts_with("localhost") && host.len() <= 253)
+        .then(|| host.to_owned())
+}
+
+/// Search the repo's tracked-looking text files for other services'
+/// declared hostnames. A source literal naming another service's domain is
+/// the repo declaring that it calls that service — definitive evidence.
+fn scan_hostnames(root: &Path, known: &[KnownProject], candidates: &mut Vec<LinkCandidate>) {
+    const MAX_FILES: usize = 3_000;
+    const MAX_FILE_BYTES: u64 = 262_144;
+    let hosted = known
+        .iter()
+        .filter(|project| !project.hosts.is_empty())
+        .collect::<Vec<_>>();
+    if hosted.is_empty() {
+        return;
+    }
+    let mut hits: Vec<(usize, usize, String)> =
+        hosted.iter().map(|_| (0, 0, String::new())).collect();
+    let mut scanned = 0_usize;
+    let walker = ignore::WalkBuilder::new(root)
+        .hidden(true)
+        .follow_links(false)
+        .build();
+    for entry in walker {
+        let Ok(entry) = entry else { continue };
+        if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+            continue;
+        }
+        if entry
+            .metadata()
+            .ok()
+            .is_none_or(|metadata| metadata.len() > MAX_FILE_BYTES)
+        {
+            continue;
+        }
+        scanned += 1;
+        if scanned > MAX_FILES {
+            break;
+        }
+        let Ok(content) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let content = content.to_ascii_lowercase();
+        for (index, project) in hosted.iter().enumerate() {
+            if project.hosts.iter().any(|host| content.contains(host)) {
+                hits[index].0 += 1;
+                if hits[index].2.is_empty() {
+                    hits[index].1 = 0;
+                    hits[index].2 = entry
+                        .path()
+                        .strip_prefix(root)
+                        .unwrap_or(entry.path())
+                        .display()
+                        .to_string();
+                }
+            }
+        }
+    }
+    for (index, project) in hosted.iter().enumerate() {
+        let (count, _, example) = &hits[index];
+        if *count > 0 {
+            candidates.push(LinkCandidate {
+                target_project_id: project.id.clone(),
+                target_name: project.name.clone(),
+                relation: "calls-api-of".to_owned(),
+                evidence: format!(
+                    "references host `{}` in {count} file(s), e.g. `{example}`",
+                    project.hosts.join("`/`")
+                ),
+                definitive: true,
+            });
+        }
+    }
+}
+
 fn normalize_git_url(url: &str) -> String {
     let url = url
         .trim()
@@ -475,5 +577,46 @@ mod tests {
         )
         .expect("manifest");
         assert!(scan(&database, &a, &root_a).expect("scan").is_empty());
+    }
+
+    #[test]
+    fn hostname_facts_yield_definitive_api_links() {
+        let temp = TempDir::new().expect("temp");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("db");
+        let registry = ProjectRegistry::new(database.clone());
+        let root_client = temp.path().join("mobile-app");
+        let root_backend = temp.path().join("backend");
+        let client = register(&registry, &root_client);
+        let backend = register(&registry, &root_backend);
+        registry
+            .set_fact(
+                &backend,
+                "hosting.base_url",
+                "https://androidagent.example.tech",
+                None,
+            )
+            .expect("fact");
+        fs::create_dir_all(root_client.join("src")).expect("src");
+        fs::write(
+            root_client.join("src/api.ts"),
+            "const BASE = \"https://androidagent.example.tech/v1\";\n",
+        )
+        .expect("source");
+
+        let candidates = scan(&database, &client, &root_client).expect("scan");
+        assert_eq!(candidates.len(), 1, "{candidates:?}");
+        assert!(candidates[0].definitive);
+        assert_eq!(candidates[0].relation, "calls-api-of");
+        assert_eq!(candidates[0].target_project_id, backend);
+        assert!(candidates[0].evidence.contains("androidagent.example.tech"));
+        assert!(candidates[0].evidence.contains("src/api.ts"));
+
+        // The backend does not reference its own host as a dependency, and
+        // the client's own facts never self-link.
+        assert!(
+            scan(&database, &backend, &root_backend)
+                .expect("reverse")
+                .is_empty()
+        );
     }
 }
