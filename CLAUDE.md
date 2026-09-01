@@ -19,6 +19,7 @@ path, ever.
 | Diagnostics | `leb doctor --json` |
 | Index a repo | `leb index <path> --json` |
 | Compile context | `leb context "<query>" --path <repo> --budget N --json` |
+| Link repos (cross-repo context) | `leb link add <target> --path <repo> --relation uses` / `leb link list` |
 
 Tests are hermetic: no network, no live model, no pre-existing daemon needed.
 Integration tests spawn their own daemons on temp sockets.
