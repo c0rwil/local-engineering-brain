@@ -176,6 +176,13 @@ enum Commands {
         promote: Option<String>,
     },
 
+    /// Link repositories so tasks in one see validated knowledge from the
+    /// others (multi-repo/microservice workspaces).
+    Link {
+        #[command(subcommand)]
+        action: LinkAction,
+    },
+
     /// Create or verify transactionally consistent canonical backups.
     Backup {
         #[command(subcommand)]
@@ -196,6 +203,43 @@ enum Commands {
     InternalCrashTransaction {
         #[arg(long)]
         ready: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum LinkAction {
+    /// Link another repository's brain into this project's context.
+    Add {
+        /// Path to the repository to link (registered if new).
+        target: PathBuf,
+        /// Source project path whose context gains the link.
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        /// How this project relates to the target (e.g. `uses`,
+        /// `interface`, `sibling-service`).
+        #[arg(long, default_value = "uses")]
+        relation: String,
+        /// Optional free-form note stored with the link.
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove a repository link.
+    Remove {
+        /// Path to the linked repository.
+        target: PathBuf,
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List this project's outgoing links.
+    List {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -428,6 +472,7 @@ fn run(cli: Cli) -> Result<bool> {
         Commands::Daemon { action } => {
             run_daemon_action(&overrides, socket_override.as_deref(), &action)
         }
+        Commands::Link { action } => run_link(&overrides, socket_override.as_deref(), &action),
         Commands::Metrics { json } => run_metrics(&overrides, socket_override.as_deref(), json),
         Commands::Dashboard => run_dashboard(&overrides, socket_override.as_deref()),
         Commands::Index {
@@ -1323,6 +1368,89 @@ fn run_status(
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         print_status(&output);
+    }
+    Ok(true)
+}
+
+fn run_link(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    action: &LinkAction,
+) -> Result<bool> {
+    let source_path = match action {
+        LinkAction::Add { path, .. }
+        | LinkAction::Remove { path, .. }
+        | LinkAction::List { path, .. } => path,
+    };
+    let config_root = discover_project_root(source_path)?;
+    let mut config = Config::load_for(Some(&config_root), overrides)?;
+    apply_socket_override(&mut config, socket)?;
+    require_daemon(&config)?;
+    let client = client(&config);
+    let source = block_on(client.resolve_project(source_path))?
+        .resolved
+        .project
+        .id;
+    match action {
+        LinkAction::Add {
+            target,
+            relation,
+            note,
+            json,
+            ..
+        } => {
+            let target_project = block_on(client.resolve_project(target))?.resolved.project;
+            let link = block_on(client.link_project(&leb::daemon::ProjectLinkRequest {
+                project_id: source,
+                linked_project_id: target_project.id,
+                relation: relation.clone(),
+                note: note.clone(),
+            }))?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&link)?);
+            } else {
+                println!(
+                    "Linked `{}` ({}) into this project's context.",
+                    link.name, link.relation
+                );
+            }
+        }
+        LinkAction::Remove { target, json, .. } => {
+            let target_project = block_on(client.resolve_project(target))?.resolved.project;
+            let removed = block_on(client.unlink_project(&leb::daemon::ProjectUnlinkRequest {
+                project_id: source,
+                linked_project_id: target_project.id,
+            }))?
+            .removed;
+            if *json {
+                println!("{}", serde_json::json!({ "removed": removed }));
+            } else if removed {
+                println!("Unlinked `{}`.", target_project.name);
+            } else {
+                println!("No link to `{}` existed.", target_project.name);
+            }
+        }
+        LinkAction::List { json, .. } => {
+            let links = block_on(
+                client.project_links(&leb::daemon::ProjectLinksRequest { project_id: source }),
+            )?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&links)?);
+            } else if links.is_empty() {
+                println!("No linked projects.");
+            } else {
+                for link in links {
+                    let note = link
+                        .note
+                        .map(|note| format!(" - {note}"))
+                        .unwrap_or_default();
+                    println!(
+                        "{}  ({}){}  [{}]",
+                        link.name, link.relation, note, link.project_id
+                    );
+                }
+            }
+        }
     }
     Ok(true)
 }

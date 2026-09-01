@@ -164,6 +164,7 @@ pub struct ContextCompiler {
     compact_injection: bool,
     max_memories: u32,
     review_standards: bool,
+    linked_projects: bool,
 }
 
 impl ContextCompiler {
@@ -177,6 +178,7 @@ impl ContextCompiler {
             compact_injection: false,
             max_memories: 0,
             review_standards: false,
+            linked_projects: false,
         }
     }
 
@@ -212,6 +214,7 @@ impl ContextCompiler {
             compact_injection: false,
             max_memories: 0,
             review_standards: false,
+            linked_projects: false,
         }
     }
 
@@ -220,6 +223,14 @@ impl ContextCompiler {
     #[must_use]
     pub const fn with_compact_injection(mut self, enabled: bool) -> Self {
         self.compact_injection = enabled;
+        self
+    }
+
+    /// Also inject relevance-gated memories from explicitly linked projects,
+    /// each under a heading naming the source repository and relation.
+    #[must_use]
+    pub const fn with_linked_projects(mut self, enabled: bool) -> Self {
+        self.linked_projects = enabled;
         self
     }
 
@@ -437,6 +448,112 @@ impl ContextCompiler {
         })
     }
 
+    /// Append bounded, relevance-gated sections for explicitly linked
+    /// projects. Local memories were filled first, so linked knowledge only
+    /// spends leftover budget; every section names its source repository and
+    /// relation so the model can attribute cross-repo constraints. Returns
+    /// the number of linked candidates considered.
+    fn fill_linked_sections(
+        &self,
+        request: &ContextCompileRequest,
+        mut linked_budget: u32,
+        dynamic: &mut String,
+        items: &mut Vec<ContextItem>,
+    ) -> Result<u32> {
+        const MAX_LINKED_PROJECTS: usize = 8;
+        const MAX_MEMORIES_PER_LINK: usize = 5;
+        if linked_budget == 0 {
+            return Ok(0);
+        }
+        let links = crate::projects::ProjectRegistry::new(self.database.clone())
+            .links(&request.project_id)?;
+        let mut considered = 0_u32;
+        for link in links.iter().take(MAX_LINKED_PROJECTS) {
+            if linked_budget == 0 {
+                break;
+            }
+            let candidates = self.retriever.retrieve(&RetrievalRequest {
+                project_id: &link.project_id,
+                task_text: &request.task_text,
+                // Paths are repo-local; cross-repo structural overlap is
+                // meaningless, and commit-validity-scoped memories are
+                // conservatively excluded (no root/head for a foreign repo).
+                current_paths: &[],
+                repository_root: None,
+                head: None,
+                limit: 20,
+            })?;
+            considered = considered.saturating_add(u32::try_from(candidates.len()).unwrap_or(0));
+            let ids = candidates
+                .iter()
+                .map(|candidate| candidate.memory.id.clone())
+                .collect::<Vec<_>>();
+            let mut compact_injections = if self.compact_injection {
+                MemoryStore::new(self.database.clone()).compact_injections(&ids)?
+            } else {
+                BTreeMap::new()
+            };
+            let heading = format!(
+                "# Linked repository `{}` ({}) - validated knowledge that applies across repos\n",
+                context_safe(&link.name),
+                context_safe(&link.relation)
+            );
+            let mut section = String::new();
+            let mut section_count = 0_usize;
+            for candidate in candidates {
+                if section_count >= MAX_MEMORIES_PER_LINK {
+                    break;
+                }
+                // Cross-repo injection is relevance-gated: a memory must
+                // actually match the task text to travel between repos, so
+                // another repo's high-importance fallback noise never leaks.
+                let relevant = candidate.why.lexical > 0.0
+                    || candidate.why.exact > 0.0
+                    || candidate.why.semantic > 0.0;
+                if !relevant {
+                    continue;
+                }
+                let (block, block_tokens) =
+                    self.memory_block(&candidate.memory, &mut compact_injections)?;
+                let heading_tokens = if section.is_empty() {
+                    estimate_tokens(&heading)
+                } else {
+                    0
+                };
+                if heading_tokens.saturating_add(block_tokens) > linked_budget {
+                    continue;
+                }
+                if section.is_empty() {
+                    section.push_str(&heading);
+                    linked_budget = linked_budget.saturating_sub(heading_tokens);
+                }
+                section.push_str(&block);
+                linked_budget = linked_budget.saturating_sub(block_tokens);
+                section_count += 1;
+                let mut why = candidate.why.clone();
+                why.note = format!(
+                    "linked from `{}` ({}); {}",
+                    link.name, link.relation, why.note
+                );
+                items.push(ContextItem {
+                    ordinal: u32::try_from(items.len() + 1).unwrap_or(u32::MAX),
+                    source_type: "linked_memory".to_owned(),
+                    source_id: candidate.memory.id.to_string(),
+                    score: candidate.score,
+                    tokens: block_tokens,
+                    why,
+                });
+            }
+            if !section.is_empty() {
+                if !dynamic.is_empty() {
+                    dynamic.push('\n');
+                }
+                dynamic.push_str(&section);
+            }
+        }
+        Ok(considered)
+    }
+
     fn compile_brain(&self, request: &ContextCompileRequest) -> Result<CompiledContext> {
         let stable_budget = self
             .stable_prefix_tokens
@@ -472,7 +589,18 @@ impl ContextCompiler {
         )?;
         let mut dynamic = selection.dynamic;
         let review = selection.review;
-        let items = selection.items;
+        let mut items = selection.items;
+        let mut candidate_count = candidate_count;
+        if self.linked_projects {
+            let local_tokens = estimate_tokens(&dynamic).saturating_add(estimate_tokens(&review));
+            let linked_budget = remaining.saturating_sub(local_tokens);
+            candidate_count = candidate_count.saturating_add(self.fill_linked_sections(
+                request,
+                linked_budget,
+                &mut dynamic,
+                &mut items,
+            )?);
+        }
         // Review standards render LAST: adjacency to the conversation is the
         // salience this section exists for.
         if !review.is_empty() {
@@ -1561,5 +1689,129 @@ mod tests {
             })
             .expect("leak query");
         assert_eq!(leaked, 0);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn linked_projects_inject_labeled_relevant_memories_only_when_enabled() {
+        let temp = TempDir::new().expect("temp");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let registry = ProjectRegistry::new(database.clone());
+        let root_a = temp.path().join("service-api");
+        let root_b = temp.path().join("platform");
+        std::fs::create_dir(&root_a).expect("a");
+        std::fs::create_dir(&root_b).expect("b");
+        let project_a = registry.resolve_or_register(&root_a).expect("a").project.id;
+        let project_b = registry.resolve_or_register(&root_b).expect("b").project.id;
+
+        let experience = ExperienceStore::new(database.clone());
+        let memories = MemoryStore::new(database.clone());
+        let validated = |project: &ProjectId, claim: &str, tags: Vec<String>| {
+            let task = experience.start_task(project, claim, None).expect("task");
+            let evidence = experience
+                .record_evidence(
+                    project,
+                    Some(&task.id),
+                    None,
+                    "test_result",
+                    EvidenceStrength::Deterministic,
+                    None,
+                    Some("cargo test"),
+                    Some(0),
+                    b"pass",
+                    &serde_json::json!({}),
+                )
+                .expect("evidence");
+            experience
+                .finish_task(&task.id, TaskOutcome::Success, Some(true), None)
+                .expect("finish");
+            let memory = memories
+                .create_candidate(
+                    project,
+                    &MemoryDraft {
+                        scope_type: "project".to_owned(),
+                        scope_id: project.to_string(),
+                        kind: "lesson".to_owned(),
+                        claim: claim.to_owned(),
+                        rationale: "Validated across services".to_owned(),
+                        confidence: 0.5,
+                        importance: 0.9,
+                        tags,
+                        valid_from_commit: None,
+                        valid_to_commit: None,
+                        trust_source: "agent_inference".to_owned(),
+                        evidence_ids: vec![evidence.id],
+                        source_task_ids: vec![task.id],
+                        node_ids: Vec::new(),
+                    },
+                )
+                .expect("memory");
+            for state in [
+                EpistemicState::Observed,
+                EpistemicState::Supported,
+                EpistemicState::Validated,
+            ] {
+                memories.promote(&memory.id, state, false).expect("promote");
+            }
+        };
+        // The relevant cross-repo fact lives in the linked platform repo; a
+        // second, unrelated platform memory must NOT travel (relevance gate).
+        validated(
+            &project_b,
+            "Pagination cursors from the platform api are opaque - never parse them",
+            vec!["pagination".to_owned(), "cursor".to_owned()],
+        );
+        validated(
+            &project_b,
+            "Platform deploys read the blue-green flag from the orchestrator",
+            vec!["deploy".to_owned()],
+        );
+        registry
+            .link(&project_a, &project_b, "interface", None)
+            .expect("link");
+
+        let request = ContextCompileRequest {
+            request_id: "req-linked".to_owned(),
+            project_id: project_a.clone(),
+            task_text: "add pagination cursor handling to the client".to_owned(),
+            current_paths: Vec::new(),
+            token_budget: 4_000,
+            mode: ContextMode::Brain,
+            repository_root: None,
+            head: None,
+            task_id: None,
+            framing: None,
+        };
+        let with_links = ContextCompiler::new(database.clone(), 6_000, 1_800)
+            .with_linked_projects(true)
+            .compile(&request)
+            .expect("linked compile");
+        let text = &with_links.dynamic_context;
+        assert!(
+            text.contains("# Linked repository `platform` (interface)"),
+            "linked section must name the source repo: {text}"
+        );
+        assert!(text.contains("Pagination cursors from the platform api"));
+        assert!(
+            !text.contains("blue-green flag"),
+            "irrelevant linked memories must not travel: {text}"
+        );
+        assert!(
+            with_links
+                .items
+                .iter()
+                .any(|item| item.source_type == "linked_memory"
+                    && item.why.note.contains("linked from `platform`"))
+        );
+
+        let mut request2 = request;
+        request2.request_id = "req-unlinked".to_owned();
+        let without = ContextCompiler::new(database, 6_000, 1_800)
+            .compile(&request2)
+            .expect("default compile");
+        assert!(
+            !without.dynamic_context.contains("Linked repository"),
+            "linked injection must be off unless enabled"
+        );
     }
 }

@@ -49,7 +49,7 @@ use crate::jobs::{EnqueueJob, JobExecutor, JobQueue, JobRecord, JobRunner, JobSt
 use crate::learning::{DistillationRequest, DistillationResult, LearningStore};
 use crate::memory::{EpistemicState, MemoryDraft, MemoryRecord, MemoryStore};
 use crate::metrics::{EndpointGroup, MetricsRegistry, MetricsSnapshot};
-use crate::projects::{ProjectRegistry, ResolvedProject};
+use crate::projects::{LinkedProject, ProjectRegistry, ResolvedProject};
 use crate::scheduler::{MutationPriority, MutationScheduler, SchedulerStats};
 use crate::security::Redactor;
 use crate::semantic::{SemanticOptions, SqliteVectorIndex, VectorIndex as _};
@@ -86,6 +86,9 @@ const API_JOBS: &str = "/api/v1/jobs";
 const API_JOBS_LIST: &str = "/api/v1/jobs/list";
 const API_SYNTHESIS_RUN: &str = "/api/v1/synthesis/run";
 const API_SKILL_PROMOTE: &str = "/api/v1/synthesis/promote";
+const API_PROJECT_LINK: &str = "/api/v1/projects/link";
+const API_PROJECT_UNLINK: &str = "/api/v1/projects/unlink";
+const API_PROJECT_LINKS: &str = "/api/v1/projects/links";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -276,6 +279,31 @@ pub struct WorldNeighborsRequest {
 pub struct MemoryCreateRequest {
     pub project_id: crate::ids::ProjectId,
     pub memory: MemoryDraft,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectLinkRequest {
+    pub project_id: ProjectId,
+    pub linked_project_id: ProjectId,
+    pub relation: String,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectUnlinkRequest {
+    pub project_id: ProjectId,
+    pub linked_project_id: ProjectId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectLinksRequest {
+    pub project_id: ProjectId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectUnlinkResponse {
+    pub removed: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -932,6 +960,39 @@ impl DaemonClient {
             .await
     }
 
+    /// Create or update a directed cross-repository knowledge link.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for transport failures or invalid link requests.
+    pub async fn link_project(&self, request: &ProjectLinkRequest) -> Result<LinkedProject> {
+        self.request(hyper::Method::POST, API_PROJECT_LINK, Some(request))
+            .await
+    }
+
+    /// Remove a directed cross-repository knowledge link.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for transport or storage failures.
+    pub async fn unlink_project(
+        &self,
+        request: &ProjectUnlinkRequest,
+    ) -> Result<ProjectUnlinkResponse> {
+        self.request(hyper::Method::POST, API_PROJECT_UNLINK, Some(request))
+            .await
+    }
+
+    /// List a project's outgoing knowledge links.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for transport or storage failures.
+    pub async fn project_links(&self, request: &ProjectLinksRequest) -> Result<Vec<LinkedProject>> {
+        self.request(hyper::Method::POST, API_PROJECT_LINKS, Some(request))
+            .await
+    }
+
     /// Rebuild the derived semantic vector sidecar from canonical memories.
     ///
     /// # Errors
@@ -1047,6 +1108,8 @@ fn requires_terminal_ack(method: &hyper::Method, path: &str) -> bool {
     }
     path == API_RESOLVE_PROJECT
         || path == API_INDEX_PROJECT
+        || path == API_PROJECT_LINK
+        || path == API_PROJECT_UNLINK
         || path == API_MEMORY_CREATE
         || path.starts_with(&format!("{API_MEMORY_CREATE}/"))
         || path == API_TASKS
@@ -1142,6 +1205,9 @@ where
         .route("/api/v1/jobs/{id}", get(get_job))
         .route(API_SYNTHESIS_RUN, post(run_synthesis))
         .route(API_SKILL_PROMOTE, post(promote_skill))
+        .route(API_PROJECT_LINK, post(link_project))
+        .route(API_PROJECT_UNLINK, post(unlink_project))
+        .route(API_PROJECT_LINKS, post(list_project_links))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -1785,6 +1851,13 @@ async fn compile_context(
             .map_or(state.config.context.max_injected_memories, |config| {
                 config.context.max_injected_memories
             }),
+    )
+    .with_linked_projects(
+        scoped
+            .as_ref()
+            .map_or(state.config.context.include_linked_projects, |config| {
+                config.context.include_linked_projects
+            }),
     );
     let prepare_compiler = compiler.clone();
     let request_mode = request.mode;
@@ -1864,6 +1937,49 @@ async fn explain_context(
     })
     .await?;
     Ok(Json(item))
+}
+
+async fn link_project(
+    State(state): State<DaemonState>,
+    Json(request): Json<ProjectLinkRequest>,
+) -> std::result::Result<Json<LinkedProject>, ApiError> {
+    let registry = ProjectRegistry::new(state.database.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::Interactive, move || {
+            registry.link(
+                &request.project_id,
+                &request.linked_project_id,
+                &request.relation,
+                request.note.as_deref(),
+            )
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
+async fn unlink_project(
+    State(state): State<DaemonState>,
+    Json(request): Json<ProjectUnlinkRequest>,
+) -> std::result::Result<Json<ProjectUnlinkResponse>, ApiError> {
+    let registry = ProjectRegistry::new(state.database.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::Interactive, move || {
+            registry.unlink(&request.project_id, &request.linked_project_id)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    let removed = wait_for_mutation(&state, handle).await?;
+    Ok(Json(ProjectUnlinkResponse { removed }))
+}
+
+async fn list_project_links(
+    State(state): State<DaemonState>,
+    Json(request): Json<ProjectLinksRequest>,
+) -> std::result::Result<Json<Vec<LinkedProject>>, ApiError> {
+    let registry = ProjectRegistry::new(state.database.clone());
+    let links = run_blocking(&state, move || registry.links(&request.project_id)).await?;
+    Ok(Json(links))
 }
 
 async fn create_memory(

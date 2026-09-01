@@ -63,6 +63,16 @@ pub struct ProjectRecord {
     pub created_at_ms: i64,
 }
 
+/// One directed project link, resolved to the target's display name so
+/// injection labels and CLI listings never expose bare IDs alone.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct LinkedProject {
+    pub project_id: ProjectId,
+    pub name: String,
+    pub relation: String,
+    pub note: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ResolvedProject {
     pub project: ProjectRecord,
@@ -255,6 +265,112 @@ impl ProjectRegistry {
             root,
             component,
             git,
+        })
+    }
+
+    /// Create or update a directed link that makes `linked_project_id`'s
+    /// validated memories eligible for labeled cross-repository injection
+    /// when compiling context for `project_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for self-links, unknown or tombstoned projects,
+    /// invalid relation/note bounds, or storage failures.
+    pub fn link(
+        &self,
+        project_id: &ProjectId,
+        linked_project_id: &ProjectId,
+        relation: &str,
+        note: Option<&str>,
+    ) -> Result<LinkedProject> {
+        if project_id == linked_project_id {
+            return Err(Error::Config(
+                "a project cannot be linked to itself".to_owned(),
+            ));
+        }
+        let relation = relation.trim();
+        if relation.is_empty() || relation.len() > 64 {
+            return Err(Error::Config(
+                "link relation must be 1-64 characters".to_owned(),
+            ));
+        }
+        if note.is_some_and(|note| note.len() > 500) {
+            return Err(Error::Config(
+                "link note must be at most 500 bytes".to_owned(),
+            ));
+        }
+        self.find_by_id(project_id)?
+            .ok_or_else(|| Error::Config(format!("unknown project `{project_id}`")))?;
+        let target = self
+            .find_by_id(linked_project_id)?
+            .ok_or_else(|| Error::Config(format!("unknown project `{linked_project_id}`")))?;
+        self.events.append(&DomainEvent::ProjectLinked {
+            project_id: project_id.clone(),
+            linked_project_id: linked_project_id.clone(),
+            relation: relation.to_owned(),
+            note: note.map(str::to_owned),
+        })?;
+        Ok(LinkedProject {
+            project_id: target.id,
+            name: target.name,
+            relation: relation.to_owned(),
+            note: note.map(str::to_owned),
+        })
+    }
+
+    /// Remove a directed project link. Returns `true` when a link existed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for storage failures.
+    pub fn unlink(&self, project_id: &ProjectId, linked_project_id: &ProjectId) -> Result<bool> {
+        let existed = self
+            .links(project_id)?
+            .iter()
+            .any(|link| &link.project_id == linked_project_id);
+        if existed {
+            self.events.append(&DomainEvent::ProjectUnlinked {
+                project_id: project_id.clone(),
+                linked_project_id: linked_project_id.clone(),
+            })?;
+        }
+        Ok(existed)
+    }
+
+    /// List a project's outgoing links in deterministic (name, id) order,
+    /// excluding tombstoned targets.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for storage failures.
+    pub fn links(&self, project_id: &ProjectId) -> Result<Vec<LinkedProject>> {
+        self.database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT p.id, p.name, l.relation, l.note
+                 FROM project_links l
+                 JOIN projects p ON p.id = l.linked_project_id
+                 WHERE l.project_id = ?1 AND p.tombstoned_at_ms IS NULL
+                 ORDER BY p.name, p.id",
+            )?;
+            let rows = statement.query_map([project_id.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?;
+            let mut links = Vec::new();
+            for row in rows {
+                let (id, name, relation, note) = row?;
+                links.push(LinkedProject {
+                    project_id: ProjectId::parse(&id)?,
+                    name,
+                    relation,
+                    note,
+                });
+            }
+            Ok(links)
         })
     }
 
@@ -1317,5 +1433,46 @@ mod tests {
             .expect("git")
             .diff_fingerprint;
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn project_links_roundtrip_with_validation() {
+        let temp = TempDir::new().expect("temp dir");
+        let registry = registry(&temp);
+        let root_a = temp.path().join("service-a");
+        let root_b = temp.path().join("service-b");
+        fs::create_dir_all(&root_a).expect("a dir");
+        fs::create_dir_all(&root_b).expect("b dir");
+        let a = registry.resolve_or_register(&root_a).expect("a").project.id;
+        let b = registry.resolve_or_register(&root_b).expect("b").project.id;
+
+        assert!(registry.link(&a, &a, "uses", None).is_err(), "self-link");
+        assert!(
+            registry.link(&a, &ProjectId::new(), "uses", None).is_err(),
+            "unknown target"
+        );
+        assert!(registry.link(&a, &b, "", None).is_err(), "empty relation");
+
+        let link = registry
+            .link(&a, &b, "interface", Some("b is a's API surface"))
+            .expect("link");
+        assert_eq!(link.project_id, b);
+        assert_eq!(link.relation, "interface");
+
+        let links = registry.links(&a).expect("links");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].project_id, b);
+        assert_eq!(links[0].note.as_deref(), Some("b is a's API surface"));
+        assert!(registry.links(&b).expect("reverse").is_empty(), "directed");
+
+        // Re-linking updates the relation instead of duplicating.
+        registry.link(&a, &b, "uses", None).expect("relink");
+        let links = registry.links(&a).expect("links after relink");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].relation, "uses");
+
+        assert!(registry.unlink(&a, &b).expect("unlink"));
+        assert!(!registry.unlink(&a, &b).expect("second unlink is a no-op"));
+        assert!(registry.links(&a).expect("empty").is_empty());
     }
 }

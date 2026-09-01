@@ -133,6 +133,9 @@ impl Default for JobsConfig {
     }
 }
 
+// Each bool is an independent, benchmarked ablation switch; collapsing them
+// into an enum would forbid measured combinations.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ContextConfig {
@@ -153,6 +156,11 @@ pub struct ContextConfig {
     /// Render validated memories from the deterministic derived compact
     /// projection. Disabled by default for an exact verbose-mode ablation.
     pub compact_injection: bool,
+    /// Also inject relevance-gated memories from explicitly linked projects
+    /// (`leb link add`), each under a heading naming the source repository.
+    /// Default ON: links themselves are always an explicit operator action,
+    /// and unlinked projects are never eligible.
+    pub include_linked_projects: bool,
 }
 
 /// Bounds for the optional deterministic semantic retrieval stage. The stage
@@ -307,6 +315,7 @@ impl Default for ContextConfig {
             max_injected_memories: 0,
             review_standards_section: true,
             compact_injection: false,
+            include_linked_projects: true,
         }
     }
 }

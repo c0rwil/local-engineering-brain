@@ -32,6 +32,16 @@ pub enum DomainEvent {
     ProjectTombstoned {
         project_id: ProjectId,
     },
+    ProjectLinked {
+        project_id: ProjectId,
+        linked_project_id: ProjectId,
+        relation: String,
+        note: Option<String>,
+    },
+    ProjectUnlinked {
+        project_id: ProjectId,
+        linked_project_id: ProjectId,
+    },
     StructuralScanApplied {
         project_id: ProjectId,
         scan_id: String,
@@ -117,6 +127,8 @@ impl DomainEvent {
             Self::ProjectRegistered { .. } => "PROJECT_REGISTERED",
             Self::ProjectAliasAdded { .. } => "PROJECT_ALIAS_ADDED",
             Self::ProjectTombstoned { .. } => "PROJECT_TOMBSTONED",
+            Self::ProjectLinked { .. } => "PROJECT_LINKED",
+            Self::ProjectUnlinked { .. } => "PROJECT_UNLINKED",
             Self::StructuralScanApplied { .. } => "STRUCTURAL_SCAN_APPLIED",
             Self::GitHistoryIngested { .. } => "GIT_HISTORY_INGESTED",
             Self::TaskStarted { .. } => "TASK_STARTED",
@@ -137,6 +149,8 @@ impl DomainEvent {
             Self::ProjectRegistered { project_id, .. }
             | Self::ProjectAliasAdded { project_id, .. }
             | Self::ProjectTombstoned { project_id }
+            | Self::ProjectLinked { project_id, .. }
+            | Self::ProjectUnlinked { project_id, .. }
             | Self::StructuralScanApplied { project_id, .. }
             | Self::GitHistoryIngested { project_id, .. }
             | Self::TaskStarted { project_id, .. }
@@ -165,6 +179,8 @@ impl DomainEvent {
             "PROJECT_REGISTERED"
             | "PROJECT_ALIAS_ADDED"
             | "PROJECT_TOMBSTONED"
+            | "PROJECT_LINKED"
+            | "PROJECT_UNLINKED"
             | "STRUCTURAL_SCAN_APPLIED"
             | "GIT_HISTORY_INGESTED"
             | "TASK_STARTED"
@@ -459,7 +475,9 @@ impl EventStore {
                         project.tombstoned = true;
                     }
                 }
-                DomainEvent::StructuralScanApplied { .. }
+                DomainEvent::ProjectLinked { .. }
+                | DomainEvent::ProjectUnlinked { .. }
+                | DomainEvent::StructuralScanApplied { .. }
                 | DomainEvent::GitHistoryIngested { .. }
                 | DomainEvent::TaskStarted { .. }
                 | DomainEvent::AttemptRecorded { .. }
@@ -561,6 +579,35 @@ fn apply_project_projection(
                 "UPDATE projects SET tombstoned_at_ms = ?2
                  WHERE id = ?1 AND tombstoned_at_ms IS NULL",
                 params![project_id.as_str(), created_at_ms],
+            )?;
+        }
+        DomainEvent::ProjectLinked {
+            project_id,
+            linked_project_id,
+            relation,
+            note,
+        } => {
+            transaction.execute(
+                "INSERT INTO project_links(project_id, linked_project_id, relation, note, created_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(project_id, linked_project_id)
+                 DO UPDATE SET relation = excluded.relation, note = excluded.note",
+                params![
+                    project_id.as_str(),
+                    linked_project_id.as_str(),
+                    relation,
+                    note,
+                    created_at_ms
+                ],
+            )?;
+        }
+        DomainEvent::ProjectUnlinked {
+            project_id,
+            linked_project_id,
+        } => {
+            transaction.execute(
+                "DELETE FROM project_links WHERE project_id = ?1 AND linked_project_id = ?2",
+                params![project_id.as_str(), linked_project_id.as_str()],
             )?;
         }
         DomainEvent::StructuralScanApplied { .. }
