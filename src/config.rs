@@ -28,6 +28,28 @@ pub struct Config {
     pub vault: VaultConfig,
     pub links: LinksConfig,
     pub architect: ArchitectConfig,
+    pub web: WebConfig,
+}
+
+/// The embedded workspace browser (`src/web.rs`), served by the daemon so
+/// the encyclopedia is always available while LEB is alive.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WebConfig {
+    /// Serve the loopback-only browser from the daemon. On by default:
+    /// the listener binds 127.0.0.1 only and reuses daemon data paths.
+    pub enabled: bool,
+    /// Loopback port for the browser.
+    pub port: u16,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            port: 11_436,
+        }
+    }
 }
 
 /// LLM-assisted architecture synthesis (`leb architect`, `src/architect.rs`).

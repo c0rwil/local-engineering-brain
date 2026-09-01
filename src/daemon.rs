@@ -1520,6 +1520,18 @@ async fn start_job_system(
         .await
         .map_err(|error| Error::Daemon(format!("job recovery task failed: {error}")))??;
 
+    // The workspace browser rides inside the daemon: loopback-only, and a
+    // busy port degrades to a warning instead of failing the daemon.
+    if config.web.enabled {
+        let web_config = config.clone();
+        let port = config.web.port;
+        tokio::spawn(async move {
+            if let Err(error) = crate::web::serve(web_config, port).await {
+                eprintln!("workspace browser not started on 127.0.0.1:{port}: {error}");
+            }
+        });
+    }
+
     let (stop_sender, stop_receiver) = tokio::sync::watch::channel(false);
     let handle = if config.jobs.enabled {
         let executor = JobExecutor::new(

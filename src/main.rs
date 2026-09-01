@@ -86,6 +86,11 @@ enum Commands {
         /// Import a bounded Graphify JSON export instead of native tree-sitter.
         #[arg(long, value_name = "JSON")]
         graphify: Option<PathBuf>,
+        /// Index fetched `origin/<default>` (shared truth) in a throwaway
+        /// worktree instead of this checkout. Documentation surfaces default
+        /// to this; agent context always uses the local tree.
+        #[arg(long)]
+        origin: bool,
         #[arg(long)]
         json: bool,
     },
@@ -602,15 +607,41 @@ fn run(cli: Cli) -> Result<bool> {
             path,
             changed,
             graphify,
+            origin,
             json,
-        } => run_index(
-            &overrides,
-            socket_override.as_deref(),
-            &path,
-            &changed,
-            graphify.as_deref(),
-            json,
-        ),
+        } => {
+            if origin {
+                let config_root = discover_project_root(&path)?;
+                let config = Config::load_for(Some(&config_root), &overrides)?;
+                let state_dir = config
+                    .storage
+                    .db_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join("worktrees");
+                let worktree = leb::gitref::checkout_origin_default(&path, &state_dir)?;
+                println!("Indexing {} (shared truth) …", worktree.reference);
+                let result = run_index(
+                    &overrides,
+                    socket_override.as_deref(),
+                    worktree.path(),
+                    &changed,
+                    graphify.as_deref(),
+                    json,
+                );
+                drop(worktree);
+                result
+            } else {
+                run_index(
+                    &overrides,
+                    socket_override.as_deref(),
+                    &path,
+                    &changed,
+                    graphify.as_deref(),
+                    json,
+                )
+            }
+        }
         Commands::Graph {
             query,
             path,

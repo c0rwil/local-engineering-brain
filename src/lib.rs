@@ -17,6 +17,7 @@ pub mod evaluation;
 pub mod events;
 pub mod experience;
 pub mod export;
+pub mod gitref;
 pub mod ids;
 pub mod jobs;
 pub mod learning;

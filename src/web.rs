@@ -31,6 +31,8 @@ struct WebState {
     socket_path: PathBuf,
     request_timeout: Duration,
     vault_root: PathBuf,
+    /// Scratch space for shared-truth (origin/main) worktrees.
+    worktree_dir: PathBuf,
 }
 
 impl WebState {
@@ -89,6 +91,12 @@ pub fn router(config: &Config) -> Router {
         socket_path: config.daemon.socket_path.clone(),
         request_timeout: Duration::from_millis(config.daemon.request_timeout_ms),
         vault_root: config.vault.root.clone(),
+        worktree_dir: config
+            .storage
+            .db_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("worktrees"),
     };
     Router::new()
         .route("/", get(index))
@@ -174,6 +182,11 @@ async fn module_symbols(
 #[derive(Deserialize)]
 struct WebReindex {
     project_id: ProjectId,
+    /// `"local"` opts into the developer's checkout; anything else (the
+    /// default) indexes shared truth — fetched `origin/<default>` in a
+    /// throwaway worktree that never touches the checkout.
+    #[serde(default)]
+    source: Option<String>,
 }
 
 async fn reindex(
@@ -191,12 +204,30 @@ async fn reindex(
                 "this project has no known local checkout to refresh".to_owned(),
             ))
         })?;
+    let use_local = request.source.as_deref() == Some("local");
     // Index scans can outlive the default deadline on large repos.
     let patient = DaemonClient::new(&state.socket_path, Duration::from_secs(300));
-    let response = patient.refresh_index(std::path::Path::new(&path)).await?;
+    if use_local {
+        let response = patient.refresh_index(std::path::Path::new(&path)).await?;
+        return Ok(Json(serde_json::json!({
+            "nodes_written": response.index.nodes_written,
+            "source": "local checkout",
+        })));
+    }
+    let repo = std::path::PathBuf::from(&path);
+    let worktree_dir = state.worktree_dir.clone();
+    // Worktree setup shells out to git; keep it off the async runtime.
+    let worktree = tokio::task::spawn_blocking(move || {
+        crate::gitref::checkout_origin_default(&repo, &worktree_dir)
+    })
+    .await
+    .map_err(|error| WebError(Error::Config(format!("worktree task: {error}"))))??;
+    let reference = worktree.reference.clone();
+    let response = patient.refresh_index(worktree.path()).await?;
+    drop(worktree);
     Ok(Json(serde_json::json!({
         "nodes_written": response.index.nodes_written,
-        "head": response.resolved.git.and_then(|git| git.head),
+        "source": reference,
     })))
 }
 
