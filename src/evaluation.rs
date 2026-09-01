@@ -1279,13 +1279,24 @@ mod tests {
         .expect("command");
         assert!(result.status.success());
         let pid = fs::read_to_string(temp.path().join("child.pid")).expect("pid");
-        let alive = Command::new("/bin/kill")
-            .args(["-0", pid.trim()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("kill probe")
-            .success();
+        // SIGKILL is delivered before run_command returns, but on Linux the
+        // orphaned child stays a zombie (kill -0 still succeeds) until the
+        // reaper collects it. Poll for eventual disappearance instead of
+        // asserting instantaneously.
+        let mut alive = true;
+        for _ in 0..100 {
+            alive = Command::new("/bin/kill")
+                .args(["-0", pid.trim()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .expect("kill probe")
+                .success();
+            if !alive {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
         assert!(!alive, "background child survived benchmark command");
     }
 }
