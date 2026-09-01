@@ -3399,7 +3399,9 @@ pub async fn refresh_origin_view(
         .map_err(|error| Error::Daemon(format!("shadow metadata dir: {error}")))?;
     std::fs::write(
         metadata_dir.join("project.toml"),
-        format!("project_id = \"{shadow_id}\"\nname = \"{project_name}@origin\"\n"),
+        format!(
+            "project_id = \"{shadow_id}\"\nname = \"{project_name}@origin\"\nderived_view = true\n"
+        ),
     )
     .map_err(|error| Error::Daemon(format!("shadow metadata: {error}")))?;
 

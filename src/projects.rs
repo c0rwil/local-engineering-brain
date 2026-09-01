@@ -25,6 +25,11 @@ struct ProjectMetadataFile {
     project_id: ProjectId,
     name: Option<String>,
     parent_project_id: Option<ProjectId>,
+    /// Marks a derived documentation view (an origin/main shadow). View
+    /// projects register with NO remote or root-commit identity so they can
+    /// coexist with the real project and never capture its resolutions.
+    #[serde(default)]
+    derived_view: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -184,14 +189,22 @@ impl ProjectRegistry {
         } = observation;
 
         let mut project = if let Some(metadata) = &metadata {
+            let derived_view = metadata.derived_view.unwrap_or(false);
             self.find_by_id(&metadata.project_id)?
                 .unwrap_or_else(|| ProjectRecord {
                     id: metadata.project_id.clone(),
                     name: metadata.name.clone().unwrap_or_else(|| project_name(&root)),
-                    canonical_remote: git
-                        .as_ref()
-                        .and_then(|state| state.canonical_remote.clone()),
-                    root_commit: git.as_ref().and_then(|state| state.root_commit.clone()),
+                    canonical_remote: if derived_view {
+                        None
+                    } else {
+                        git.as_ref()
+                            .and_then(|state| state.canonical_remote.clone())
+                    },
+                    root_commit: if derived_view {
+                        None
+                    } else {
+                        git.as_ref().and_then(|state| state.root_commit.clone())
+                    },
                     parent_project_id: metadata
                         .parent_project_id
                         .clone()
@@ -730,6 +743,7 @@ fn persist_project_metadata(root: &Path, project: &ProjectRecord) -> Result<()> 
         project_id: project.id.clone(),
         name: Some(project.name.clone()),
         parent_project_id: project.parent_project_id.clone(),
+        derived_view: None,
     };
     let contents = toml::to_string_pretty(&metadata)?;
     let temporary = directory.join(format!(".project.toml.{}.tmp", Uuid::new_v4()));
