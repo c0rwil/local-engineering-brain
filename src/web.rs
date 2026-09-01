@@ -17,7 +17,9 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::daemon::{DaemonClient, FactSetRequest, FactUnsetRequest, LinkScanRequest};
+use crate::daemon::{
+    DaemonClient, FactSetRequest, FactUnsetRequest, LinkScanRequest, ModuleMapRequest,
+};
 use crate::error::{Error, Result};
 use crate::ids::ProjectId;
 
@@ -92,6 +94,7 @@ pub fn router(config: &Config) -> Router {
         .route("/api/workspace", get(workspace))
         .route("/api/architecture", get(architecture))
         .route("/api/activity", get(activity))
+        .route("/api/modulemap", post(module_map))
         .route("/api/facts/set", post(fact_set))
         .route("/api/facts/unset", post(fact_unset))
         .route("/api/linkscan", post(link_scan))
@@ -122,6 +125,26 @@ async fn workspace(
     State(state): State<WebState>,
 ) -> std::result::Result<Json<crate::daemon::WorkspaceSnapshot>, WebError> {
     Ok(Json(state.client().workspace().await?))
+}
+
+#[derive(Deserialize)]
+struct WebModuleMap {
+    project_id: ProjectId,
+}
+
+async fn module_map(
+    State(state): State<WebState>,
+    Json(request): Json<WebModuleMap>,
+) -> std::result::Result<Json<crate::vault::ModuleMap>, WebError> {
+    // Match the daemon's long deadline: the edge-resolution join is slow.
+    let patient = DaemonClient::new(&state.socket_path, Duration::from_secs(180));
+    Ok(Json(
+        patient
+            .module_map(&ModuleMapRequest {
+                project_id: request.project_id,
+            })
+            .await?,
+    ))
 }
 
 async fn activity(

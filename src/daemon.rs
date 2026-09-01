@@ -97,6 +97,7 @@ const API_FACT_LIST: &str = "/api/v1/projects/facts/list";
 const API_ARCHITECT_DOSSIER: &str = "/api/v1/architect/dossier";
 const API_WORKSPACE: &str = "/api/v1/workspace";
 const API_ACTIVITY: &str = "/api/v1/workspace/activity";
+const API_MODULE_MAP: &str = "/api/v1/projects/module-map";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -347,6 +348,11 @@ pub struct ActivityEvent {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WorkspaceSnapshot {
     pub projects: Vec<WorkspaceProject>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ModuleMapRequest {
+    pub project_id: ProjectId,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1087,6 +1093,16 @@ impl DaemonClient {
         .await
     }
 
+    /// Compute a project's module map (expensive; seconds on large repos).
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn module_map(&self, request: &ModuleMapRequest) -> Result<crate::vault::ModuleMap> {
+        self.request(hyper::Method::POST, API_MODULE_MAP, Some(request))
+            .await
+    }
+
     /// Fetch the newest workspace events for activity feeds.
     ///
     /// # Errors
@@ -1412,6 +1428,7 @@ where
         .route(API_ARCHITECT_DOSSIER, get(architect_dossier))
         .route(API_WORKSPACE, get(workspace_snapshot))
         .route(API_ACTIVITY, get(workspace_activity))
+        .route(API_MODULE_MAP, post(project_module_map))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -2311,6 +2328,21 @@ async fn workspace_snapshot(
     })
     .await?;
     Ok(Json(snapshot))
+}
+
+async fn project_module_map(
+    State(state): State<DaemonState>,
+    Json(request): Json<ModuleMapRequest>,
+) -> std::result::Result<Json<crate::vault::ModuleMap>, ApiError> {
+    let database = state.database.clone();
+    // Edge resolution outlives the default deadline on the biggest repos.
+    let deadline =
+        Duration::from_millis(state.config.daemon.request_timeout_ms).max(Duration::from_secs(180));
+    let map = run_blocking_with_timeout(&state, deadline, move || {
+        crate::vault::module_map(&database, &request.project_id)
+    })
+    .await?;
+    Ok(Json(map))
 }
 
 async fn workspace_activity(

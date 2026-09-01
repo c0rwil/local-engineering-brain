@@ -174,6 +174,13 @@
     background: var(--chip); border: 1px solid var(--line); color: var(--accent);
     border-radius: .5rem; padding: .1rem .5rem; font-size: .74rem;
   }
+  .modmap { overflow-x: auto; margin-top: .5rem; }
+  .modmap svg { display: block; }
+  .modmap .m-node rect { fill: var(--chip); stroke: var(--line); rx: 6; }
+  .modmap .m-node text { fill: var(--ink); font-size: 11px; font-family: var(--mono); }
+  .modmap .m-node .count { fill: var(--muted); font-size: 9.5px; }
+  .modmap .m-edge path { stroke: var(--muted); fill: none; opacity: .55; marker-end: url(#marrow); }
+  .modmap .m-edge text { fill: var(--muted); font-size: 9px; font-family: var(--mono); }
   ol.activity { list-style: none; margin: 0; padding: 0; }
   ol.activity li {
     display: flex; gap: .7rem; align-items: baseline;
@@ -377,6 +384,10 @@ function card(project) {
     ${factRows(project)}
     ${linkRows(project)}
     ${memoryRows(project)}
+    ${project.nodes > 0 ? `<details class="modmap-details" data-id="${esc(project.id)}">
+      <summary>Module Map</summary>
+      <div class="modmap" role="img" aria-label="Module dependency diagram for ${esc(project.name)}">Loading…</div>
+    </details>` : ""}
     <details>
       <summary>Add or Update Fact</summary>
       <form class="fact-form" data-id="${esc(project.id)}">
@@ -411,6 +422,14 @@ function renderCards() {
   }
   for (const btn of el.querySelectorAll("button.scan")) {
     btn.addEventListener("click", onScan);
+  }
+  for (const det of el.querySelectorAll("details.modmap-details")) {
+    det.addEventListener("toggle", () => {
+      if (det.open && !det.dataset.loaded) {
+        det.dataset.loaded = "1";
+        loadModuleMap(det.dataset.id, det.querySelector(".modmap"));
+      }
+    }, { once: false });
   }
   const total = state.data.projects.length;
   const links = state.data.projects.reduce((n, p) => n + p.links.length, 0);
@@ -477,6 +496,85 @@ async function onScan(event) {
   } finally {
     button.disabled = false;
   }
+}
+
+/* ---- per-service module map: layered left-to-right SVG ---- */
+const moduleMapCache = new Map();
+
+async function loadModuleMap(projectId, el) {
+  try {
+    let map = moduleMapCache.get(projectId);
+    if (!map) {
+      el.textContent = "Computing from the live code graph…";
+      map = await api("/api/modulemap", { project_id: projectId });
+      moduleMapCache.set(projectId, map);
+    }
+    el.innerHTML = renderModuleMap(map);
+  } catch (error) {
+    el.innerHTML = `<span class="error">${esc(error.message)}</span>`;
+  }
+}
+
+function renderModuleMap(map) {
+  if (!map.groups.length) return `<p class="empty">No modules indexed yet.</p>`;
+  // Longest-path layering over the aggregated edges; cycles settle after a
+  // bounded number of relaxation passes.
+  const layer = new Map(map.groups.map(g => [g.label, 0]));
+  for (let pass = 0; pass < map.groups.length; pass++) {
+    let changed = false;
+    for (const e of map.edges) {
+      const next = (layer.get(e.from) ?? 0) + 1;
+      if (next > (layer.get(e.to) ?? 0) && next < map.groups.length) {
+        layer.set(e.to, next); changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  const columns = new Map();
+  for (const g of map.groups) {
+    const l = layer.get(g.label) ?? 0;
+    if (!columns.has(l)) columns.set(l, []);
+    columns.get(l).push(g);
+  }
+  const layers = [...columns.keys()].sort((a, b) => a - b);
+  const colW = 190, rowH = 46, padX = 20, padY = 16;
+  const H = Math.max(...layers.map(l => columns.get(l).length)) * rowH + padY * 2;
+  const W = layers.length * colW + padX * 2;
+  const pos = new Map();
+  layers.forEach((l, ci) => {
+    const col = columns.get(l);
+    col.sort((a, b) => b.nodes - a.nodes);
+    const offset = (H - col.length * rowH) / 2;
+    col.forEach((g, ri) => {
+      pos.set(g.label, { x: padX + ci * colW + 80, y: offset + ri * rowH + rowH / 2 });
+    });
+  });
+  let out = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+    <defs><marker id="marrow" viewBox="0 0 10 10" refX="8" refY="5"
+      markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="currentColor" opacity="0.6"/></marker></defs>`;
+  const strongest = Math.max(...map.edges.map(e => e.weight), 1);
+  for (const e of map.edges) {
+    const a = pos.get(e.from), b = pos.get(e.to);
+    if (!a || !b) continue;
+    const x1 = a.x + 72, x2 = b.x - 72;
+    const mx = (x1 + x2) / 2;
+    const width = 1 + 1.6 * (e.weight / strongest);
+    out += `<g class="m-edge"><path d="M ${x1} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${x2} ${b.y}"
+      stroke-width="${width.toFixed(1)}"/>
+      <text x="${mx}" y="${(a.y + b.y) / 2 - 3}" text-anchor="middle">${e.weight}</text></g>`;
+  }
+  for (const g of map.groups) {
+    const p = pos.get(g.label);
+    if (!p) continue;
+    const label = g.label.length > 20 ? g.label.slice(0, 19) + "…" : g.label;
+    out += `<g class="m-node">
+      <rect x="${p.x - 72}" y="${p.y - 17}" width="144" height="34"/>
+      <text x="${p.x}" y="${p.y - 1}" text-anchor="middle" translate="no">${esc(label)}</text>
+      <text class="count" x="${p.x}" y="${p.y + 11}" text-anchor="middle">${g.nodes.toLocaleString()} nodes</text>
+    </g>`;
+  }
+  return out + "</svg>";
 }
 
 /* ---- minimal markdown for the architecture guide ---- */

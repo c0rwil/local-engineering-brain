@@ -49,6 +49,58 @@ struct ModuleGroup {
     node_count: i64,
 }
 
+/// One module-map node: a directory group and how many graph nodes live in it.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ModuleMapGroup {
+    pub label: String,
+    pub nodes: i64,
+}
+
+/// One aggregated cross-module dependency with its reference count.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ModuleMapEdge {
+    pub from: String,
+    pub to: String,
+    pub weight: i64,
+}
+
+/// A project's continuously-derived module map — the same data the vault
+/// renders as mermaid, exposed for other surfaces (web UI, tooling).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ModuleMap {
+    pub groups: Vec<ModuleMapGroup>,
+    pub edges: Vec<ModuleMapEdge>,
+}
+
+/// Compute a project's bounded module map from the canonical graph. This
+/// runs the cross-module edge-resolution join (seconds on large repos) —
+/// call it lazily and off the interactive path.
+///
+/// # Errors
+///
+/// Returns storage errors.
+pub fn module_map(database: &Database, project_id: &ProjectId) -> Result<ModuleMap> {
+    let builder = VaultBuilder::new(database.clone(), PathBuf::new());
+    let groups = builder.module_groups(project_id)?;
+    let edges = builder.group_edges(project_id)?;
+    let labels: std::collections::BTreeSet<&str> =
+        groups.iter().map(|group| group.label.as_str()).collect();
+    Ok(ModuleMap {
+        groups: groups
+            .iter()
+            .map(|group| ModuleMapGroup {
+                label: group.label.clone(),
+                nodes: group.node_count,
+            })
+            .collect(),
+        edges: edges
+            .into_iter()
+            .filter(|(from, to, _)| labels.contains(from.as_str()) && labels.contains(to.as_str()))
+            .map(|(from, to, weight)| ModuleMapEdge { from, to, weight })
+            .collect(),
+    })
+}
+
 impl VaultBuilder {
     #[must_use]
     pub const fn new(database: Database, root: PathBuf) -> Self {
