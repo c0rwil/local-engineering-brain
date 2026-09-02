@@ -1459,7 +1459,7 @@ mod tests {
             .find(|node| node.label == "check_token")
             .expect("auth node");
 
-        let mut seed = |claim: &str, importance: f64, node_ids: Vec<crate::ids::NodeId>| {
+        let seed = |claim: &str, importance: f64, node_ids: Vec<crate::ids::NodeId>| {
             let daemon = daemon.clone();
             let project_id = project_id.clone();
             let claim = claim.to_owned();
@@ -1546,7 +1546,7 @@ mod tests {
             let _ = proxy_stop_rx.await;
         }));
 
-        let send = |task: &str| {
+        let send_task = |task: &str| {
             let task = task.to_owned();
             let project = project.clone();
             async move {
@@ -1565,7 +1565,7 @@ mod tests {
         };
 
         // Arm A: clean tree. The importance edge picks the decoy.
-        send("tidy the session flow").await;
+        send_task("tidy the session flow").await;
         // Arm B: auth.rs becomes dirty WITHOUT changing the anchored symbol
         // (append-only edit, so drift quarantine must not fire).
         std::fs::write(
@@ -1573,12 +1573,13 @@ mod tests {
             "pub fn check_token() -> bool { true }\npub fn refresh_token() -> bool { true }\n",
         )
         .expect("append edit");
-        send("tidy the session flow again").await;
+        send_task("tidy the session flow again").await;
 
-        let forwarded = captured.lock().expect("capture");
-        assert_eq!(forwarded.len(), 2);
-        let clean = forwarded[0].to_string();
-        let dirty = forwarded[1].to_string();
+        let (clean, dirty) = {
+            let forwarded = captured.lock().expect("capture");
+            assert_eq!(forwarded.len(), 2);
+            (forwarded[0].to_string(), forwarded[1].to_string())
+        };
         assert!(
             clean.contains("price tables") && !clean.contains("token checks"),
             "clean tree: importance edge wins the single slot: {clean}"
@@ -1587,7 +1588,6 @@ mod tests {
             dirty.contains("token checks") && !dirty.contains("price tables"),
             "dirty auth.rs: structural overlap must flip the slot: {dirty}"
         );
-        drop(forwarded);
 
         let _ = proxy_stop_tx.send(());
         let _ = runtime_stop_tx.send(());
