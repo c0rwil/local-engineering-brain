@@ -165,6 +165,7 @@ impl VaultBuilder {
         Ok(total)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn render_project_index(
         &self,
         registry: &ProjectRegistry,
@@ -207,6 +208,21 @@ impl VaultBuilder {
                 .collect::<Vec<_>>()
                 .join(", ");
             let _ = writeln!(out, "- Graph: {summary}");
+        }
+
+        let technologies = registry
+            .alias_paths(project_id)?
+            .into_iter()
+            .find(|path| path.is_dir())
+            .map(|root| crate::techstack::detect(&root))
+            .unwrap_or_default();
+        if !technologies.is_empty() {
+            let stack = technologies
+                .iter()
+                .map(|tech| format!("`{}`", md_safe(&tech.name)))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            let _ = writeln!(out, "- Built with: {stack}");
         }
 
         if !facts.is_empty() {
