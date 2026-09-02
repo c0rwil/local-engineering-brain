@@ -715,7 +715,8 @@ impl ContextCompiler {
             let facts = rows.collect::<std::result::Result<Vec<_>, _>>()?;
             let mut fact_statement = connection.prepare(
                 "SELECT key, value FROM project_facts
-                 WHERE project_id = ?1 ORDER BY key LIMIT 24",
+                 WHERE project_id = ?1 AND key NOT LIKE 'internal.%'
+                 ORDER BY key LIMIT 24",
             )?;
             let fact_rows = fact_statement.query_map([project_id.as_str()], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
