@@ -217,6 +217,10 @@ enum Commands {
         action: FactAction,
     },
 
+    /// Print the CLAUDE.md snippet that teaches a coding agent the LEB
+    /// episode loop (recall, record, verify, learn) via the MCP tools.
+    AgentMd,
+
     /// Sweep a folder of repositories into the brain: register, index,
     /// auto-link, and export the vault for every git repo found.
     Onboard {
@@ -609,6 +613,10 @@ fn run(cli: Cli) -> Result<bool> {
             json,
         ),
         Commands::Fact { action } => run_fact(&overrides, socket_override.as_deref(), &action),
+        Commands::AgentMd => {
+            println!("{AGENT_MD_SNIPPET}");
+            Ok(true)
+        }
         Commands::Onboard { path, claude, json } => {
             run_onboard(&overrides, socket_override.as_deref(), &path, claude, json)
         }
@@ -1834,6 +1842,38 @@ fn run_fact(
     }
     Ok(true)
 }
+
+const AGENT_MD_SNIPPET: &str = r#"## Engineering memory (LEB)
+
+This repository is tracked by LEB, a local evidence-gated memory system. The
+`leb` MCP server is available; use it so finished work compounds instead of
+evaporating.
+
+At task start:
+- Call `leb_project_status` once to resolve the project id, then `leb_recall`
+  with the task text (pass `task_id` when you have one) - it returns validated
+  team knowledge with a why for every item. Treat `- MUST:` review standards
+  as hard requirements.
+- For cross-repo work, `leb_workspace` shows who calls whom, hosting, and
+  each repo's technology stack; `leb_symbol_search` finds where a symbol is
+  defined across every repo.
+
+While working (substantive tasks, not trivial edits):
+1. `leb_task_start` with the user's request.
+2. After each meaningful approach, `leb_record_attempt` (summary phrased as
+   the reusable takeaway, outcome success/failure).
+3. When tests/builds/lints run, `leb_record_evidence` with the command and
+   exit code (kind `test_result`/`lint_result`..., strength `deterministic`).
+   Record FAILING runs too - fail-then-pass pairs teach conventions.
+4. On completion, `leb_mark_outcome` (outcome + whether the user accepted).
+
+After accepted work that surfaced a durable rule:
+- `leb_learn` with a claim phrased for a future engineer, linking the task
+  and its passing evidence. Candidates never inject until promoted, so err on
+  the side of recording.
+- If a failed approach was instructive, it is already captured by the failed
+  attempt; `leb_get_past_failures` replays those to future sessions.
+"#;
 
 fn run_onboard(
     overrides: &ConfigOverrides,

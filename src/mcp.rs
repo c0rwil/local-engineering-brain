@@ -8,12 +8,14 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::context::{ContextCompileRequest, ContextMode};
 use crate::daemon::{
-    ContextExplainRequest, DaemonClient, MemoryCreateRequest, MemoryListRequest,
-    PastFailuresRequest, TaskFinishRequest, WorldNeighborsRequest, WorldSearchRequest,
+    AttemptCreateRequest, ContextExplainRequest, DaemonClient, EvidenceCreateRequest,
+    MemoryCreateRequest, MemoryListRequest, PastFailuresRequest, TaskFinishRequest,
+    TaskStartRequest, WorldNeighborsRequest, WorldSearchRequest,
 };
 use crate::error::{Error, Result};
-use crate::experience::TaskOutcome;
-use crate::ids::{ContextRunId, MemoryId, NodeId, ProjectId, TaskId};
+use crate::experience::{AttemptOutcome, EvidenceStrength, TaskOutcome};
+use crate::ids::{AttemptId, ContextRunId, MemoryId, NodeId, ProjectId, TaskId};
+use crate::learning::DistillationRequest;
 use crate::memory::MemoryDraft;
 
 const MODERN_PROTOCOL: &str = "2026-07-28";
@@ -199,6 +201,176 @@ impl McpServer {
                     )));
                 }
                 serde_json::to_value(memory)?
+            }
+            "leb_task_start" => {
+                let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
+                serde_json::to_value(
+                    self.client
+                        .start_task(&TaskStartRequest {
+                            project_id,
+                            prompt: required_string(&arguments, "prompt")?.to_owned(),
+                            session_id: arguments
+                                .get("session_id")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                        })
+                        .await?,
+                )?
+            }
+            "leb_record_attempt" => {
+                let task_id = TaskId::parse(required_string(&arguments, "task_id")?)?;
+                serde_json::to_value(
+                    self.client
+                        .record_attempt(
+                            &task_id,
+                            &AttemptCreateRequest {
+                                strategy_summary: required_string(&arguments, "summary")?
+                                    .to_owned(),
+                                outcome: parse_attempt_outcome(required_string(
+                                    &arguments, "outcome",
+                                )?)?,
+                                files: string_array(&arguments, "files")?,
+                            },
+                        )
+                        .await?,
+                )?
+            }
+            "leb_record_evidence" => {
+                let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
+                serde_json::to_value(
+                    self.client
+                        .record_evidence(&EvidenceCreateRequest {
+                            project_id,
+                            task_id: arguments
+                                .get("task_id")
+                                .and_then(Value::as_str)
+                                .map(TaskId::parse)
+                                .transpose()?,
+                            attempt_id: arguments
+                                .get("attempt_id")
+                                .and_then(Value::as_str)
+                                .map(AttemptId::parse)
+                                .transpose()?,
+                            kind: required_string(&arguments, "kind")?.to_owned(),
+                            strength: parse_strength(required_string(&arguments, "strength")?)?,
+                            commit_hash: None,
+                            command: arguments
+                                .get("command")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                            exit_code: arguments
+                                .get("exit_code")
+                                .and_then(Value::as_i64)
+                                .and_then(|code| i32::try_from(code).ok()),
+                            artifact_text: arguments
+                                .get("artifact")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_owned(),
+                            metadata: json!({}),
+                        })
+                        .await?,
+                )?
+            }
+            "leb_learn" => {
+                let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
+                let task_ids = string_array(&arguments, "task_ids")?
+                    .iter()
+                    .map(|value| TaskId::parse(value))
+                    .collect::<Result<Vec<_>>>()?;
+                let evidence_ids = string_array(&arguments, "evidence_ids")?
+                    .iter()
+                    .map(|value| crate::ids::EvidenceId::parse(value))
+                    .collect::<Result<Vec<_>>>()?;
+                serde_json::to_value(
+                    self.client
+                        .distill(&DistillationRequest {
+                            memory: MemoryDraft {
+                                scope_type: "project".to_owned(),
+                                scope_id: project_id.to_string(),
+                                kind: arguments
+                                    .get("kind")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("lesson")
+                                    .to_owned(),
+                                claim: required_string(&arguments, "claim")?.to_owned(),
+                                rationale: arguments
+                                    .get("rationale")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("Evidence-linked task distillation")
+                                    .to_owned(),
+                                confidence: 0.5,
+                                importance: 0.7,
+                                tags: string_array(&arguments, "tags")?,
+                                valid_from_commit: None,
+                                valid_to_commit: None,
+                                trust_source: "agent_inference".to_owned(),
+                                evidence_ids,
+                                source_task_ids: task_ids,
+                                node_ids: Vec::new(),
+                            },
+                            project_id,
+                        })
+                        .await?,
+                )?
+            }
+            "leb_workspace" => {
+                let snapshot = self.client.workspace().await?;
+                let summary = snapshot
+                    .projects
+                    .iter()
+                    .map(|project| {
+                        json!({
+                            "project_id": project.id,
+                            "name": project.name,
+                            "facts": project.facts,
+                            "links": project.links,
+                            "technologies": project.technologies
+                                .iter()
+                                .map(|tech| tech.name.clone())
+                                .collect::<Vec<_>>(),
+                            "validated_memories": project.validated_memories,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                json!(summary)
+            }
+            "leb_symbol_search" => {
+                let query = required_string(&arguments, "query")?.to_owned();
+                let snapshot = self.client.workspace().await?;
+                let mut hits = Vec::new();
+                for project in &snapshot.projects {
+                    let Ok(nodes) = self
+                        .client
+                        .search_world(&WorldSearchRequest {
+                            project_id: project.id.clone(),
+                            query: query.clone(),
+                            limit: 6,
+                        })
+                        .await
+                    else {
+                        continue;
+                    };
+                    for node in nodes {
+                        if node.kind == "ExternalReference" {
+                            continue;
+                        }
+                        hits.push(json!({
+                            "project": project.name,
+                            "kind": node.kind,
+                            "label": node.label,
+                            "file_path": node.file_path,
+                        }));
+                        if hits.len() >= 30 {
+                            break;
+                        }
+                    }
+                }
+                json!(hits)
+            }
+            "leb_architecture_guide" => {
+                let dossier = self.client.architect_dossier().await?;
+                json!({ "dossier": dossier })
             }
             "leb_mark_outcome" => {
                 let task_id = TaskId::parse(required_string(&arguments, "task_id")?)?;
@@ -405,6 +577,7 @@ fn discover_result() -> Value {
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn tool_catalog() -> Value {
     json!({
         "tools": [
@@ -452,6 +625,55 @@ fn tool_catalog() -> Value {
                 "type": "object", "properties": {"memory_id": {"type": "string"}},
                 "required": ["memory_id"], "additionalProperties": false
             })),
+            tool("leb_task_start", "Open an explicit task episode BEFORE starting substantive work, so attempts and evidence attach to it and finished work can be learned from", &json!({
+                "type": "object", "properties": {
+                    "project_id": {"type": "string"},
+                    "prompt": {"type": "string", "description": "The user's task, verbatim or summarized"},
+                    "session_id": {"type": "string"}
+                }, "required": ["project_id", "prompt"], "additionalProperties": false
+            })),
+            tool("leb_record_attempt", "Record one strategy attempt on an open task (outcome: success|failure|partial|unknown)", &json!({
+                "type": "object", "properties": {
+                    "task_id": {"type": "string"},
+                    "summary": {"type": "string", "description": "What was tried, phrased as the reusable takeaway"},
+                    "outcome": {"type": "string"},
+                    "files": {"type": "array", "items": {"type": "string"}}
+                }, "required": ["task_id", "summary", "outcome"], "additionalProperties": false
+            })),
+            tool("leb_record_evidence", "Attach verification evidence (a test/build/lint run) to a task. kind: test_result|build_result|lint_result|typecheck_result; strength: deterministic|observational|inferred. Only deterministic exit-0 evidence on successful accepted tasks can later promote memories", &json!({
+                "type": "object", "properties": {
+                    "project_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "attempt_id": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "strength": {"type": "string"},
+                    "command": {"type": "string"},
+                    "exit_code": {"type": "integer"},
+                    "artifact": {"type": "string", "description": "Bounded output excerpt"}
+                }, "required": ["project_id", "kind", "strength"], "additionalProperties": false
+            })),
+            tool("leb_learn", "Distill a finished, evidence-backed task into a candidate memory (kind: lesson|preference). Candidates never inject until promoted through evidence gates", &json!({
+                "type": "object", "properties": {
+                    "project_id": {"type": "string"},
+                    "claim": {"type": "string", "description": "The reusable rule, phrased for a future engineer"},
+                    "kind": {"type": "string"},
+                    "rationale": {"type": "string"},
+                    "task_ids": {"type": "array", "items": {"type": "string"}},
+                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                    "tags": {"type": "array", "items": {"type": "string"}}
+                }, "required": ["project_id", "claim", "task_ids", "evidence_ids"], "additionalProperties": false
+            })),
+            tool("leb_workspace", "Map of every repository in the workspace: facts (hosting, role), links (who calls whom), technology stacks, and memory counts. Use before cross-repo changes", &json!({
+                "type": "object", "properties": {}, "additionalProperties": false
+            })),
+            tool("leb_symbol_search", "Find which repository and file defines a symbol, across the whole workspace", &json!({
+                "type": "object", "properties": {
+                    "query": {"type": "string"}
+                }, "required": ["query"], "additionalProperties": false
+            })),
+            tool("leb_architecture_guide", "The deterministic workspace architecture dossier: per-repo facts, tech, links, modules, and route surfaces", &json!({
+                "type": "object", "properties": {}, "additionalProperties": false
+            })),
             tool("leb_mark_outcome", "Close an explicit task with an observed outcome", &json!({
                 "type": "object", "properties": {
                     "task_id": {"type": "string"},
@@ -498,6 +720,27 @@ fn required_string<'a>(arguments: &'a Value, key: &str) -> Result<&'a str> {
 
 fn optional_u64(arguments: &Value, key: &str) -> Option<u64> {
     arguments.get(key).and_then(Value::as_u64)
+}
+
+fn parse_attempt_outcome(value: &str) -> Result<AttemptOutcome> {
+    match value {
+        "success" => Ok(AttemptOutcome::Success),
+        "failure" => Ok(AttemptOutcome::Failure),
+        "partial" => Ok(AttemptOutcome::Partial),
+        "unknown" => Ok(AttemptOutcome::Unknown),
+        other => Err(Error::Config(format!("unknown attempt outcome `{other}`"))),
+    }
+}
+
+fn parse_strength(value: &str) -> Result<EvidenceStrength> {
+    match value {
+        "deterministic" => Ok(EvidenceStrength::Deterministic),
+        "observational" => Ok(EvidenceStrength::Observational),
+        "inferred" => Ok(EvidenceStrength::Inferred),
+        other => Err(Error::Config(format!(
+            "unknown evidence strength `{other}`"
+        ))),
+    }
 }
 
 fn parse_task_outcome(value: &str) -> Result<TaskOutcome> {

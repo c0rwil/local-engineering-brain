@@ -583,7 +583,11 @@ impl ContextCompiler {
         let stable_budget = self
             .stable_prefix_tokens
             .min(request.token_budget.saturating_mul(15) / 100);
-        let stable_prefix = self.stable_prefix(&request.project_id, stable_budget)?;
+        let stable_prefix = self.stable_prefix(
+            &request.project_id,
+            stable_budget,
+            request.repository_root.as_deref(),
+        )?;
         let stable_tokens = estimate_tokens(&stable_prefix);
         let remaining = request.token_budget.saturating_sub(stable_tokens);
         let candidates = self.retriever.retrieve(&RetrievalRequest {
@@ -684,7 +688,12 @@ impl ContextCompiler {
         Ok((projection.text, projection.token_estimate))
     }
 
-    fn stable_prefix(&self, project_id: &ProjectId, budget: u32) -> Result<String> {
+    fn stable_prefix(
+        &self,
+        project_id: &ProjectId,
+        budget: u32,
+        repository_root: Option<&Path>,
+    ) -> Result<String> {
         if budget == 0 {
             return Ok(String::new());
         }
@@ -732,6 +741,22 @@ impl ContextCompiler {
                 budget,
             ) {
                 break;
+            }
+        }
+        // The detected stack is the single highest-signal orientation line
+        // for an agent: it stops re-derivation of "what is this built with".
+        if let Some(root) = repository_root {
+            let stack = crate::techstack::detect(root)
+                .into_iter()
+                .map(|tech| tech.name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            if !stack.is_empty() {
+                append_if_fits(
+                    &mut output,
+                    &format!("- built-with: {}\n", context_safe(&stack)),
+                    budget,
+                );
             }
         }
         for (kind, label) in facts.1 {
