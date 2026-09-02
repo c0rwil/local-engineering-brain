@@ -238,6 +238,10 @@ enum Commands {
         /// when the section is already present). Repeatable.
         #[arg(long, value_name = "REPO")]
         install: Vec<PathBuf>,
+        /// Install at the USER level (~/.claude/CLAUDE.md): the agent loop
+        /// applies universally instead of per repository.
+        #[arg(long)]
+        global: bool,
         /// Agent file name to install into (CLAUDE.md for Claude Code,
         /// AGENTS.md for Codex).
         #[arg(long, default_value = "CLAUDE.md")]
@@ -398,6 +402,11 @@ enum HooksAction {
     Install {
         #[arg(default_value = ".")]
         repo: PathBuf,
+        /// Install at the USER level (~/.claude/settings.json) so every
+        /// Claude session in every registered repo uses LEB. Unregistered
+        /// repos are untouched: the hooks stay silent there.
+        #[arg(long)]
+        global: bool,
     },
     /// Print the hooks JSON without writing anything.
     Show,
@@ -672,7 +681,15 @@ fn run(cli: Cli) -> Result<bool> {
         Commands::Fact { action } => run_fact(&overrides, socket_override.as_deref(), &action),
         Commands::Hook { event } => run_hook_event(&overrides, socket_override.as_deref(), &event),
         Commands::Hooks { action } => run_hooks_action(&action),
-        Commands::AgentMd { install, file } => {
+        Commands::AgentMd {
+            install,
+            global,
+            file,
+        } => {
+            let mut install = install.clone();
+            if global {
+                install.push(dirs_home().join(".claude"));
+            }
             if install.is_empty() {
                 println!("{AGENT_MD_SNIPPET}");
             }
@@ -1939,6 +1956,10 @@ fn run_fact(
     Ok(true)
 }
 
+fn dirs_home() -> PathBuf {
+    std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from)
+}
+
 const AGENT_MD_SNIPPET: &str = r"## Engineering memory (LEB)
 
 This repository is tracked by LEB, a local evidence-gated memory system. The
@@ -2021,6 +2042,17 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
             if prompt.is_empty() {
                 return Ok(true);
             }
+            // Universal-install safety: only engage for repositories already
+            // registered in the brain. Resolving would REGISTER (and write
+            // .leb/project.toml into) any repo the user happens to open;
+            // a global hook must never do that silently. `leb index <repo>`
+            // remains the explicit opt-in per repository.
+            let Ok(lookup) = block_on(client.lookup_project(&cwd)) else {
+                return Ok(true);
+            };
+            if lookup.project.is_none() {
+                return Ok(true);
+            }
             let Ok(status) = block_on(client.resolve_project(&cwd)) else {
                 return Ok(true);
             };
@@ -2053,6 +2085,7 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
                         task_id: task.id,
                         project_id,
                         last_verification_exit: None,
+                        last_evidence_fingerprint: None,
                     },
                 );
             }
@@ -2106,6 +2139,10 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
             let Some(exit_code) = leb::agenthooks::extract_exit_code(tool_result) else {
                 return Ok(true);
             };
+            let fingerprint = leb::agenthooks::evidence_fingerprint(command, exit_code);
+            if session.last_evidence_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+                return Ok(true);
+            }
             let _ = block_on(client.record_evidence(&EvidenceCreateRequest {
                 project_id: session.project_id.clone(),
                 task_id: Some(session.task_id.clone()),
@@ -2123,6 +2160,7 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
                 &session_id,
                 &leb::agenthooks::HookSession {
                     last_verification_exit: Some(exit_code),
+                    last_evidence_fingerprint: Some(fingerprint),
                     ..session
                 },
             );
@@ -2138,8 +2176,12 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
         HooksAction::Show => {
             println!("{}", serde_json::to_string_pretty(&hooks)?);
         }
-        HooksAction::Install { repo } => {
-            let settings_dir = repo.join(".claude");
+        HooksAction::Install { repo, global } => {
+            let settings_dir = if *global {
+                dirs_home().join(".claude")
+            } else {
+                repo.join(".claude")
+            };
             std::fs::create_dir_all(&settings_dir)
                 .map_err(|error| leb::Error::Config(format!("settings dir: {error}")))?;
             let settings_path = settings_dir.join("settings.json");
@@ -2182,12 +2224,20 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
                 .map_err(|error| leb::Error::Config(format!("settings write: {error}")))?;
                 println!("{}: hooks installed", settings_path.display());
             }
-            println!(
-                "Context injection + automatic evidence capture are active for stock \
-                 `claude` sessions in this repo. Also run `leb agent-md --install {}` \
-                 so the agent knows the wider tool loop.",
-                repo.display()
-            );
+            if *global {
+                println!(
+                    "Universal: every Claude session in every REGISTERED repo now gets \
+                     context injection and automatic evidence capture (unregistered \
+                     repos are untouched). Pair with `leb agent-md --global`."
+                );
+            } else {
+                println!(
+                    "Context injection + automatic evidence capture are active for stock \
+                     `claude` sessions in this repo. Also run `leb agent-md --install {}` \
+                     so the agent knows the wider tool loop.",
+                    repo.display()
+                );
+            }
         }
         HooksAction::Codex => {
             println!(

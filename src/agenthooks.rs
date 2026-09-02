@@ -32,6 +32,17 @@ pub struct HookSession {
     /// conservative auto-close outcome at session end.
     #[serde(default)]
     pub last_verification_exit: Option<i32>,
+    /// Fingerprint of the most recent recorded evidence. When user-level
+    /// AND repo-level hooks both fire for one Bash call, the second
+    /// invocation sees its own fingerprint and skips the duplicate row.
+    #[serde(default)]
+    pub last_evidence_fingerprint: Option<String>,
+}
+
+/// Fingerprint identifying one verification result for double-fire dedupe.
+#[must_use]
+pub fn evidence_fingerprint(command: &str, exit_code: i32) -> String {
+    format!("{exit_code}:{}", command.trim())
 }
 
 /// Where a session's state lives (under the brain's state dir).
@@ -284,6 +295,14 @@ mod tests {
         assert_eq!(auto_close_outcome(Some(0)), "success");
         assert_eq!(auto_close_outcome(Some(1)), "abandoned");
         assert_eq!(auto_close_outcome(None), "abandoned");
+    }
+
+    #[test]
+    fn evidence_fingerprints_dedupe_identical_results_only() {
+        let first = evidence_fingerprint("cargo test --lib", 0);
+        assert_eq!(first, evidence_fingerprint("  cargo test --lib  ", 0));
+        assert_ne!(first, evidence_fingerprint("cargo test --lib", 1));
+        assert_ne!(first, evidence_fingerprint("cargo test", 0));
     }
 
     #[test]

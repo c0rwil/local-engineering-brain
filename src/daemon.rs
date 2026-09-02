@@ -49,7 +49,7 @@ use crate::jobs::{EnqueueJob, JobExecutor, JobQueue, JobRecord, JobRunner, JobSt
 use crate::learning::{DistillationRequest, DistillationResult, LearningStore};
 use crate::memory::{EpistemicState, MemoryDraft, MemoryRecord, MemoryStore};
 use crate::metrics::{EndpointGroup, MetricsRegistry, MetricsSnapshot};
-use crate::projects::{LinkedProject, ProjectRegistry, ResolvedProject};
+use crate::projects::{LinkedProject, ProjectRecord, ProjectRegistry, ResolvedProject};
 use crate::scheduler::{MutationPriority, MutationScheduler, SchedulerStats};
 use crate::security::Redactor;
 use crate::semantic::{SemanticOptions, SqliteVectorIndex, VectorIndex as _};
@@ -64,6 +64,7 @@ const API_HEALTH: &str = "/api/v1/health";
 const API_DOCTOR: &str = "/api/v1/admin/doctor";
 const API_SHUTDOWN: &str = "/api/v1/admin/shutdown";
 const API_RESOLVE_PROJECT: &str = "/api/v1/projects/resolve";
+const API_LOOKUP_PROJECT: &str = "/api/v1/projects/lookup";
 const API_INDEX_PROJECT: &str = "/api/v1/projects/index";
 const API_WORLD_SEARCH: &str = "/api/v1/world/search";
 const API_CONTEXT_COMPILE: &str = "/api/v1/context/compile";
@@ -313,6 +314,13 @@ pub struct HealthResponse {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectResolveRequest {
     pub path: PathBuf,
+}
+
+/// Result of a read-only project lookup: `None` when no registered project
+/// owns the path. Registration never happens on this path.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectLookupResponse {
+    pub project: Option<ProjectRecord>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -857,6 +865,23 @@ impl DaemonClient {
         self.request(
             hyper::Method::POST,
             API_RESOLVE_PROJECT,
+            Some(&ProjectResolveRequest {
+                path: path.to_path_buf(),
+            }),
+        )
+        .await
+    }
+
+    /// Read-only lookup: which registered project owns `path`, or `None`.
+    /// Never registers — safe for universal (user-level) hooks.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage-read errors.
+    pub async fn lookup_project(&self, path: &Path) -> Result<ProjectLookupResponse> {
+        self.request(
+            hyper::Method::POST,
+            API_LOOKUP_PROJECT,
             Some(&ProjectResolveRequest {
                 path: path.to_path_buf(),
             }),
@@ -1658,6 +1683,7 @@ where
         .route(API_BACKUP_VERIFY, post(verify_backup))
         .route(API_PROJECT_EXPORT, post(export_project_handler))
         .route(API_RESOLVE_PROJECT, post(resolve_project))
+        .route(API_LOOKUP_PROJECT, post(lookup_project))
         .route(API_INDEX_PROJECT, post(index_project))
         .route(API_WORLD_SEARCH, post(search_world))
         .route(API_WORLD_NEIGHBORS, post(world_neighbors))
@@ -2016,6 +2042,18 @@ async fn export_project_handler(
     })
     .await?;
     Ok(Json(report))
+}
+
+async fn lookup_project(
+    State(state): State<DaemonState>,
+    Json(request): Json<ProjectResolveRequest>,
+) -> std::result::Result<Json<ProjectLookupResponse>, ApiError> {
+    let database = state.database.clone();
+    let project = run_blocking(&state, move || {
+        ProjectRegistry::new(database).lookup(&request.path)
+    })
+    .await?;
+    Ok(Json(ProjectLookupResponse { project }))
 }
 
 async fn resolve_project(

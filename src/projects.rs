@@ -140,6 +140,38 @@ impl ProjectRegistry {
         self.resolve_observation(observation, requested_parent)
     }
 
+    /// Read-only identity lookup: which registered project (if any) owns
+    /// `requested_path`. Never registers, never persists metadata, never
+    /// records an alias — this is what universal (user-level) agent hooks
+    /// use, so a global install cannot silently enroll repositories;
+    /// `leb index <repo>` stays the explicit opt-in.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid paths, metadata, bounded Git discovery,
+    /// or storage-read failures.
+    pub fn lookup(&self, requested_path: &Path) -> Result<Option<ProjectRecord>> {
+        let ProjectObservation {
+            root,
+            metadata,
+            git,
+            component: _,
+        } = Self::observe(requested_path)?;
+        if let Some(metadata) = &metadata {
+            return self.find_by_id(&metadata.project_id);
+        }
+        if let Some(remote) = git
+            .as_ref()
+            .and_then(|state| state.canonical_remote.as_deref())
+        {
+            return self.find_by_remote(remote);
+        }
+        if let Some(root_commit) = git.as_ref().and_then(|state| state.root_commit.as_deref()) {
+            return self.find_by_root_commit_without_remote(root_commit);
+        }
+        self.find_by_alias(&root)
+    }
+
     /// Observe filesystem/Git identity without holding the canonical mutation
     /// scheduler. The returned value is immutable input to the small
     /// idempotent registration transaction.
@@ -1222,6 +1254,28 @@ mod tests {
     fn registry(temp: &TempDir) -> ProjectRegistry {
         let database = Database::open(temp.path().join("registry.sqlite")).expect("database");
         ProjectRegistry::new(database)
+    }
+
+    #[test]
+    fn lookup_is_read_only_and_finds_registered_projects() {
+        let temp = TempDir::new().expect("temp");
+        let registry = registry(&temp);
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("repo dir");
+
+        let unknown = registry.lookup(&repo).expect("lookup unknown");
+        assert!(unknown.is_none(), "unregistered path must resolve to None");
+        assert!(
+            !repo.join(".leb").exists(),
+            "lookup must never persist metadata"
+        );
+
+        let resolved = registry.resolve_or_register(&repo).expect("register");
+        let found = registry
+            .lookup(&repo)
+            .expect("lookup known")
+            .expect("registered path must resolve");
+        assert_eq!(found.id, resolved.project.id);
     }
 
     fn run_git(path: &Path, args: &[&str]) {
