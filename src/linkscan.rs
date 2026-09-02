@@ -690,7 +690,10 @@ mod tests {
         }
         let candidates = scan(&database, &a, &root_a).expect("scan");
         assert_eq!(candidates.len(), 1, "{candidates:?}");
-        assert!(!candidates[0].definitive, "route overlap is a proposal only");
+        assert!(
+            !candidates[0].definitive,
+            "route overlap is a proposal only"
+        );
         assert_eq!(candidates[0].relation, "shares-api-surface");
         assert!(candidates[0].evidence.contains("3 shared route literals"));
         assert!(
