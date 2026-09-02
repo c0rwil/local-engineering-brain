@@ -3877,7 +3877,15 @@ async fn watch_loop(
 ) {
     let client = DaemonClient::new(&socket_path, std::time::Duration::from_secs(300));
     let mut last_origin = std::time::Instant::now();
-    let mut last_guide = std::time::Instant::now();
+    // First guide check fires shortly after startup rather than a full
+    // interval later: daemon restarts must not defer catching real drift.
+    let mut last_guide = std::time::Instant::now()
+        .checked_sub(
+            guide
+                .min_interval
+                .saturating_sub(std::time::Duration::from_secs(60)),
+        )
+        .unwrap_or_else(std::time::Instant::now);
     // Crash hygiene: a refresh interrupted mid-flight leaves a dangling
     // worktree directory plus stale worktree metadata in the source repos.
     // Clean both once at startup; every live refresh cleans up after itself.
