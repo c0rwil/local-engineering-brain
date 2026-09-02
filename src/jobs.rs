@@ -74,6 +74,8 @@ pub enum JobType {
     /// workspace overview). Read-only against the canonical database; writes
     /// only Markdown under the configured vault root.
     VaultExport,
+    /// Transactionally consistent daily brain backup with bounded retention.
+    BackupDaily,
 }
 
 impl JobType {
@@ -85,6 +87,7 @@ impl JobType {
             Self::ConsolidationGc => "consolidation_gc",
             Self::EvidenceReverify => "evidence_reverify",
             Self::VaultExport => "vault_export",
+            Self::BackupDaily => "backup_daily",
         }
     }
 
@@ -100,6 +103,7 @@ impl JobType {
             "consolidation_gc" => Ok(Self::ConsolidationGc),
             "evidence_reverify" => Ok(Self::EvidenceReverify),
             "vault_export" => Ok(Self::VaultExport),
+            "backup_daily" => Ok(Self::BackupDaily),
             other => Err(Error::Config(format!(
                 "unsupported job type `{other}`; expected one of fts_integrity, \
                  semantic_rebuild, consolidation_gc, evidence_reverify, vault_export"
@@ -118,6 +122,8 @@ impl JobType {
             Self::ConsolidationGc => 10,
             // Cosmetic derived output; always yields to correctness work.
             Self::VaultExport => 5,
+            // Durability first: a daily backup outranks derived output.
+            Self::BackupDaily => 35,
         }
     }
 
@@ -635,6 +641,7 @@ impl JobExecutor {
             JobType::ConsolidationGc => self.run_consolidation_gc(now_ms),
             JobType::EvidenceReverify => self.run_evidence_reverify(job),
             JobType::VaultExport => self.run_vault_export(job),
+            JobType::BackupDaily => self.run_backup_daily(now_ms),
         }
     }
 
@@ -650,6 +657,61 @@ impl JobExecutor {
             )));
         }
         Ok(serde_json::to_value(&report)?)
+    }
+
+    /// Daily transactional backup of the canonical brain, keeping the
+    /// newest `DAILY_BACKUP_RETENTION` files. The backup itself runs as a
+    /// scheduler mutation so it sees a consistent writer-quiesced database.
+    fn run_backup_daily(&self, now_ms: i64) -> Result<serde_json::Value> {
+        const DAILY_BACKUP_RETENTION: usize = 7;
+        let directory = self
+            .database
+            .path()
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("backups");
+        std::fs::create_dir_all(&directory)
+            .map_err(|error| Error::Config(format!("backup directory: {error}")))?;
+        let destination = directory.join(format!("daily-{}.sqlite", now_ms.div_euclid(86_400_000)));
+        let backed_up = if destination.exists() {
+            false // same-day rerun after a retry: the backup already exists
+        } else {
+            let database = self.database.clone();
+            let target = destination.clone();
+            let handle = self
+                .scheduler
+                .submit(MutationPriority::BackgroundLearning, move || {
+                    database.backup(&target)
+                })?;
+            handle.wait()?;
+            true
+        };
+        // Bounded retention over daily-* files only; manual backups stay.
+        let mut dailies = std::fs::read_dir(&directory)
+            .map_err(|error| Error::Config(format!("backup listing: {error}")))?
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .strip_prefix("daily-")
+                    .is_some_and(|rest| rest.ends_with(".sqlite"))
+            })
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        dailies.sort();
+        let mut pruned = 0_usize;
+        while dailies.len() > DAILY_BACKUP_RETENTION {
+            let oldest = dailies.remove(0);
+            if std::fs::remove_file(&oldest).is_ok() {
+                pruned += 1;
+            }
+        }
+        Ok(serde_json::json!({
+            "destination": destination.display().to_string(),
+            "backed_up": backed_up,
+            "pruned": pruned,
+        }))
     }
 
     /// Re-export the derived Obsidian vault for the job's project.
@@ -1007,7 +1069,11 @@ impl JobRunner {
     /// restart within the same day never duplicates them. Returns whether both
     /// enqueues were durably accepted.
     async fn enqueue_daily(&self, now_ms: i64) -> bool {
-        for job_type in [JobType::ConsolidationGc, JobType::FtsIntegrity] {
+        for job_type in [
+            JobType::ConsolidationGc,
+            JobType::FtsIntegrity,
+            JobType::BackupDaily,
+        ] {
             let queue = JobQueue::new(self.executor.database.clone());
             let request = EnqueueJob {
                 job_type,

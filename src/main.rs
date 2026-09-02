@@ -217,6 +217,18 @@ enum Commands {
         action: FactAction,
     },
 
+    /// Sweep a folder of repositories into the brain: register, index,
+    /// auto-link, and export the vault for every git repo found.
+    Onboard {
+        /// Folder containing repositories (each with a .git).
+        path: PathBuf,
+        /// Also synthesize the architecture guide via the claude CLI.
+        #[arg(long)]
+        claude: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Serve the local workspace browser (facts, links, architecture).
     Web {
         /// Loopback port to bind.
@@ -597,6 +609,9 @@ fn run(cli: Cli) -> Result<bool> {
             json,
         ),
         Commands::Fact { action } => run_fact(&overrides, socket_override.as_deref(), &action),
+        Commands::Onboard { path, claude, json } => {
+            run_onboard(&overrides, socket_override.as_deref(), &path, claude, json)
+        }
         Commands::Web { port, path } => {
             run_web(&overrides, socket_override.as_deref(), &path, port)
         }
@@ -1816,6 +1831,91 @@ fn run_fact(
                 }
             }
         }
+    }
+    Ok(true)
+}
+
+fn run_onboard(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    path: &Path,
+    claude: bool,
+    json: bool,
+) -> Result<bool> {
+    const MAX_REPOS: usize = 50;
+    let root = path
+        .canonicalize()
+        .map_err(|source| leb::error::io_error_for_cli(path, source))?;
+    let mut repos = Vec::new();
+    if root.join(".git").exists() {
+        repos.push(root.clone());
+    } else {
+        let mut entries = std::fs::read_dir(&root)
+            .map_err(|source| leb::error::io_error_for_cli(&root, source))?
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .filter(|candidate| candidate.is_dir() && candidate.join(".git").exists())
+            .collect::<Vec<_>>();
+        entries.sort();
+        repos.extend(entries.into_iter().take(MAX_REPOS));
+    }
+    if repos.is_empty() {
+        return Err(leb::Error::Config(format!(
+            "no git repositories found under {}",
+            root.display()
+        )));
+    }
+    let mut config = Config::load_for(None, overrides)?;
+    apply_socket_override(&mut config, socket)?;
+    require_daemon(&config)?;
+    let patient = DaemonClient::new(
+        &config.daemon.socket_path,
+        Duration::from_millis(config.daemon.request_timeout_ms.max(600_000)),
+    );
+    println!("Onboarding {} repositories…", repos.len());
+    for repo in &repos {
+        let name = repo.file_name().map_or_else(
+            || repo.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        match block_on(patient.refresh_index(repo)) {
+            Ok(response) => println!(
+                "  ✓ {name}: {} nodes, {} edges",
+                response.index.nodes_written, response.index.edges_written
+            ),
+            Err(error) => println!("  ✗ {name}: {error}"),
+        }
+    }
+    println!("Building the vault…");
+    let report =
+        block_on(patient.build_vault(&leb::daemon::VaultBuildRequest { project_id: None }))?;
+    if claude {
+        println!("Synthesizing the architecture guide via claude…");
+        let dossier = block_on(patient.architect_dossier())?;
+        let prompt = leb::architect::synthesis_prompt(&dossier);
+        let synthesized = leb::architect::synthesize_with_claude_cli("claude-opus-4-8", &prompt)?;
+        let document = leb::architect::guide_document("claude-opus-4-8", &dossier, &synthesized);
+        std::fs::write(config.vault.root.join("ARCHITECTURE.md"), document)
+            .map_err(|error| leb::Error::Config(format!("guide write: {error}")))?;
+    }
+    let snapshot = block_on(patient.workspace())?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&snapshot)?);
+    } else {
+        println!("\nWorkspace ({} repositories):", snapshot.projects.len());
+        for project in &snapshot.projects {
+            println!(
+                "  {} — {} nodes · {} links · {} technologies",
+                project.name,
+                project.nodes,
+                project.links.len(),
+                project.technologies.len()
+            );
+        }
+        println!(
+            "\nVault: {}\nBrowser: http://127.0.0.1:{}",
+            report.root, config.web.port
+        );
     }
     Ok(true)
 }

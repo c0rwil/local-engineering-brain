@@ -102,6 +102,7 @@ pub fn router(config: &Config) -> Router {
         .route("/api/modulemap", post(module_map))
         .route("/api/modulesymbols", post(module_symbols))
         .route("/api/provenance", post(provenance))
+        .route("/api/symbolsearch", post(symbol_search))
         .route("/api/reindex", post(reindex))
         .route("/api/facts/set", post(fact_set))
         .route("/api/facts/unset", post(fact_unset))
@@ -201,6 +202,59 @@ async fn provenance(
             })
             .await?,
     ))
+}
+
+#[derive(Deserialize)]
+struct WebSymbolSearch {
+    q: String,
+}
+
+#[derive(Serialize)]
+struct SymbolHit {
+    project: String,
+    kind: String,
+    label: String,
+    file_path: Option<String>,
+}
+
+async fn symbol_search(
+    State(state): State<WebState>,
+    Json(request): Json<WebSymbolSearch>,
+) -> std::result::Result<Json<Vec<SymbolHit>>, WebError> {
+    let query = request.q.trim().to_owned();
+    if query.len() < 2 || query.len() > 120 {
+        return Ok(Json(Vec::new()));
+    }
+    let client = state.client();
+    let snapshot = client.workspace().await?;
+    let mut hits = Vec::new();
+    for project in &snapshot.projects {
+        let Ok(nodes) = client
+            .search_world(&crate::daemon::WorldSearchRequest {
+                project_id: project.id.clone(),
+                query: query.clone(),
+                limit: 6,
+            })
+            .await
+        else {
+            continue;
+        };
+        for node in nodes {
+            if node.kind == "ExternalReference" {
+                continue;
+            }
+            hits.push(SymbolHit {
+                project: project.name.clone(),
+                kind: node.kind,
+                label: node.label,
+                file_path: node.file_path,
+            });
+            if hits.len() >= 36 {
+                return Ok(Json(hits));
+            }
+        }
+    }
+    Ok(Json(hits))
 }
 
 #[derive(Deserialize)]

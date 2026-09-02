@@ -310,6 +310,20 @@
     <svg id="graph" width="960" height="540" viewBox="0 0 960 540" aria-hidden="true"></svg>
   </div>
 
+  <h2 id="symbols">Find a Symbol</h2>
+  <div id="task-panel-symbols" class="card" style="cursor: default;">
+    <form id="sym-form" class="row">
+      <label for="sym-q" class="sub" style="color: var(--muted); font-size: .85rem;">Symbol</label>
+      <input id="sym-q" type="search" name="symbol" autocomplete="off" spellcheck="false"
+             placeholder="authenticate_action_session…" aria-label="Search symbols across all repositories"
+             style="flex: 1; min-width: 12rem; background: var(--bg); color: var(--ink);
+                    border: 1px solid var(--line); border-radius: .5rem; padding: .45rem .6rem; font: inherit;">
+      <button type="submit">Search</button>
+      <span aria-live="polite" class="status"></span>
+    </form>
+    <div id="sym-results" aria-live="polite"></div>
+  </div>
+
   <h2 id="projects">Projects</h2>
   <div class="cards" id="cards"><p class="empty">Loading…</p></div>
 
@@ -992,6 +1006,24 @@ document.getElementById("q").addEventListener("input", event => {
   state.q = event.target.value.trim();
   writeUrl();
   if (state.data) { renderGraph(state.data.projects); renderCards(); }
+});
+
+document.getElementById("sym-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const q = document.getElementById("sym-q").value.trim();
+  const out = document.getElementById("sym-results");
+  if (q.length < 2) { out.innerHTML = ""; return; }
+  out.innerHTML = `<p class="empty">Searching…</p>`;
+  try {
+    const hits = await api("/api/symbolsearch", { q });
+    out.innerHTML = hits.length
+      ? `<ul class="memories" style="margin-top:.6rem">${hits.map(h =>
+          `<li><span class="kind">${esc(h.kind)}</span><code translate="no">${esc(h.label)}</code>
+           <span class="tags">${esc(h.project)}${h.file_path ? ` · ${esc(h.file_path)}` : ""}</span></li>`).join("")}</ul>`
+      : `<p class="empty">No defined symbol matches “${esc(q)}” in any repository.</p>`;
+  } catch (error) {
+    out.innerHTML = `<p class="error">${esc(error.message)}</p>`;
+  }
 });
 
 readUrl();
