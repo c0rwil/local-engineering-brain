@@ -39,6 +39,7 @@ pub struct ArchitectReport {
 /// One project's deterministic slice of the dossier.
 struct ProjectDossier {
     name: String,
+    technologies: Vec<crate::techstack::Technology>,
     facts: Vec<(String, String, Option<String>)>,
     links: Vec<(String, String, Option<String>)>,
     modules: Vec<(String, i64)>,
@@ -56,7 +57,9 @@ pub fn build_dossier(database: &Database) -> Result<String> {
     let projects = database.with_reader(|connection| {
         let mut statement = connection.prepare(
             "SELECT id, name FROM projects p WHERE p.tombstoned_at_ms IS NULL
-               AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id AND pf.key = 'internal.view_of')
+               AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id
+                       AND (pf.key = 'internal.view_of'
+                            OR (pf.key = 'internal.hidden' AND pf.value = 'true')))
              ORDER BY p.name, p.id",
         )?;
         let rows = statement
@@ -124,14 +127,18 @@ fn project_dossier(
             .flatten();
         Ok((modules, head))
     })?;
-    let routes = registry
+    let root = registry
         .alias_paths(project_id)?
         .into_iter()
-        .find(|path| path.is_dir())
-        .map(|root| extract_routes(&root))
+        .find(|path| path.is_dir());
+    let routes = root.as_deref().map(extract_routes).unwrap_or_default();
+    let technologies = root
+        .as_deref()
+        .map(crate::techstack::detect)
         .unwrap_or_default();
     Ok(ProjectDossier {
         name: name.to_owned(),
+        technologies,
         facts,
         links,
         modules,
@@ -144,6 +151,15 @@ fn render_project(out: &mut String, dossier: &ProjectDossier) {
     let _ = writeln!(out, "## Project: {}", dossier.name);
     if let Some(head) = &dossier.head {
         let _ = writeln!(out, "indexed-head: {head}");
+    }
+    if !dossier.technologies.is_empty() {
+        let stack = dossier
+            .technologies
+            .iter()
+            .map(|tech| format!("{} [{}]", tech.name, tech.category))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(out, "tech: {stack}");
     }
     for (key, value, note) in &dossier.facts {
         let note = note
@@ -247,6 +263,7 @@ pub fn stable_projection(dossier: &str) -> String {
         .filter_map(|line| {
             if line.starts_with("## Project:")
                 || line.starts_with("fact ")
+                || line.starts_with("tech: ")
                 || line.starts_with("link ->")
                 || line.starts_with("route-literal:")
             {
@@ -293,16 +310,22 @@ pub fn synthesis_prompt(dossier: &str) -> String {
     format!(
         "You are documenting a multi-repository engineering workspace for an engineer \
          onboarding onto it. Using ONLY the dossier below (do not invent services, \
-         hosts, or dependencies that are not listed), write a clear CLAUDE.md-style \
-         architecture guide in Markdown with these sections:\n\
+         hosts, technologies, or dependencies that are not listed), write a clear \
+         CLAUDE.md-style architecture guide in Markdown with these sections:\n\
          1. `# Workspace overview` - one paragraph on what the system does as a whole.\n\
-         2. `## Services` - per project: its role, where it is hosted (facts), its \
-         main modules, and its notable API surface (route literals).\n\
+         2. `## Services` - a `### <name>` subsection per project with real depth: \
+         what it does and for whom; HOW it works internally (reason from its module \
+         names, technology stack, and route surface - e.g. which modules own which \
+         responsibilities, where state lives given its databases, what the request \
+         path looks like); where it is hosted and what it is built with (`tech:` \
+         line); and its notable API surface. Two to four paragraphs per service, not \
+         a listing.\n\
          3. `## How the services coordinate` - who calls whom, over which declared \
-         hostnames/relations, and what that implies when changing an API.\n\
+         hostnames/relations, key data flows, and what that implies when changing an \
+         API.\n\
          4. `## Cross-repo change checklist` - concrete steps an engineer should take \
          when a change in one repo affects a linked repo.\n\
-         Be specific, cite the repos by name, and keep it under 900 words.\n\n{dossier}"
+         Be specific, cite repos and modules by name, and keep it under 1800 words.\n\n{dossier}"
     )
 }
 

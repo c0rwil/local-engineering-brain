@@ -33,6 +33,7 @@ pub mod security;
 pub mod semantic;
 pub mod storage;
 pub mod synthesis;
+pub mod techstack;
 pub mod vault;
 pub mod web;
 pub mod world;

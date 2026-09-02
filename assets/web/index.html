@@ -208,9 +208,29 @@
   dialog#svc-modal {
     background: var(--panel); color: var(--ink);
     border: 1px solid var(--line); border-radius: 1rem;
-    width: min(62rem, calc(100vw - 2rem)); max-height: calc(100vh - 3rem);
-    padding: 1.3rem 1.6rem; overscroll-behavior: contain;
+    width: min(68rem, calc(100vw - 2rem));
+    height: min(46rem, calc(100vh - 3rem));
+    padding: 0; overscroll-behavior: contain;
+    display: none; flex-direction: column;
   }
+  dialog#svc-modal[open] { display: flex; }
+  #svc-modal .modal-head { padding: 1.2rem 1.6rem .8rem; border-bottom: 1px solid var(--line); }
+  #svc-modal .modal-body { flex: 1; overflow-y: auto; padding: .4rem 1.6rem 1.4rem; min-height: 0; }
+  #svc-modal .modmap { max-width: 100%; }
+  #svc-modal .modmap svg { width: 100%; height: auto; max-height: 30rem; }
+  .tech-chips { display: flex; flex-wrap: wrap; gap: .35rem; margin: .5rem 0 0; }
+  .tech-chips .chip {
+    background: var(--chip); border: 1px solid var(--line); border-radius: .5rem;
+    padding: .12rem .5rem; font-size: .76rem; white-space: nowrap;
+  }
+  .tech-chips .chip .cat { color: var(--muted); font-size: .68rem; margin-left: .25rem; }
+  .mod-detail { margin-top: .6rem; }
+  .mod-detail .mod-summary { color: var(--muted); font-size: .82rem; margin: .2rem 0 .5rem; }
+  .mod-detail .dep-line { font-size: .8rem; margin: .15rem 0; }
+  .mod-detail .dep-line .k { font-family: var(--mono); font-size: .7rem; color: var(--accent);
+    text-transform: uppercase; letter-spacing: .05em; margin-right: .35rem; }
+  .mod-cols { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem 1.4rem; }
+  @media (max-width: 44rem) { .mod-cols { grid-template-columns: 1fr; } }
   dialog#svc-modal::backdrop { background: rgb(0 0 0 / .55); }
   #svc-modal .modal-head { display: flex; align-items: baseline; gap: .8rem; }
   #svc-modal .modal-head h3 { margin: 0; font-size: 1.15rem; }
@@ -479,6 +499,16 @@ function viewMeta(project) {
     ${project.indexed_at_ms ? ` · indexed ${esc(ago(project.indexed_at_ms))}` : " · never indexed"}`;
 }
 
+function techChips(project, cap) {
+  if (!project.technologies?.length) return "";
+  const shown = cap ? project.technologies.slice(0, cap) : project.technologies;
+  const extra = cap && project.technologies.length > cap
+    ? `<span class="chip">+${project.technologies.length - cap} more</span>` : "";
+  return `<div class="tech-chips">${shown.map(t =>
+    `<span class="chip" title="${esc(t.evidence)}" translate="no">${esc(t.name)}<span class="cat">${esc(t.category)}</span></span>`
+  ).join("")}${extra}</div>`;
+}
+
 function factRows(project) {
   if (!project.facts.length) return `<p class="empty">No facts recorded yet.</p>`;
   return `<dl class="facts">` + project.facts.map(f =>
@@ -502,6 +532,7 @@ function card(project) {
     <h3 id="h-${esc(project.id)}"><button type="button" class="open-svc" data-id="${esc(project.id)}"
       aria-haspopup="dialog">${esc(project.name)}</button></h3>
     <p class="meta">${viewMeta(project)}</p>
+    ${techChips(project, 7)}
     ${factRows(project)}
     ${linkRows(project)}
     ${memoryRows(project)}
@@ -714,13 +745,23 @@ async function loadModuleSymbols(projectId, group, el) {
   el.textContent = `Loading ${group}…`;
   try {
     const detail = await api("/api/modulesymbols", { project_id: projectId, group });
-    const syms = detail.symbols.map(s =>
-      `<li><span class="k">${esc(s.kind)}</span>${esc(s.label)} <span class="tags">${esc(s.file_path)}</span></li>`).join("");
+    const calls = detail.calls.map(c =>
+      `<li><code translate="no">${esc(c.label)}</code> <span class="tags">${c.calls}×</span></li>`).join("");
+    const syms = detail.symbols.slice(0, 30).map(s =>
+      `<li><span class="k">${esc(s.kind)}</span>${esc(s.label)}</li>`).join("");
     const mems = detail.memories.map(m =>
       `<li><span class="k">${esc(m.kind)}</span>${esc(m.claim)}</li>`).join("");
-    el.innerHTML = `<h4>${esc(group)} — ${detail.symbols.length} symbol${detail.symbols.length === 1 ? "" : "s"}</h4>
-      ${syms ? `<ul>${syms}</ul>` : `<p class="empty">No defined symbols recorded.</p>`}
-      ${mems ? `<h4>Memories Anchored Here</h4><ul>${mems}</ul>` : ""}`;
+    el.innerHTML = `<div class="mod-detail">
+      <h4>${esc(group)}</h4>
+      <p class="mod-summary">${esc(detail.summary)}</p>
+      ${detail.depends_on.length ? `<p class="dep-line"><span class="k">depends on</span>${detail.depends_on.map(esc).join(", ")}</p>` : ""}
+      ${detail.used_by.length ? `<p class="dep-line"><span class="k">used by</span>${detail.used_by.map(esc).join(", ")}</p>` : ""}
+      <div class="mod-cols">
+        <div>${calls ? `<h4>Calls (usage)</h4><ul>${calls}</ul>` : ""}</div>
+        <div>${syms ? `<h4>Defines</h4><ul>${syms}</ul>` : `<p class="empty">No defined symbols recorded.</p>`}</div>
+      </div>
+      ${mems ? `<h4>Memories Anchored Here</h4><ul>${mems}</ul>` : ""}
+    </div>`;
   } catch (error) {
     el.innerHTML = `<span class="error">${esc(error.message)}</span>`;
   }
@@ -813,6 +854,7 @@ function openServiceModal(projectId) {
   const view = state.view === "origin" && project.origin_view ? "origin/main" : "local checkout";
   modal.querySelector(".modal-body").innerHTML = `
     <p class="meta">${viewMeta(project)}</p>
+    ${techChips(project)}
     ${guide ? `<section><h4>From the Architecture Guide</h4><div class="guide">${markdown(guide)}</div></section>` : ""}
     ${project.facts.length ? `<section><h4>Facts</h4>${factRows(project)}</section>` : ""}
     ${project.links.length ? `<section><h4>Linked Repositories</h4>${linkRows(project)}</section>` : ""}
@@ -824,6 +866,9 @@ function openServiceModal(projectId) {
       <div class="modmap" role="img" aria-label="Module dependency diagram for ${esc(project.name)}">Loading…</div>
     </section>`;
   modal.showModal();
+  modal.addEventListener("click", event => {
+    if (event.target === modal) modal.close();
+  });
   for (const item of modal.querySelectorAll("ul.memories li[data-mid]")) {
     const open = () => toggleProvenance(item);
     item.addEventListener("click", open);

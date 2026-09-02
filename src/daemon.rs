@@ -349,6 +349,9 @@ pub struct WorkspaceProject {
     pub indexed_at_ms: Option<i64>,
     /// The shared-truth (origin/main) snapshot, when one has been indexed.
     pub origin_view: Option<OriginViewInfo>,
+    /// Detected technology stack (manifests + infra files, deterministic).
+    #[serde(default)]
+    pub technologies: Vec<crate::techstack::Technology>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -425,10 +428,29 @@ pub struct ModuleSymbol {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CalledFunction {
+    pub label: String,
+    pub calls: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ModuleSymbols {
     pub symbols: Vec<ModuleSymbol>,
     /// Validated memories anchored (via their linked nodes) inside this module.
     pub memories: Vec<MemorySummary>,
+    /// Deterministic composition summary ("14 files · 89 functions · 12 types").
+    #[serde(default)]
+    pub summary: String,
+    /// What this module CALLS, ranked by reference count — usage, not
+    /// definition.
+    #[serde(default)]
+    pub calls: Vec<CalledFunction>,
+    /// Sibling modules this one depends on (resolved call targets).
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    /// Sibling modules that depend on this one.
+    #[serde(default)]
+    pub used_by: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2428,7 +2450,9 @@ async fn workspace_snapshot(
                           WHERE s.project_id = p.id
                           ORDER BY s.completed_at_ms DESC LIMIT 1)
                  FROM projects p WHERE p.tombstoned_at_ms IS NULL
-                   AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id AND pf.key = 'internal.view_of')
+                   AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id
+                       AND (pf.key = 'internal.view_of'
+                            OR (pf.key = 'internal.hidden' AND pf.value = 'true')))
                  ORDER BY p.name, p.id",
             )?;
             let rows = statement
@@ -2453,6 +2477,10 @@ async fn workspace_snapshot(
                 .into_iter()
                 .find(|path| path.is_dir())
                 .map(|path| path.display().to_string());
+            let technologies = primary_path
+                .as_deref()
+                .map(|path| crate::techstack::detect(std::path::Path::new(path)))
+                .unwrap_or_default();
             let memories = database.with_reader(|connection| {
                 let mut statement = connection.prepare(
                     "SELECT id, kind, claim, confidence, tags_json FROM memories
@@ -2528,6 +2556,7 @@ async fn workspace_snapshot(
                 indexed_head,
                 indexed_at_ms,
                 origin_view,
+                technologies,
             });
         }
         Ok(WorkspaceSnapshot { projects })
@@ -2668,6 +2697,7 @@ async fn origin_refresh_handler(
     Ok(Json(OriginRefreshResponse { reference }))
 }
 
+#[allow(clippy::too_many_lines)]
 async fn project_module_symbols(
     State(state): State<DaemonState>,
     Json(request): Json<ModuleSymbolsRequest>,
@@ -2728,7 +2758,106 @@ async fn project_module_symbols(
                     },
                 )?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
-            Ok(ModuleSymbols { symbols, memories })
+            let (files, functions, types) = connection.query_row(
+                "SELECT COUNT(DISTINCT file_path),
+                        SUM(kind = 'Function'), SUM(kind IN ('Type', 'Interface'))
+                 FROM nodes
+                 WHERE project_id = ?1 AND tombstoned_at_ms IS NULL
+                   AND (file_path LIKE ?2 OR file_path = ?3)",
+                rusqlite::params![request.project_id.as_str(), prefix, request.group],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                        row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                    ))
+                },
+            )?;
+            let summary = format!(
+                "{files} file{} · {functions} function{} · {types} type{}",
+                if files == 1 { "" } else { "s" },
+                if functions == 1 { "" } else { "s" },
+                if types == 1 { "" } else { "s" },
+            );
+            let mut calls_statement = connection.prepare(
+                "SELECT t.label, COUNT(*) AS n FROM edges e
+                 JOIN nodes s ON s.id = e.source_id
+                    AND (s.file_path LIKE ?2 OR s.file_path = ?3)
+                 JOIN nodes t ON t.id = e.target_id AND t.kind = 'ExternalReference'
+                 WHERE e.project_id = ?1 AND e.relation = 'CALLS'
+                   AND e.tombstoned_at_ms IS NULL
+                 GROUP BY t.label ORDER BY n DESC, t.label LIMIT 15",
+            )?;
+            let calls = calls_statement
+                .query_map(
+                    rusqlite::params![request.project_id.as_str(), prefix, request.group],
+                    |row| {
+                        Ok(CalledFunction {
+                            label: row.get(0)?,
+                            calls: row.get(1)?,
+                        })
+                    },
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            // Resolved cross-module dependencies, both directions, scoped to
+            // this one module so the join stays cheap.
+            let module_of = |path: &str| -> String {
+                let mut parts = path.split('/').filter(|part| !part.is_empty());
+                match (parts.next(), parts.next()) {
+                    (Some(first), Some(second)) if second.contains('.') => first.to_owned(),
+                    (Some(first), Some(second)) => format!("{first}/{second}"),
+                    (Some(first), None) => first.to_owned(),
+                    _ => "(root)".to_owned(),
+                }
+            };
+            let direction = |outbound: bool| -> std::result::Result<Vec<String>, Error> {
+                let sql = if outbound {
+                    "SELECT DISTINCT d.file_path FROM edges e
+                     JOIN nodes s ON s.id = e.source_id
+                        AND (s.file_path LIKE ?2 OR s.file_path = ?3)
+                     JOIN nodes t ON t.id = e.target_id AND t.kind = 'ExternalReference'
+                     JOIN nodes d ON d.project_id = e.project_id
+                        AND d.kind IN ('Function', 'Type', 'Module', 'Interface')
+                        AND d.label = t.label AND d.tombstoned_at_ms IS NULL
+                     WHERE e.project_id = ?1 AND e.tombstoned_at_ms IS NULL
+                       AND d.file_path IS NOT NULL LIMIT 400"
+                } else {
+                    "SELECT DISTINCT s.file_path FROM edges e
+                     JOIN nodes s ON s.id = e.source_id AND s.file_path IS NOT NULL
+                     JOIN nodes t ON t.id = e.target_id AND t.kind = 'ExternalReference'
+                     JOIN nodes d ON d.project_id = e.project_id
+                        AND d.kind IN ('Function', 'Type', 'Module', 'Interface')
+                        AND d.label = t.label AND d.tombstoned_at_ms IS NULL
+                        AND (d.file_path LIKE ?2 OR d.file_path = ?3)
+                     WHERE e.project_id = ?1 AND e.tombstoned_at_ms IS NULL LIMIT 400"
+                };
+                let mut statement = connection.prepare(sql)?;
+                let rows = statement
+                    .query_map(
+                        rusqlite::params![request.project_id.as_str(), prefix, request.group],
+                        |row| row.get::<_, String>(0),
+                    )?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                let mut groups = rows
+                    .iter()
+                    .map(|path| module_of(path))
+                    .filter(|group| group != &request.group)
+                    .collect::<Vec<_>>();
+                groups.sort();
+                groups.dedup();
+                groups.truncate(10);
+                Ok(groups)
+            };
+            let depends_on = direction(true)?;
+            let used_by = direction(false)?;
+            Ok(ModuleSymbols {
+                symbols,
+                memories,
+                summary,
+                calls,
+                depends_on,
+                used_by,
+            })
         })
     })
     .await?;
@@ -2745,6 +2874,10 @@ async fn workspace_activity(
                 "SELECT e.event_type, p.name, e.created_at_ms
                  FROM events e
                  LEFT JOIN projects p ON p.id = e.project_id
+                 WHERE e.project_id IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM project_facts pf WHERE pf.project_id = e.project_id
+                       AND (pf.key = 'internal.view_of'
+                            OR (pf.key = 'internal.hidden' AND pf.value = 'true')))
                  ORDER BY e.sequence DESC LIMIT 60",
             )?;
             let rows = statement

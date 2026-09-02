@@ -131,7 +131,9 @@ fn known_projects(
         let mut statement = connection.prepare(
             "SELECT id, name, canonical_remote FROM projects p
              WHERE p.tombstoned_at_ms IS NULL
-               AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id AND pf.key = 'internal.view_of')
+               AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id
+                       AND (pf.key = 'internal.view_of'
+                            OR (pf.key = 'internal.hidden' AND pf.value = 'true')))
              ORDER BY p.name, p.id",
         )?;
         let rows = statement
