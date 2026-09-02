@@ -59,7 +59,8 @@ pub enum JobType {
     FtsIntegrity,
     /// Rebuild the derived semantic vector sidecar for one project.
     SemanticRebuild,
-    /// Bounded retention GC over `context_runs` plus orphaned blob files.
+    /// Bounded retention GC over `context_runs`, orphaned blob files, stale
+    /// hook-session files, and long-open hook tasks (abandoned after 7 days).
     ConsolidationGc,
     /// Staleness sweep over stored evidence. Evidence rows that carry a stored
     /// command are **never re-executed automatically**: commands recorded from
@@ -743,6 +744,53 @@ impl JobExecutor {
     /// bounded batches, then unlink orphaned blob files that `leb doctor`
     /// would report. Each batch is its own scheduler mutation so interactive
     /// writes interleave freely.
+    /// Hook hygiene folded into the daily GC: session files older than a
+    /// week are deleted, and tasks left open that long are marked abandoned
+    /// so episode stats stay meaningful.
+    fn gc_hook_sessions(&self, now_ms: i64) -> (u64, u64) {
+        const STALE_MS: i64 = 7 * 86_400_000;
+        let mut files_removed = 0_u64;
+        let directory = self
+            .database
+            .path()
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("hook-sessions");
+        if let Ok(entries) = std::fs::read_dir(&directory) {
+            for entry in entries.flatten() {
+                let stale = entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                    .is_some_and(|age| {
+                        i64::try_from(age.as_millis()).unwrap_or(i64::MAX) > STALE_MS
+                    });
+                if stale && std::fs::remove_file(entry.path()).is_ok() {
+                    files_removed += 1;
+                }
+            }
+        }
+        let cutoff = now_ms - STALE_MS;
+        let database = self.database.clone();
+        let abandoned = self
+            .scheduler
+            .submit(MutationPriority::BackgroundLearning, move || {
+                database.write_immediate(|transaction| {
+                    let changed = transaction.execute(
+                        "UPDATE tasks SET status = 'abandoned', completed_at_ms = ?2
+                         WHERE status = 'open' AND started_at_ms < ?1",
+                        params![cutoff, unix_time_ms()],
+                    )?;
+                    Ok(u64::try_from(changed).unwrap_or(0))
+                })
+            })
+            .ok()
+            .and_then(|handle| handle.wait().ok())
+            .unwrap_or(0);
+        (files_removed, abandoned)
+    }
+
     fn run_consolidation_gc(&self, now_ms: i64) -> Result<serde_json::Value> {
         let retention_ms =
             i64::from(self.config.context_run_retention_days).saturating_mul(86_400_000);
@@ -774,9 +822,13 @@ impl JobExecutor {
                 )
             })?
             .wait()?;
+        let (hook_session_files_removed, stale_open_tasks_abandoned) =
+            self.gc_hook_sessions(now_ms);
         Ok(serde_json::json!({
             "context_runs_deleted": deleted_runs,
             "orphan_blobs_removed": orphans_removed,
+            "hook_session_files_removed": hook_session_files_removed,
+            "stale_open_tasks_abandoned": stale_open_tasks_abandoned,
             "truncated": truncated,
         }))
     }

@@ -2572,6 +2572,31 @@ async fn list_project_links(
     Ok(Json(links))
 }
 
+/// Tech detection walks the filesystem; on a central server the snapshot is
+/// polled by every viewer, so results are cached for ten minutes.
+fn cached_techstack(project_id: &ProjectId, path: &str) -> Vec<crate::techstack::Technology> {
+    use std::sync::{Mutex, OnceLock};
+    type TechCache = Mutex<
+        std::collections::HashMap<String, (std::time::Instant, Vec<crate::techstack::Technology>)>,
+    >;
+    static CACHE: OnceLock<TechCache> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Ok(guard) = cache.lock()
+        && let Some((at, cached)) = guard.get(project_id.as_str())
+        && at.elapsed() < std::time::Duration::from_secs(600)
+    {
+        return cached.clone();
+    }
+    let detected = crate::techstack::detect(std::path::Path::new(path));
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(
+            project_id.as_str().to_owned(),
+            (std::time::Instant::now(), detected.clone()),
+        );
+    }
+    detected
+}
+
 #[allow(clippy::too_many_lines)]
 async fn workspace_snapshot(
     State(state): State<DaemonState>,
@@ -2623,7 +2648,7 @@ async fn workspace_snapshot(
                 .map(|path| path.display().to_string());
             let technologies = primary_path
                 .as_deref()
-                .map(|path| crate::techstack::detect(std::path::Path::new(path)))
+                .map(|path| cached_techstack(&project_id, path))
                 .unwrap_or_default();
             let memories = database.with_reader(|connection| {
                 let mut statement = connection.prepare(

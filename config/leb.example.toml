@@ -130,3 +130,57 @@ auto = false
 # explicitly marked hypothesis memories (tags: hypothesis, cross_project)
 # when local evidence exists but is below the threshold. Off by default.
 cross_project_hypotheses = false
+
+[vault]
+# Derived Obsidian vault: per-repo notes, mermaid module maps, memory notes,
+# and the workspace overview. Point Obsidian at `root`.
+enabled = false
+root = "~/.leb/vault"
+# Re-export automatically (durable background job) after every structural
+# scan, so notes and diagrams track the code.
+auto_refresh = true
+
+[links]
+# After each index, scan the repo's own manifests (Cargo path deps, npm
+# file: deps, pip editable installs, git submodules) and auto-link
+# DEFINITIVE matches. Name-only and route-overlap matches stay proposals
+# surfaced by `leb link scan`.
+auto_scan = true
+
+[architect]
+# `leb architect` synthesizes the workspace architecture guide.
+# runtime_url is an OpenAI-compatible endpoint (loopback unless
+# network.local_only = false); `leb architect --claude` uses the claude CLI.
+runtime_url = "http://127.0.0.1:8010/v1/chat/completions"
+model = ""
+# Automatic regeneration when the guide's STABLE projection drifts
+# (services, facts, tech, links, module names, routes - not per-commit
+# noise): "off" | "local" | "claude".
+auto = "off"
+auto_min_secs = 3600
+
+[web]
+# The workspace browser, served by the daemon. Loopback by default; binding
+# beyond loopback (a central team server) REQUIRES `token`, which then gates
+# every /api and /webhook request.
+enabled = true
+port = 11436
+bind = "127.0.0.1"
+# token = "<long-random-token>"
+
+[watch]
+# Commit-driven freshness: compares committed HEADs only (dirty edits never
+# trigger). Local poll re-indexes on commits/branch switches; origin poll
+# fetches and refreshes shared-truth views (0 disables).
+enabled = true
+local_poll_secs = 30
+origin_poll_secs = 900
+
+[sync]
+# Cross-instance knowledge sync. Down: the central instance's VALIDATED
+# memories, facts, and links replicate here and inject. Up: local validated
+# memories are offered to central as candidates for curation.
+central_url = ""
+# token = "<the central token>"
+every_secs = 900
+push = true

@@ -28,6 +28,10 @@ use crate::ids::{ProjectId, TaskId};
 pub struct HookSession {
     pub task_id: TaskId,
     pub project_id: ProjectId,
+    /// Exit code of the most recent recorded verification, driving the
+    /// conservative auto-close outcome at session end.
+    #[serde(default)]
+    pub last_verification_exit: Option<i32>,
 }
 
 /// Where a session's state lives (under the brain's state dir).
@@ -179,6 +183,19 @@ pub fn extract_artifact(tool_result: &serde_json::Value) -> String {
     String::new()
 }
 
+/// Conservative outcome for an auto-closed session: `success` only when
+/// the last recorded verification passed; `abandoned` otherwise. User
+/// acceptance stays unknown, so auto-closed episodes count toward memory
+/// ROI (wins) but never feed distillation, which requires explicit
+/// acceptance.
+#[must_use]
+pub fn auto_close_outcome(last_verification_exit: Option<i32>) -> &'static str {
+    match last_verification_exit {
+        Some(0) => "success",
+        _ => "abandoned",
+    }
+}
+
 /// The hooks block written into a repo's `.claude/settings.json`.
 #[must_use]
 pub fn claude_hooks_json(leb_binary: &str) -> serde_json::Value {
@@ -195,6 +212,13 @@ pub fn claude_hooks_json(leb_binary: &str) -> serde_json::Value {
             "hooks": [{
                 "type": "command",
                 "command": format!("{leb_binary} hook bash"),
+                "timeout": 15
+            }]
+        }],
+        "SessionEnd": [{
+            "hooks": [{
+                "type": "command",
+                "command": format!("{leb_binary} hook session-end"),
                 "timeout": 15
             }]
         }]
@@ -253,6 +277,13 @@ mod tests {
             Some(0)
         );
         assert_eq!(extract_exit_code(&serde_json::json!({"stdout": "x"})), None);
+    }
+
+    #[test]
+    fn auto_close_is_conservative() {
+        assert_eq!(auto_close_outcome(Some(0)), "success");
+        assert_eq!(auto_close_outcome(Some(1)), "abandoned");
+        assert_eq!(auto_close_outcome(None), "abandoned");
     }
 
     #[test]

@@ -60,6 +60,18 @@ Requirements: macOS or Linux, Rust 1.85+, Git, and `shasum`.
 ./scripts/install.sh
 export PATH="$HOME/.local/bin:$PATH"
 leb doctor
+
+# One command from empty machine to living encyclopedia:
+leb onboard ~/code                 # registers, indexes, auto-links, vault
+open http://127.0.0.1:11436        # served by the daemon whenever it runs
+
+# Make stock `claude` sessions draw from and feed the brain (per repo):
+leb hooks install ~/code/my-repo   # context injection + auto evidence capture
+leb agent-md --install ~/code/my-repo          # the agent tool loop (MCP)
+leb hooks codex                    # Codex: MCP + AGENTS.md instructions
+
+# Team setup (optional): docs/CENTRAL_SERVER.md — central source of truth
+# from origin/main, CI webhooks, and cross-instance brain sync (leb sync).
 ```
 
 The atomic installer builds all four binaries (`leb`, `lebd`, `leb-proxy`, and `leb-mcp`), installs

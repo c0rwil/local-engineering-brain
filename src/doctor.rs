@@ -167,6 +167,25 @@ impl DoctorReport {
             },
         });
 
+        checks.push(DoctorCheck {
+            name: "brain_sync".to_owned(),
+            status: CheckStatus::Pass,
+            detail: if config.sync.central_url.is_empty() {
+                "standalone (no [sync] central_url)".to_owned()
+            } else {
+                format!(
+                    "syncing with {} every {} s ({})",
+                    config.sync.central_url,
+                    config.sync.every_secs,
+                    if config.sync.push {
+                        "pull + offer"
+                    } else {
+                        "pull only"
+                    }
+                )
+            },
+        });
+
         Self { ok: false, checks }
     }
 

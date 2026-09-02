@@ -2052,6 +2052,7 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
                     &leb::agenthooks::HookSession {
                         task_id: task.id,
                         project_id,
+                        last_verification_exit: None,
                     },
                 );
             }
@@ -2059,6 +2060,31 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
             if !injected.trim().is_empty() {
                 println!("{injected}");
             }
+        }
+        "session-end" => {
+            let Some(session) = leb::agenthooks::load_session(&state_dir, &session_id) else {
+                return Ok(true);
+            };
+            // Conservative auto-close: success only when the last recorded
+            // verification passed; acceptance stays unknown, so this counts
+            // toward memory ROI but never feeds distillation. If the agent
+            // already closed the task via leb_mark_outcome this finish fails
+            // harmlessly (fail-open).
+            let outcome = match leb::agenthooks::auto_close_outcome(session.last_verification_exit)
+            {
+                "success" => leb::experience::TaskOutcome::Success,
+                _ => leb::experience::TaskOutcome::Abandoned,
+            };
+            let _ = block_on(client.finish_task(
+                &session.task_id,
+                &leb::daemon::TaskFinishRequest {
+                    outcome,
+                    accepted_by_user: None,
+                    final_commit: None,
+                },
+            ));
+            let _ =
+                std::fs::remove_file(leb::agenthooks::session_state_path(&state_dir, &session_id));
         }
         "bash" => {
             let command = payload
@@ -2081,8 +2107,8 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
                 return Ok(true);
             };
             let _ = block_on(client.record_evidence(&EvidenceCreateRequest {
-                project_id: session.project_id,
-                task_id: Some(session.task_id),
+                project_id: session.project_id.clone(),
+                task_id: Some(session.task_id.clone()),
                 attempt_id: None,
                 kind: kind.to_owned(),
                 strength: EvidenceStrength::Deterministic,
@@ -2092,6 +2118,14 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
                 artifact_text: leb::agenthooks::extract_artifact(tool_result),
                 metadata: serde_json::json!({"source": "claude-code-hook"}),
             }));
+            let _ = leb::agenthooks::save_session(
+                &state_dir,
+                &session_id,
+                &leb::agenthooks::HookSession {
+                    last_verification_exit: Some(exit_code),
+                    ..session
+                },
+            );
         }
         _ => {}
     }
