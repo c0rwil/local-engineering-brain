@@ -91,6 +91,13 @@ pub struct ArchitectConfig {
     /// Model name sent to the runtime. Empty means the CLI requires
     /// `--model`.
     pub model: String,
+    /// Automatic regeneration when the guide's stable digest drifts:
+    /// `"off"` (badge only), `"local"` (the HTTP runtime above), or
+    /// `"claude"` (the local `claude` CLI / subscription). Explicit opt-in:
+    /// both non-off modes make the daemon call a model on its own.
+    pub auto: String,
+    /// Minimum seconds between automatic regenerations.
+    pub auto_min_secs: u64,
 }
 
 impl Default for ArchitectConfig {
@@ -98,6 +105,8 @@ impl Default for ArchitectConfig {
         Self {
             runtime_url: "http://127.0.0.1:8010/v1/chat/completions".to_owned(),
             model: String::new(),
+            auto: "off".to_owned(),
+            auto_min_secs: 3_600,
         }
     }
 }

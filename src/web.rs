@@ -31,6 +31,7 @@ struct WebState {
     socket_path: PathBuf,
     request_timeout: Duration,
     vault_root: PathBuf,
+    architect_auto: String,
 }
 
 impl WebState {
@@ -64,9 +65,11 @@ struct WebLinkScan {
 #[derive(Serialize)]
 struct ArchitectureDoc {
     content: Option<String>,
-    /// `Some(true)` when the workspace dossier has changed since the guide
-    /// was generated (facts, links, or code structure drifted).
+    /// `Some(true)` when the workspace's stable projection (services,
+    /// facts, links, module names, routes) has drifted past the prose.
     stale: Option<bool>,
+    /// The configured auto-regeneration mode ("off" | "local" | "claude").
+    auto: String,
 }
 
 struct WebError(Error);
@@ -89,6 +92,7 @@ pub fn router(config: &Config) -> Router {
         socket_path: config.daemon.socket_path.clone(),
         request_timeout: Duration::from_millis(config.daemon.request_timeout_ms),
         vault_root: config.vault.root.clone(),
+        architect_auto: config.architect.auto.clone(),
     };
     Router::new()
         .route("/", get(index))
@@ -254,25 +258,21 @@ async fn activity(
 async fn architecture(State(state): State<WebState>) -> Json<ArchitectureDoc> {
     let content = std::fs::read_to_string(state.vault_root.join("ARCHITECTURE.md")).ok();
     let drifted = match &content {
-        Some(content) => {
-            let recorded = content
-                .split_once("dossier-sha256: ")
-                .and_then(|(_, rest)| rest.get(..64));
-            match recorded {
-                Some(recorded) => state
-                    .client()
-                    .architect_dossier()
-                    .await
-                    .ok()
-                    .map(|dossier| crate::architect::dossier_digest(&dossier) != recorded),
-                None => None,
-            }
-        }
+        Some(content) => match crate::architect::stamped_digest(content) {
+            Some(recorded) => state
+                .client()
+                .architect_dossier()
+                .await
+                .ok()
+                .map(|dossier| crate::architect::stable_digest(&dossier) != recorded),
+            None => None,
+        },
         None => None,
     };
     Json(ArchitectureDoc {
         content,
         stale: drifted,
+        auto: state.architect_auto.clone(),
     })
 }
 

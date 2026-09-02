@@ -236,6 +236,43 @@ fn looks_like_route(literal: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "/_-{}:.$".contains(c))
 }
 
+/// The MEANINGFUL projection of a dossier: services, facts, links, module
+/// names, and route literals — with volatile per-commit noise (node counts,
+/// indexed heads) stripped. Prose only goes stale when THIS changes, so the
+/// guide does not cry wolf on every commit.
+#[must_use]
+pub fn stable_projection(dossier: &str) -> String {
+    dossier
+        .lines()
+        .filter_map(|line| {
+            if line.starts_with("## Project:")
+                || line.starts_with("fact ")
+                || line.starts_with("link ->")
+                || line.starts_with("route-literal:")
+            {
+                Some(line.to_owned())
+            } else if let Some(modules) = line.strip_prefix("modules: ") {
+                // Keep module NAMES; drop the per-commit node counts.
+                let names = modules
+                    .split(", ")
+                    .map(|entry| entry.split('(').next().unwrap_or(entry))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Some(format!("modules: {names}"))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Digest of the stable projection — the value stamped into guides.
+#[must_use]
+pub fn stable_digest(dossier: &str) -> String {
+    dossier_digest(&stable_projection(dossier))
+}
+
 /// Stable digest of a dossier, embedded in generated guides so UIs can tell
 /// when the workspace has drifted past the prose.
 #[must_use]
@@ -363,6 +400,26 @@ pub fn synthesize_with_claude_cli(model: &str, prompt: &str) -> Result<String> {
     Ok(text)
 }
 
+/// Assemble the guide file: provenance stamp (model + stable digest) plus
+/// the synthesized prose.
+#[must_use]
+pub fn guide_document(model: &str, dossier: &str, synthesized: &str) -> String {
+    let digest = stable_digest(dossier);
+    format!(
+        "<!-- SYNTHESIZED by `leb architect` (model: {model}; stable-sha256: {digest}). \
+         Derived document - regenerate at will; the dossier facts it cites are canonical, \
+         its prose is not. -->\n\n{synthesized}\n"
+    )
+}
+
+/// Read the stable digest stamped into an existing guide, if any.
+#[must_use]
+pub fn stamped_digest(guide: &str) -> Option<&str> {
+    guide
+        .split_once("stable-sha256: ")
+        .and_then(|(_, rest)| rest.get(..64))
+}
+
 /// Enforce the same network stance as the proxy: a non-loopback runtime is
 /// only reachable when `network.local_only` was explicitly disabled.
 ///
@@ -445,5 +502,39 @@ mod tests {
         assert!(enforce_local_only("http://localhost:8010/x", true).is_ok());
         assert!(enforce_local_only("https://api.openai.com/v1/chat/completions", true).is_err());
         assert!(enforce_local_only("https://api.openai.com/v1/chat/completions", false).is_ok());
+    }
+
+    #[test]
+    fn stable_digest_ignores_commit_noise_but_tracks_architecture() {
+        let base = "WORKSPACE DOSSIER\n\n## Project: api\nindexed-head: aaaa\nfact hosting.base_url: api.example.com\nlink -> web [interface]\nmodules: src(100), tests(20)\nroute-literal: /v1/things\n";
+        let commit_noise = base
+            .replace("indexed-head: aaaa", "indexed-head: bbbb")
+            .replace("src(100), tests(20)", "src(104), tests(21)");
+        assert_eq!(
+            stable_digest(base),
+            stable_digest(&commit_noise),
+            "node counts and heads are per-commit noise"
+        );
+        let new_fact = base.replace(
+            "fact hosting.base_url: api.example.com",
+            "fact hosting.base_url: api.example.com\nfact hosting.provider: gcp",
+        );
+        assert_ne!(stable_digest(base), stable_digest(&new_fact));
+        let new_route = base.replace(
+            "route-literal: /v1/things",
+            "route-literal: /v1/things\nroute-literal: /v1/things/{id}",
+        );
+        assert_ne!(stable_digest(base), stable_digest(&new_route));
+        let new_module = base.replace("src(100), tests(20)", "src(100), tests(20), workers(5)");
+        assert_ne!(stable_digest(base), stable_digest(&new_module));
+    }
+
+    #[test]
+    fn guide_stamp_roundtrips() {
+        let document = guide_document("claude-fable-5", "## Project: x\n", "# Guide\n");
+        assert_eq!(
+            stamped_digest(&document),
+            Some(stable_digest("## Project: x\n").as_str())
+        );
     }
 }

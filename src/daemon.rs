@@ -1617,6 +1617,17 @@ async fn start_job_system(
             state_dir,
             std::time::Duration::from_secs(config.watch.local_poll_secs.max(5)),
             origin_poll,
+            GuideAuto {
+                mode: config.architect.auto.clone(),
+                min_interval: std::time::Duration::from_secs(
+                    config.architect.auto_min_secs.max(300),
+                ),
+                runtime_url: config.architect.runtime_url.clone(),
+                model: config.architect.model.clone(),
+                local_only: config.network.local_only,
+                vault_root: config.vault.root.clone(),
+                vault_enabled: config.vault.enabled,
+            },
         ));
     }
 
@@ -3549,6 +3560,97 @@ pub async fn refresh_origin_view(
     Ok(reference)
 }
 
+/// Automatic architecture-guide regeneration settings for the watcher.
+struct GuideAuto {
+    mode: String,
+    min_interval: std::time::Duration,
+    runtime_url: String,
+    model: String,
+    local_only: bool,
+    vault_root: PathBuf,
+    vault_enabled: bool,
+}
+
+/// Regenerate the guide when the workspace's STABLE projection has drifted
+/// past the stamped prose. Rate-limited, and every failure is a logged
+/// retry-next-tick, never a crash.
+async fn maybe_regenerate_guide(guide: &GuideAuto, database: &Database) -> bool {
+    if guide.mode == "off" || !guide.vault_enabled {
+        return false;
+    }
+    let path = guide.vault_root.join("ARCHITECTURE.md");
+    let Ok(existing) = std::fs::read_to_string(&path) else {
+        return false; // no guide yet: generation stays an explicit first act
+    };
+    let Some(stamped) = crate::architect::stamped_digest(&existing) else {
+        return false;
+    };
+    let stamped = stamped.to_owned();
+    let dossier = {
+        let database = database.clone();
+        match tokio::task::spawn_blocking(move || crate::architect::build_dossier(&database)).await
+        {
+            Ok(Ok(dossier)) => dossier,
+            _ => return false,
+        }
+    };
+    if crate::architect::stable_digest(&dossier) == stamped {
+        return false;
+    }
+    let prompt = crate::architect::synthesis_prompt(&dossier);
+    let (model, synthesized) = if guide.mode == "claude" {
+        let model = if guide.model.is_empty() {
+            "claude-opus-4-8".to_owned()
+        } else {
+            guide.model.clone()
+        };
+        let cli_model = model.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            crate::architect::synthesize_with_claude_cli(&cli_model, &prompt)
+        })
+        .await;
+        match result {
+            Ok(Ok(text)) => (model, text),
+            Ok(Err(error)) => {
+                eprintln!("guide auto-regen (claude) failed: {error}");
+                return false;
+            }
+            Err(error) => {
+                eprintln!("guide auto-regen task failed: {error}");
+                return false;
+            }
+        }
+    } else {
+        if crate::architect::enforce_local_only(&guide.runtime_url, guide.local_only).is_err()
+            || guide.model.is_empty()
+        {
+            eprintln!("guide auto-regen (local) needs architect.model and a loopback runtime");
+            return false;
+        }
+        match crate::architect::synthesize(&guide.runtime_url, &guide.model, &prompt).await {
+            Ok(text) => (guide.model.clone(), text),
+            Err(error) => {
+                eprintln!("guide auto-regen (local) failed: {error}");
+                return false;
+            }
+        }
+    };
+    let document = crate::architect::guide_document(&model, &dossier, &synthesized);
+    match std::fs::write(&path, &document) {
+        Ok(()) => {
+            eprintln!(
+                "guide auto-regenerated with `{model}` ({} bytes)",
+                document.len()
+            );
+            true
+        }
+        Err(error) => {
+            eprintln!("guide auto-regen write failed: {error}");
+            false
+        }
+    }
+}
+
 /// Commit-driven auto refresh. Compares committed HEADs only — uncommitted
 /// edits never trigger a scan — and, on a slower cadence, fetches origin to
 /// keep the shared-truth views current.
@@ -3558,9 +3660,11 @@ async fn watch_loop(
     state_dir: PathBuf,
     local_poll: std::time::Duration,
     origin_poll: Option<std::time::Duration>,
+    guide: GuideAuto,
 ) {
     let client = DaemonClient::new(&socket_path, std::time::Duration::from_secs(300));
     let mut last_origin = std::time::Instant::now();
+    let mut last_guide = std::time::Instant::now();
     // Crash hygiene: a refresh interrupted mid-flight leaves a dangling
     // worktree directory plus stale worktree metadata in the source repos.
     // Clean both once at startup; every live refresh cleans up after itself.
@@ -3608,6 +3712,10 @@ async fn watch_loop(
                 );
                 let _ = client.refresh_index(&repo).await;
             }
+        }
+        if last_guide.elapsed() >= guide.min_interval {
+            last_guide = std::time::Instant::now();
+            let _ = maybe_regenerate_guide(&guide, &database).await;
         }
         if let Some(origin_poll) = origin_poll {
             if last_origin.elapsed() >= origin_poll {

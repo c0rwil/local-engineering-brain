@@ -897,7 +897,9 @@ async function loadArchitecture() {
     }
     state.guideMd = doc.content;
     const badge = doc.stale === true
-      ? `<span class="stale-badge">Workspace changed since this was written — run <code>leb architect --claude</code></span>`
+      ? (doc.auto !== "off"
+        ? `<span class="fresh-badge">Workspace changed — the daemon is regenerating this automatically</span>`
+        : `<span class="stale-badge">Workspace changed since this was written — run <code>leb architect --claude</code></span>`)
       : doc.stale === false
         ? `<span class="fresh-badge">Current with the workspace</span>`
         : "";

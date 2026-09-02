@@ -1724,12 +1724,7 @@ fn run_architect(
         std::fs::create_dir_all(parent)
             .map_err(|error| leb::Error::Config(format!("architecture output dir: {error}")))?;
     }
-    let digest = leb::architect::dossier_digest(&dossier);
-    let document = format!(
-        "<!-- SYNTHESIZED by `leb architect` (model: {model}; dossier-sha256: {digest}). \
-         Derived document - regenerate at will; the dossier facts it cites are canonical, \
-         its prose is not. -->\n\n{synthesized}\n"
-    );
+    let document = leb::architect::guide_document(&model, &dossier, &synthesized);
     std::fs::write(&destination, &document)
         .map_err(|error| leb::Error::Config(format!("architecture output: {error}")))?;
     if json {
