@@ -63,11 +63,18 @@ impl Default for WatchConfig {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WebConfig {
-    /// Serve the loopback-only browser from the daemon. On by default:
-    /// the listener binds 127.0.0.1 only and reuses daemon data paths.
+    /// Serve the browser from the daemon. On by default: the listener binds
+    /// 127.0.0.1 only and reuses daemon data paths.
     pub enabled: bool,
-    /// Loopback port for the browser.
+    /// Port for the browser.
     pub port: u16,
+    /// Bind address. Anything other than loopback (a central team server)
+    /// REQUIRES `token`; the daemon refuses to expose the browser to a
+    /// network without authentication.
+    pub bind: String,
+    /// Bearer token required on every /api and /webhook request when set.
+    /// The page itself stays fetchable (static HTML); data does not.
+    pub token: Option<String>,
 }
 
 impl Default for WebConfig {
@@ -75,6 +82,8 @@ impl Default for WebConfig {
         Self {
             enabled: true,
             port: 11_436,
+            bind: "127.0.0.1".to_owned(),
+            token: None,
         }
     }
 }

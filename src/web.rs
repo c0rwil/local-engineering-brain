@@ -33,6 +33,7 @@ struct WebState {
     request_timeout: Duration,
     vault_root: PathBuf,
     architect_auto: String,
+    token: Option<String>,
 }
 
 impl WebState {
@@ -94,6 +95,7 @@ pub fn router(config: &Config) -> Router {
         request_timeout: Duration::from_millis(config.daemon.request_timeout_ms),
         vault_root: config.vault.root.clone(),
         architect_auto: config.architect.auto.clone(),
+        token: config.web.token.clone(),
     };
     Router::new()
         .route("/", get(index))
@@ -111,20 +113,96 @@ pub fn router(config: &Config) -> Router {
         .route("/api/facts/set", post(fact_set))
         .route("/api/facts/unset", post(fact_unset))
         .route("/api/linkscan", post(link_scan))
+        .route("/webhook/repo-updated", post(webhook_repo_updated))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            require_token,
+        ))
         .with_state(state)
 }
 
-/// Serve the workspace browser on `127.0.0.1:port` until the task is
-/// cancelled (Ctrl-C in the CLI).
+/// Bearer-token gate for data routes. The page itself (`/`) is static HTML
+/// and stays open; every /api and /webhook request needs the token when one
+/// is configured.
+async fn require_token(
+    State(state): State<WebState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = request.uri().path();
+    let guarded = path.starts_with("/api") || path.starts_with("/webhook");
+    if guarded && let Some(expected) = &state.token {
+        let presented = request
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .map(str::trim);
+        if presented != Some(expected.as_str()) {
+            return (
+                axum::http::StatusCode::UNAUTHORIZED,
+                "missing or invalid bearer token",
+            )
+                .into_response();
+        }
+    }
+    next.run(request).await
+}
+
+/// CI-driven freshness: after a merge to main, the pipeline POSTs the repo
+/// name here and the shared-truth view refreshes immediately instead of
+/// waiting for the origin poll.
+#[derive(Deserialize)]
+struct WebhookRepoUpdated {
+    repo: String,
+}
+
+async fn webhook_repo_updated(
+    State(state): State<WebState>,
+    Json(request): Json<WebhookRepoUpdated>,
+) -> std::result::Result<Json<serde_json::Value>, WebError> {
+    let client = state.client();
+    let snapshot = client.workspace().await?;
+    let project = snapshot
+        .projects
+        .iter()
+        .find(|project| project.name == request.repo)
+        .ok_or_else(|| {
+            WebError(Error::Config(format!(
+                "unknown repository `{}`",
+                request.repo
+            )))
+        })?;
+    let patient = DaemonClient::new(&state.socket_path, Duration::from_secs(600));
+    let response = patient
+        .origin_refresh(&crate::daemon::OriginRefreshRequest {
+            project_id: project.id.clone(),
+        })
+        .await?;
+    Ok(Json(serde_json::json!({
+        "repo": request.repo,
+        "refreshed": response.reference,
+    })))
+}
+
+/// Serve the workspace browser until the task is cancelled.
 ///
 /// # Errors
 ///
-/// Returns bind or serve errors.
+/// Returns bind or serve errors, or a config error when a non-loopback bind
+/// has no token.
 pub async fn serve(config: Config, port: u16) -> Result<()> {
+    let bind = config.web.bind.clone();
+    let loopback = bind == "127.0.0.1" || bind == "localhost" || bind == "::1";
+    if !loopback && config.web.token.is_none() {
+        return Err(Error::Config(
+            "binding the browser beyond loopback requires [web] token".to_owned(),
+        ));
+    }
     let app = router(&config);
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+    let listener = tokio::net::TcpListener::bind((bind.as_str(), port))
         .await
-        .map_err(|error| Error::Config(format!("web bind 127.0.0.1:{port}: {error}")))?;
+        .map_err(|error| Error::Config(format!("web bind {bind}:{port}: {error}")))?;
     axum::serve(listener, app)
         .await
         .map_err(|error| Error::Config(format!("web serve: {error}")))

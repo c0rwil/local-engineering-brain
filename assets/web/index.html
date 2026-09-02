@@ -645,12 +645,22 @@ function renderCards() {
     `${total} repositories · ${links} links` + (state.q ? ` · showing ${projects.length}` : "");
 }
 
+function apiToken() {
+  try {
+    const fromUrl = new URLSearchParams(location.search).get("token");
+    if (fromUrl) { sessionStorage.setItem("leb-token", fromUrl); }
+    return sessionStorage.getItem("leb-token") || "";
+  } catch { return ""; }
+}
+
 async function api(path, body) {
-  const res = await fetch(path, body === undefined ? undefined : {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+  const headers = { "content-type": "application/json" };
+  const token = apiToken();
+  if (token) headers.authorization = `Bearer ${token}`;
+  const res = await fetch(path, body === undefined ? { headers } : {
+    method: "POST", headers, body: JSON.stringify(body),
   });
+  if (res.status === 401) throw new Error("This server requires a token: open the page as /?token=<token>");
   if (!res.ok) throw new Error((await res.text()) || res.statusText);
   return res.json();
 }
