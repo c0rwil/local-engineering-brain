@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::daemon::{
-    DaemonClient, FactSetRequest, FactUnsetRequest, LinkScanRequest, ModuleMapRequest,
-    ModuleSymbolsRequest,
+    DaemonClient, FactSetRequest, FactUnsetRequest, LinkScanRequest, MemoryProvenanceRequest,
+    ModuleMapRequest, ModuleSymbolsRequest,
 };
 use crate::error::{Error, Result};
 use crate::ids::ProjectId;
@@ -97,6 +97,7 @@ pub fn router(config: &Config) -> Router {
         .route("/api/activity", get(activity))
         .route("/api/modulemap", post(module_map))
         .route("/api/modulesymbols", post(module_symbols))
+        .route("/api/provenance", post(provenance))
         .route("/api/reindex", post(reindex))
         .route("/api/facts/set", post(fact_set))
         .route("/api/facts/unset", post(fact_unset))
@@ -120,8 +121,16 @@ pub async fn serve(config: Config, port: u16) -> Result<()> {
         .map_err(|error| Error::Config(format!("web serve: {error}")))
 }
 
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
+async fn index() -> impl IntoResponse {
+    // no-cache (NOT no-store): the browser revalidates on every load, so a
+    // redeployed daemon never serves a user a stale page from memory cache.
+    (
+        [(
+            axum::http::header::CACHE_CONTROL,
+            "no-cache, must-revalidate",
+        )],
+        Html(INDEX_HTML),
+    )
 }
 
 async fn workspace(
@@ -166,6 +175,25 @@ async fn module_symbols(
             .module_symbols(&ModuleSymbolsRequest {
                 project_id: request.project_id,
                 group: request.group,
+            })
+            .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct WebProvenance {
+    memory_id: String,
+}
+
+async fn provenance(
+    State(state): State<WebState>,
+    Json(request): Json<WebProvenance>,
+) -> std::result::Result<Json<crate::daemon::MemoryProvenance>, WebError> {
+    Ok(Json(
+        state
+            .client()
+            .memory_provenance(&MemoryProvenanceRequest {
+                memory_id: request.memory_id,
             })
             .await?,
     ))

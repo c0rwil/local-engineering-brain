@@ -177,7 +177,7 @@ fn render_project(out: &mut String, dossier: &ProjectDossier) {
 /// Extract route-like string literals from source files: absolute paths that
 /// appear on lines with routing/HTTP vocabulary. Purely lexical and bounded;
 /// results are dossier inputs, never link evidence by themselves.
-fn extract_routes(root: &Path) -> Vec<String> {
+pub(crate) fn extract_routes(root: &Path) -> Vec<String> {
     const HTTP_WORDS: [&str; 12] = [
         "route", "get(", "post(", "put(", "delete(", "patch(", "fetch", "axum", "axios", "request",
         "endpoint", "url",

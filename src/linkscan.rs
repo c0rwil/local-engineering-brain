@@ -80,6 +80,7 @@ pub fn scan(
     scan_gitmodules(root, &known, &mut candidates);
     scan_requirements(root, &known, &mut candidates);
     scan_hostnames(root, &known, &mut candidates);
+    scan_route_overlap(root, &known, &mut candidates);
     candidates.retain(|candidate| !existing.contains(&candidate.target_project_id));
     // One candidate per target: keep the strongest (definitive first).
     candidates.sort_by(|a, b| {
@@ -470,6 +471,43 @@ fn scan_hostnames(root: &Path, known: &[KnownProject], candidates: &mut Vec<Link
                     project.hosts.join("`/`")
                 ),
                 definitive: true,
+            });
+        }
+    }
+}
+
+/// Repos whose sources share several multi-segment route literals are
+/// probably two sides of one API. Lexical and heuristic, so this only ever
+/// produces PROPOSALS for a human to confirm — never auto-applied links.
+fn scan_route_overlap(root: &Path, known: &[KnownProject], candidates: &mut Vec<LinkCandidate>) {
+    const MIN_SHARED_ROUTES: usize = 3;
+    let mine: std::collections::BTreeSet<String> =
+        crate::architect::extract_routes(root).into_iter().collect();
+    if mine.len() < MIN_SHARED_ROUTES {
+        return;
+    }
+    for project in known {
+        let Some(other_root) = project.roots.iter().find(|path| path.is_dir()) else {
+            continue;
+        };
+        let theirs = crate::architect::extract_routes(other_root);
+        let shared = theirs
+            .iter()
+            .filter(|route| mine.contains(*route))
+            .take(MIN_SHARED_ROUTES + 2)
+            .cloned()
+            .collect::<Vec<_>>();
+        if shared.len() >= MIN_SHARED_ROUTES {
+            candidates.push(LinkCandidate {
+                target_project_id: project.id.clone(),
+                target_name: project.name.clone(),
+                relation: "shares-api-surface".to_owned(),
+                evidence: format!(
+                    "{} shared route literals, e.g. `{}`",
+                    shared.len(),
+                    shared[0]
+                ),
+                definitive: false,
             });
         }
     }

@@ -100,6 +100,7 @@ const API_ACTIVITY: &str = "/api/v1/workspace/activity";
 const API_MODULE_MAP: &str = "/api/v1/projects/module-map";
 const API_MODULE_SYMBOLS: &str = "/api/v1/projects/module-symbols";
 const API_ORIGIN_REFRESH: &str = "/api/v1/projects/origin-refresh";
+const API_MEMORY_PROVENANCE: &str = "/api/v1/memories/provenance";
 
 #[derive(Clone)]
 struct DaemonState {
@@ -365,6 +366,38 @@ pub struct WorkspaceSnapshot {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ModuleMapRequest {
     pub project_id: ProjectId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MemoryProvenanceRequest {
+    pub memory_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProvenanceEvidence {
+    pub kind: String,
+    pub strength: String,
+    pub command: Option<String>,
+    pub exit_code: Option<i64>,
+    pub observed_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProvenanceEpisode {
+    pub task_id: String,
+    pub prompt: String,
+    pub status: String,
+    pub accepted_by_user: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MemoryProvenance {
+    pub epistemic_state: String,
+    pub confidence: f64,
+    pub trust_source: String,
+    pub rationale: String,
+    pub evidence: Vec<ProvenanceEvidence>,
+    pub episodes: Vec<ProvenanceEpisode>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1136,6 +1169,19 @@ impl DaemonClient {
         .await
     }
 
+    /// Fetch a memory's evidence chain and source episodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn memory_provenance(
+        &self,
+        request: &MemoryProvenanceRequest,
+    ) -> Result<MemoryProvenance> {
+        self.request(hyper::Method::POST, API_MEMORY_PROVENANCE, Some(request))
+            .await
+    }
+
     /// Refresh a project's shared-truth (origin/main) view.
     ///
     /// # Errors
@@ -1497,6 +1543,7 @@ where
         .route(API_MODULE_MAP, post(project_module_map))
         .route(API_MODULE_SYMBOLS, post(project_module_symbols))
         .route(API_ORIGIN_REFRESH, post(origin_refresh_handler))
+        .route(API_MEMORY_PROVENANCE, post(memory_provenance_handler))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -2491,6 +2538,79 @@ async fn project_module_map(
     })
     .await?;
     Ok(Json(map))
+}
+
+async fn memory_provenance_handler(
+    State(state): State<DaemonState>,
+    Json(request): Json<MemoryProvenanceRequest>,
+) -> std::result::Result<Json<MemoryProvenance>, ApiError> {
+    let database = state.database.clone();
+    let provenance = run_blocking(&state, move || {
+        database.with_reader(|connection| {
+            let (epistemic_state, confidence, trust_source, rationale) = connection
+                .query_row(
+                    "SELECT epistemic_state, confidence, trust_source, rationale
+                     FROM memories WHERE id = ?1",
+                    [request.memory_id.as_str()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, f64>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )
+                .map_err(|_| Error::Config(format!("unknown memory `{}`", request.memory_id)))?;
+            let mut statement = connection.prepare(
+                "SELECT e.kind, e.strength, e.command, e.exit_code, e.observed_at_ms
+                 FROM memory_evidence me
+                 JOIN evidence e ON e.id = me.evidence_id
+                 WHERE me.memory_id = ?1
+                 ORDER BY e.observed_at_ms LIMIT 40",
+            )?;
+            let evidence = statement
+                .query_map([request.memory_id.as_str()], |row| {
+                    Ok(ProvenanceEvidence {
+                        kind: row.get(0)?,
+                        strength: row.get(1)?,
+                        command: row.get(2)?,
+                        exit_code: row.get(3)?,
+                        observed_at_ms: row.get(4)?,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let mut episode_statement = connection.prepare(
+                "SELECT t.id, t.prompt, t.status, t.accepted_by_user
+                 FROM memory_sources ms
+                 JOIN tasks t ON t.id = ms.task_id
+                 WHERE ms.memory_id = ?1
+                 ORDER BY t.started_at_ms LIMIT 20",
+            )?;
+            let episodes = episode_statement
+                .query_map([request.memory_id.as_str()], |row| {
+                    Ok(ProvenanceEpisode {
+                        task_id: row.get(0)?,
+                        prompt: row.get(1)?,
+                        status: row.get(2)?,
+                        accepted_by_user: row
+                            .get::<_, Option<i64>>(3)?
+                            .map(|accepted| accepted == 1),
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(MemoryProvenance {
+                epistemic_state,
+                confidence,
+                trust_source,
+                rationale,
+                evidence,
+                episodes,
+            })
+        })
+    })
+    .await?;
+    Ok(Json(provenance))
 }
 
 async fn origin_refresh_handler(

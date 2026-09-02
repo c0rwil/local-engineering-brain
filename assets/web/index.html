@@ -101,6 +101,13 @@
     scroll-margin-top: 5rem;
   }
   .card.selected { border-color: var(--accent); }
+  .card { cursor: pointer; position: relative; transition: border-color .12s ease; }
+  .card:hover { border-color: var(--accent); }
+  .card .details-hint {
+    position: absolute; top: 1rem; right: 1.1rem;
+    color: var(--muted); font-size: .76rem;
+  }
+  .card:hover .details-hint { color: var(--accent); }
   .card h3 { margin: 0 0 .2rem; font-size: 1rem; overflow-wrap: break-word; }
   .card .meta { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
   .card .meta code { font-family: var(--mono); font-size: .75rem; }
@@ -215,6 +222,17 @@
   }
   #svc-modal .guide { font-size: .9rem; }
   #svc-modal .guide code { font-family: var(--mono); background: var(--chip); border-radius: .3rem; padding: .05rem .3rem; font-size: .84em; }
+  #svc-modal ul.memories li { cursor: pointer; }
+  #svc-modal ul.memories li:hover { border-left-color: var(--accent); }
+  .provenance-box {
+    background: var(--bg); border: 1px solid var(--line); border-radius: .5rem;
+    margin: .4rem 0 .2rem; padding: .5rem .7rem; font-size: .8rem; cursor: default;
+  }
+  .provenance-box .prov-row { display: flex; gap: .6rem; align-items: baseline; margin: .15rem 0; }
+  .provenance-box .prov-row code { font-family: var(--mono); font-size: .74rem; overflow-wrap: anywhere; }
+  .provenance-box .ok { color: var(--accent); font-variant-numeric: tabular-nums; }
+  .provenance-box .bad { color: var(--danger); font-variant-numeric: tabular-nums; }
+  .provenance-box .why { color: var(--muted); margin: .2rem 0 .4rem; }
   .local-toggle input { accent-color: var(--accent); }
   .modmap { overflow-x: auto; margin-top: .5rem; }
   .modmap svg { display: block; }
@@ -478,7 +496,9 @@ function linkRows(project) {
 
 function card(project) {
   const selected = project.id === state.selected ? " selected" : "";
-  return `<article class="card${selected}" id="card-${esc(project.id)}" aria-labelledby="h-${esc(project.id)}">
+  return `<article class="card${selected}" id="card-${esc(project.id)}" aria-labelledby="h-${esc(project.id)}"
+    data-id="${esc(project.id)}">
+    <span class="details-hint" aria-hidden="true">Details →</span>
     <h3 id="h-${esc(project.id)}"><button type="button" class="open-svc" data-id="${esc(project.id)}"
       aria-haspopup="dialog">${esc(project.name)}</button></h3>
     <p class="meta">${viewMeta(project)}</p>
@@ -561,7 +581,17 @@ function renderCards() {
     btn.addEventListener("click", onReindex);
   }
   for (const btn of el.querySelectorAll("button.open-svc")) {
-    btn.addEventListener("click", () => openServiceModal(btn.dataset.id));
+    btn.addEventListener("click", event => {
+      event.stopPropagation();
+      openServiceModal(btn.dataset.id);
+    });
+  }
+  // The whole card opens the service page — except its interactive innards.
+  for (const cardEl of el.querySelectorAll(".card")) {
+    cardEl.addEventListener("click", event => {
+      if (event.target.closest("button, input, label, select, a, summary, details, form")) return;
+      openServiceModal(cardEl.dataset.id);
+    });
   }
   const total = state.data.projects.length;
   const links = state.data.projects.reduce((n, p) => n + p.links.length, 0);
@@ -786,15 +816,52 @@ function openServiceModal(projectId) {
     ${guide ? `<section><h4>From the Architecture Guide</h4><div class="guide">${markdown(guide)}</div></section>` : ""}
     ${project.facts.length ? `<section><h4>Facts</h4>${factRows(project)}</section>` : ""}
     ${project.links.length ? `<section><h4>Linked Repositories</h4>${linkRows(project)}</section>` : ""}
-    ${project.memories.length ? `<section><h4>Validated Memories</h4>
+    ${project.memories.length ? `<section><h4>Validated Memories <span class="meta">(click one for its evidence chain)</span></h4>
       <ul class="memories">${project.memories.map(m =>
-        `<li><span class="kind">${esc(m.kind)}</span>${esc(m.claim)}</li>`).join("")}</ul></section>` : ""}
+        `<li data-mid="${esc(m.id)}" tabindex="0" role="button"
+           aria-label="Show evidence for this memory"><span class="kind">${esc(m.kind)}</span>${esc(m.claim)}</li>`).join("")}</ul></section>` : ""}
     <section><h4>Module Map (${esc(view)})</h4>
       <div class="modmap" role="img" aria-label="Module dependency diagram for ${esc(project.name)}">Loading…</div>
     </section>`;
   modal.showModal();
+  for (const item of modal.querySelectorAll("ul.memories li[data-mid]")) {
+    const open = () => toggleProvenance(item);
+    item.addEventListener("click", open);
+    item.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+  }
   loadModuleMap(graphIdOf(project), modal.querySelector(".modmap"));
   modal.addEventListener("close", () => { state.selected = ""; writeUrl(); }, { once: true });
+}
+
+async function toggleProvenance(item) {
+  const existing = item.querySelector(".provenance-box");
+  if (existing) { existing.remove(); return; }
+  const box = document.createElement("div");
+  box.className = "provenance-box";
+  box.textContent = "Loading evidence…";
+  box.addEventListener("click", e => e.stopPropagation());
+  item.appendChild(box);
+  try {
+    const p = await api("/api/provenance", { memory_id: item.dataset.mid });
+    const evidence = p.evidence.map(e => {
+      const verdict = e.exit_code === 0 ? `<span class="ok">exit 0</span>`
+        : e.exit_code == null ? `<span>${esc(e.strength)}</span>`
+        : `<span class="bad">exit ${e.exit_code}</span>`;
+      return `<div class="prov-row">${verdict}
+        <span>${esc(e.kind)}</span>
+        ${e.command ? `<code translate="no">${esc(e.command)}</code>` : ""}
+        <time>${esc(ago(e.observed_at_ms))}</time></div>`;
+    }).join("");
+    const episodes = p.episodes.map(t =>
+      `<div class="prov-row"><span>${t.status === "success" ? "✓" : t.status}${t.accepted_by_user ? " · accepted" : ""}</span>
+       <span>${esc(t.prompt.slice(0, 90))}</span></div>`).join("");
+    box.innerHTML = `
+      <p class="why">${esc(p.epistemic_state)} · confidence ${p.confidence.toFixed(2)} · ${esc(p.trust_source)}<br>${esc(p.rationale.slice(0, 240))}</p>
+      ${episodes ? `<strong>Episodes</strong>${episodes}` : ""}
+      ${evidence ? `<strong>Evidence</strong>${evidence}` : `<span class="why">No linked evidence rows.</span>`}`;
+  } catch (error) {
+    box.innerHTML = `<span class="error">${esc(error.message)}</span>`;
+  }
 }
 
 /* ---- minimal markdown for the architecture guide ---- */
