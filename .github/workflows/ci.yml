@@ -65,7 +65,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macOS bills at 10x on private repos and the dev machine already
+        # runs the full gate suite on macOS before every push; per-push CI
+        # covers Linux, and `workflow_dispatch` runs the macOS legs on demand.
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -93,7 +96,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macOS bills at 10x on private repos and the dev machine already
+        # runs the full gate suite on macOS before every push; per-push CI
+        # covers Linux, and `workflow_dispatch` runs the macOS legs on demand.
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -109,6 +115,7 @@ jobs:
 
   perf:
     name: performance gates (informational)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     timeout-minutes: 30
     # Not a required check. These tests assert latency and RSS ceilings that
