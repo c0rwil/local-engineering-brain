@@ -398,6 +398,16 @@ pub struct MemorySummary {
     pub claim: String,
     pub confidence: f64,
     pub tags: Vec<String>,
+    /// candidate | observed | supported | validated
+    #[serde(default)]
+    pub epistemic_state: String,
+    /// Distinct successful tasks served by a context that injected this
+    /// memory (the same count that gates skill promotion).
+    #[serde(default)]
+    pub wins: i64,
+    /// Total times this memory was injected into a compiled context.
+    #[serde(default)]
+    pub injections: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2556,10 +2566,25 @@ async fn workspace_snapshot(
                 .unwrap_or_default();
             let memories = database.with_reader(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, kind, claim, confidence, tags_json FROM memories
-                     WHERE project_id = ?1 AND status = 'active'
-                       AND epistemic_state = 'validated'
-                     ORDER BY known_from_ms DESC, id LIMIT 30",
+                    "SELECT m.id, m.kind, m.claim, m.confidence, m.tags_json,
+                            m.epistemic_state,
+                            (SELECT COUNT(DISTINCT served.source_id)
+                             FROM usage_events injected
+                             JOIN usage_events served
+                               ON served.context_run_id = injected.context_run_id
+                             WHERE injected.source_type = 'memory'
+                               AND injected.source_id = m.id
+                               AND injected.usage_kind = 'injected'
+                               AND served.source_type = 'task'
+                               AND served.usage_kind = 'context_served'
+                               AND served.outcome = 'success'),
+                            (SELECT COUNT(*) FROM usage_events u
+                             WHERE u.source_type = 'memory' AND u.source_id = m.id
+                               AND u.usage_kind = 'injected')
+                     FROM memories m
+                     WHERE m.project_id = ?1 AND m.status = 'active'
+                     ORDER BY (m.epistemic_state = 'validated') DESC,
+                              m.known_from_ms DESC, m.id LIMIT 40",
                 )?;
                 let rows = statement
                     .query_map([project_id.as_str()], |row| {
@@ -2570,6 +2595,9 @@ async fn workspace_snapshot(
                             confidence: row.get(3)?,
                             tags: serde_json::from_str(&row.get::<_, String>(4)?)
                                 .unwrap_or_default(),
+                            epistemic_state: row.get(5)?,
+                            wins: row.get(6)?,
+                            injections: row.get(7)?,
                         })
                     })?
                     .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -2827,6 +2855,9 @@ async fn project_module_symbols(
                             confidence: row.get(3)?,
                             tags: serde_json::from_str(&row.get::<_, String>(4)?)
                                 .unwrap_or_default(),
+                            epistemic_state: "validated".to_owned(),
+                            wins: 0,
+                            injections: 0,
                         })
                     },
                 )?

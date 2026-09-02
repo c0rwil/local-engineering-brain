@@ -18,11 +18,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::daemon::{
-    DaemonClient, FactSetRequest, FactUnsetRequest, LinkScanRequest, MemoryProvenanceRequest,
-    ModuleMapRequest, ModuleSymbolsRequest,
+    DaemonClient, FactSetRequest, FactUnsetRequest, LinkScanRequest, MemoryCreateRequest,
+    MemoryPromoteRequest, MemoryProvenanceRequest, ModuleMapRequest, ModuleSymbolsRequest,
 };
 use crate::error::{Error, Result};
 use crate::ids::ProjectId;
+use crate::memory::{EpistemicState, MemoryDraft};
 
 const INDEX_HTML: &str = include_str!("../assets/web/index.html");
 
@@ -103,6 +104,9 @@ pub fn router(config: &Config) -> Router {
         .route("/api/modulesymbols", post(module_symbols))
         .route("/api/provenance", post(provenance))
         .route("/api/symbolsearch", post(symbol_search))
+        .route("/api/memory/promote", post(memory_promote))
+        .route("/api/memory/forget", post(memory_forget))
+        .route("/api/memory/add", post(memory_add))
         .route("/api/reindex", post(reindex))
         .route("/api/facts/set", post(fact_set))
         .route("/api/facts/unset", post(fact_unset))
@@ -255,6 +259,88 @@ async fn symbol_search(
         }
     }
     Ok(Json(hits))
+}
+
+#[derive(Deserialize)]
+struct WebMemoryId {
+    memory_id: String,
+}
+
+async fn memory_promote(
+    State(state): State<WebState>,
+    Json(request): Json<WebMemoryId>,
+) -> std::result::Result<Json<crate::memory::MemoryRecord>, WebError> {
+    let id = crate::ids::MemoryId::parse(&request.memory_id)?;
+    // A curator clicking Promote IS the human override; the CLI keeps the
+    // stepwise evidence-gated path for automation.
+    Ok(Json(
+        state
+            .client()
+            .promote_memory(
+                &id,
+                &MemoryPromoteRequest {
+                    target: EpistemicState::Validated,
+                    human_override: true,
+                },
+            )
+            .await?,
+    ))
+}
+
+async fn memory_forget(
+    State(state): State<WebState>,
+    Json(request): Json<WebMemoryId>,
+) -> std::result::Result<Json<crate::memory::MemoryRecord>, WebError> {
+    let id = crate::ids::MemoryId::parse(&request.memory_id)?;
+    Ok(Json(state.client().forget_memory(&id).await?))
+}
+
+#[derive(Deserialize)]
+struct WebMemoryAdd {
+    project_id: ProjectId,
+    kind: String,
+    claim: String,
+    #[serde(default)]
+    rationale: Option<String>,
+}
+
+async fn memory_add(
+    State(state): State<WebState>,
+    Json(request): Json<WebMemoryAdd>,
+) -> std::result::Result<Json<crate::memory::MemoryRecord>, WebError> {
+    if !matches!(
+        request.kind.as_str(),
+        "lesson" | "preference" | "constraint"
+    ) {
+        return Err(WebError(Error::Config(
+            "kind must be lesson, preference, or constraint".to_owned(),
+        )));
+    }
+    let record = state
+        .client()
+        .create_memory(&MemoryCreateRequest {
+            project_id: request.project_id.clone(),
+            memory: MemoryDraft {
+                scope_type: "project".to_owned(),
+                scope_id: request.project_id.to_string(),
+                kind: request.kind,
+                claim: request.claim,
+                rationale: request
+                    .rationale
+                    .unwrap_or_else(|| "Recorded by a human in the workspace browser".to_owned()),
+                confidence: 0.5,
+                importance: 0.8,
+                tags: vec!["human".to_owned()],
+                valid_from_commit: None,
+                valid_to_commit: None,
+                trust_source: "human_instruction".to_owned(),
+                evidence_ids: Vec::new(),
+                source_task_ids: Vec::new(),
+                node_ids: Vec::new(),
+            },
+        })
+        .await?;
+    Ok(Json(record))
 }
 
 #[derive(Deserialize)]

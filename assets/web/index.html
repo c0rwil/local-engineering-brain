@@ -489,13 +489,14 @@ function ago(ms) {
 }
 
 function memoryRows(project) {
-  if (!project.memories.length) return "";
-  const items = project.memories.map(m =>
+  const validated = project.memories.filter(m => m.epistemic_state === "validated");
+  if (!validated.length) return "";
+  const items = validated.map(m =>
     `<li><span class="kind">${esc(m.kind)}</span>${esc(m.claim)}
      ${m.tags.length ? `<span class="tags" translate="no">${esc(m.tags.join(" · "))}</span>` : ""}</li>`
   ).join("");
   return `<details open>
-    <summary>${project.memories.length} Validated ${project.memories.length === 1 ? "Memory" : "Memories"}</summary>
+    <summary>${validated.length} Validated ${validated.length === 1 ? "Memory" : "Memories"}</summary>
     <ul class="memories">${items}</ul>
   </details>`;
 }
@@ -881,10 +882,36 @@ function openServiceModal(projectId) {
     ${guide ? `<section><h4>From the Architecture Guide</h4><div class="guide">${markdown(guide)}</div></section>` : ""}
     ${project.facts.length ? `<section><h4>Facts</h4>${factRows(project)}</section>` : ""}
     ${project.links.length ? `<section><h4>Linked Repositories</h4>${linkRows(project)}</section>` : ""}
-    ${project.memories.length ? `<section><h4>Validated Memories <span class="meta">(click one for its evidence chain)</span></h4>
-      <ul class="memories">${project.memories.map(m =>
-        `<li data-mid="${esc(m.id)}" tabindex="0" role="button"
-           aria-label="Show evidence for this memory"><span class="kind">${esc(m.kind)}</span>${esc(m.claim)}</li>`).join("")}</ul></section>` : ""}
+    <section><h4>Memories <span class="meta">(click one for its evidence chain)</span></h4>
+      ${project.memories.length ? `<ul class="memories">${project.memories.map(m => {
+        const roi = m.epistemic_state === "validated"
+          ? ` <span class="tags">${m.wins} win${m.wins === 1 ? "" : "s"} · ${m.injections} injection${m.injections === 1 ? "" : "s"}</span>`
+          : "";
+        const stateChip = m.epistemic_state !== "validated"
+          ? `<span class="rel">${esc(m.epistemic_state)}</span> ` : "";
+        const actions = `<span class="row" style="gap:.3rem; display:inline-flex; margin-left:.4rem">
+          ${m.epistemic_state !== "validated"
+            ? `<button type="button" class="quiet mem-promote" data-mid="${esc(m.id)}" style="font-size:.7rem; padding:.15rem .45rem">Validate</button>` : ""}
+          <button type="button" class="quiet mem-forget" data-mid="${esc(m.id)}" style="font-size:.7rem; padding:.15rem .45rem">Forget</button>
+        </span>`;
+        return `<li data-mid="${esc(m.id)}" tabindex="0" role="button"
+          aria-label="Show evidence for this memory">${stateChip}<span class="kind">${esc(m.kind)}</span>${esc(m.claim)}${roi}${actions}</li>`;
+      }).join("")}</ul>` : `<p class="empty">No memories yet.</p>`}
+      <form class="fact-form mem-add" data-id="${esc(project.id)}" style="margin-top:.7rem">
+        <div><label for="mk-${esc(project.id)}">Kind</label>
+          <select id="mk-${esc(project.id)}" name="kind"
+            style="width:100%; background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:.45rem; padding:.38rem .55rem; font:inherit; font-size:.86rem">
+            <option value="lesson">lesson</option>
+            <option value="preference">preference</option>
+            <option value="constraint">constraint</option>
+          </select></div>
+        <div class="full"><label for="mc-${esc(project.id)}">New memory (claim)</label>
+          <input id="mc-${esc(project.id)}" name="claim" required autocomplete="off"
+                 placeholder="the rule, phrased for a future engineer…"></div>
+        <div class="full row"><button type="submit">Add Memory</button>
+          <span aria-live="polite" class="status"></span></div>
+      </form>
+    </section>
     <section><h4>Module Map (${esc(view)})</h4>
       <div class="modmap" role="img" aria-label="Module dependency diagram for ${esc(project.name)}">Loading…</div>
     </section>`;
@@ -894,11 +921,54 @@ function openServiceModal(projectId) {
   });
   for (const item of modal.querySelectorAll("ul.memories li[data-mid]")) {
     const open = () => toggleProvenance(item);
-    item.addEventListener("click", open);
+    item.addEventListener("click", event => {
+      if (event.target.closest("button, form, input, select")) return;
+      open();
+    });
     item.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
   }
+  for (const btn of modal.querySelectorAll(".mem-promote")) {
+    btn.addEventListener("click", () => curateMemory("/api/memory/promote", btn, projectId));
+  }
+  for (const btn of modal.querySelectorAll(".mem-forget")) {
+    btn.addEventListener("click", () => {
+      if (confirm("Forget this memory? It stops injecting but stays auditable.")) {
+        curateMemory("/api/memory/forget", btn, projectId);
+      }
+    });
+  }
+  modal.querySelector("form.mem-add")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const status = form.querySelector(".status");
+    const claim = form.elements.claim.value.trim();
+    if (!claim) { form.elements.claim.focus(); return; }
+    status.textContent = "Saving…";
+    try {
+      await api("/api/memory/add", {
+        project_id: projectId, kind: form.elements.kind.value, claim,
+      });
+      status.innerHTML = `<span class="flash">Added as candidate — validate it when it proves out.</span>`;
+      await refresh();
+      openServiceModal(projectId);
+    } catch (error) {
+      status.innerHTML = `<span class="error">${esc(error.message)}</span>`;
+    }
+  });
   loadModuleMap(graphIdOf(project), modal.querySelector(".modmap"));
   modal.addEventListener("close", () => { state.selected = ""; writeUrl(); }, { once: true });
+}
+
+async function curateMemory(endpoint, btn, projectId) {
+  btn.disabled = true;
+  try {
+    await api(endpoint, { memory_id: btn.dataset.mid });
+    await refresh();
+    openServiceModal(projectId);
+  } catch (error) {
+    btn.disabled = false;
+    alert(error.message);
+  }
 }
 
 async function toggleProvenance(item) {
