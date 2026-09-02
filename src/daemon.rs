@@ -2779,15 +2779,94 @@ async fn project_module_symbols(
                 if functions == 1 { "" } else { "s" },
                 if types == 1 { "" } else { "s" },
             );
-            let mut calls_statement = connection.prepare(
+            // Language builtins and assertion macros say nothing about what a
+            // module DOES; keep the calls list to domain vocabulary.
+            const CALL_NOISE: &[&str] = &[
+                "Some",
+                "None",
+                "Ok",
+                "Err",
+                "assert",
+                "assert_eq",
+                "assert_ne",
+                "format",
+                "println",
+                "print",
+                "eprintln",
+                "vec",
+                "panic",
+                "clone",
+                "into",
+                "from",
+                "unwrap",
+                "expect",
+                "new",
+                "len",
+                "push",
+                "insert",
+                "get",
+                "to_owned",
+                "to_string",
+                "as_ref",
+                "as_str",
+                "iter",
+                "collect",
+                "map",
+                "and_then",
+                "unwrap_or",
+                "unwrap_or_default",
+                "unwrap_or_else",
+                "ok_or_else",
+                "matches",
+                "write",
+                "writeln",
+                "default",
+                "drop",
+                "Box",
+                "Arc",
+                "String",
+                "Vec",
+                "require",
+                "console",
+                "log",
+                "JSON",
+                "String",
+                "Number",
+                "Boolean",
+                "Array",
+                "Object",
+                "Promise",
+                "await",
+                "fetch",
+                "len",
+                "str",
+                "int",
+                "float",
+                "list",
+                "dict",
+                "set",
+                "print",
+                "isinstance",
+                "super",
+                "range",
+                "enumerate",
+            ];
+            let noise = CALL_NOISE
+                .iter()
+                .map(|word| format!("'{word}'"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut calls_statement = connection.prepare(&format!(
                 "SELECT t.label, COUNT(*) AS n FROM edges e
                  JOIN nodes s ON s.id = e.source_id
                     AND (s.file_path LIKE ?2 OR s.file_path = ?3)
                  JOIN nodes t ON t.id = e.target_id AND t.kind = 'ExternalReference'
                  WHERE e.project_id = ?1 AND e.relation = 'CALLS'
                    AND e.tombstoned_at_ms IS NULL
-                 GROUP BY t.label ORDER BY n DESC, t.label LIMIT 15",
-            )?;
+                   AND t.label NOT IN ({noise})
+                   AND length(t.label) > 2
+                 GROUP BY t.label ORDER BY n DESC, t.label LIMIT 15"
+            ))?;
             let calls = calls_statement
                 .query_map(
                     rusqlite::params![request.project_id.as_str(), prefix, request.group],
