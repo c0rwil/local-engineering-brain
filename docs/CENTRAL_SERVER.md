@@ -86,10 +86,23 @@ links, the architecture guide's staleness check — follows automatically.
   natural: when a branch merges, the webhook updates central, so main's
   documentation is already current the moment the merge lands.
 
-## Not yet: brain synchronization
+## Brain synchronization
 
-Central and laptop brains are separate event logs today. Merging memories
-across instances (a teammate's validated lesson appearing in your local
-injections) is the next major — it is the spec's team/PostgreSQL boundary,
-and it needs identity, conflict, and trust rules that deserve their own
-design pass rather than a bolted-on file copy.
+Laptops sync with `leb sync` (or automatically: set `[sync]` locally):
+
+```toml
+[sync]
+central_url = "http://leb.internal:11436"
+token = "<the central token>"
+every_secs = 900        # automatic cycles in the daemon; 0 = manual only
+push = true             # also offer local validated memories upstream
+```
+
+- **Down**: central's validated memories, curated facts, and links replicate
+  into the laptop and inject immediately (same memory identity everywhere;
+  re-syncs converge; a locally forgotten memory stays forgotten).
+- **Up**: locally validated memories arrive on central as CANDIDATES tagged
+  `offered` — the browser's Validate button is the team curation queue.
+  Replicas never echo back, so knowledge cannot ping-pong.
+- Node anchors stay instance-local by design; commit-validity bounds travel
+  because git history is shared.
