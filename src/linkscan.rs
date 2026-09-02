@@ -659,4 +659,45 @@ mod tests {
                 .is_empty()
         );
     }
+
+    #[test]
+    fn shared_route_literals_propose_but_never_auto_link() {
+        let temp = TempDir::new().expect("temp");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("db");
+        let registry = ProjectRegistry::new(database.clone());
+        let root_a = temp.path().join("service-a");
+        let root_b = temp.path().join("service-b");
+        let a = register(&registry, &root_a);
+        let _b = register(&registry, &root_b);
+        let routes = [
+            "/api/v1/widgets/list",
+            "/api/v1/widgets/{id}/rotate",
+            "/api/v1/widgets/{id}/discard",
+        ];
+        for (root, style) in [(&root_a, "server"), (&root_b, "client")] {
+            fs::create_dir_all(root.join("src")).expect("src");
+            let body = routes
+                .iter()
+                .map(|route| {
+                    if style == "server" {
+                        format!(".route(\"{route}\", post(handler))\n")
+                    } else {
+                        format!("fetch(\"{route}\")\n")
+                    }
+                })
+                .collect::<String>();
+            fs::write(root.join("src/api.rs"), body).expect("source");
+        }
+        let candidates = scan(&database, &a, &root_a).expect("scan");
+        assert_eq!(candidates.len(), 1, "{candidates:?}");
+        assert!(!candidates[0].definitive, "route overlap is a proposal only");
+        assert_eq!(candidates[0].relation, "shares-api-surface");
+        assert!(candidates[0].evidence.contains("3 shared route literals"));
+        assert!(
+            apply_definitive(&database, &a, &candidates)
+                .expect("apply")
+                .is_empty(),
+            "proposals must never auto-apply"
+        );
+    }
 }
