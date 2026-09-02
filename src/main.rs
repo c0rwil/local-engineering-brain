@@ -219,7 +219,12 @@ enum Commands {
 
     /// Print the CLAUDE.md snippet that teaches a coding agent the LEB
     /// episode loop (recall, record, verify, learn) via the MCP tools.
-    AgentMd,
+    AgentMd {
+        /// Append the snippet to this repo's CLAUDE.md (idempotent: skipped
+        /// when the section is already present). Repeatable.
+        #[arg(long, value_name = "REPO")]
+        install: Vec<PathBuf>,
+    },
 
     /// Sweep a folder of repositories into the brain: register, index,
     /// auto-link, and export the vault for every git repo found.
@@ -613,8 +618,30 @@ fn run(cli: Cli) -> Result<bool> {
             json,
         ),
         Commands::Fact { action } => run_fact(&overrides, socket_override.as_deref(), &action),
-        Commands::AgentMd => {
-            println!("{AGENT_MD_SNIPPET}");
+        Commands::AgentMd { install } => {
+            if install.is_empty() {
+                println!("{AGENT_MD_SNIPPET}");
+            }
+            for repo in &install {
+                let target = repo.join("CLAUDE.md");
+                let existing = std::fs::read_to_string(&target).unwrap_or_default();
+                if existing.contains("## Engineering memory (LEB)") {
+                    println!("{}: already installed", target.display());
+                    continue;
+                }
+                let separator = if existing.is_empty() || existing.ends_with("\n\n") {
+                    ""
+                } else if existing.ends_with('\n') {
+                    "\n"
+                } else {
+                    "\n\n"
+                };
+                std::fs::write(&target, format!("{existing}{separator}{AGENT_MD_SNIPPET}"))
+                    .map_err(|error| {
+                        leb::Error::Config(format!("{}: {error}", target.display()))
+                    })?;
+                println!("{}: installed", target.display());
+            }
             Ok(true)
         }
         Commands::Onboard { path, claude, json } => {

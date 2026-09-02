@@ -370,7 +370,8 @@ async fn augment_request(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let (project_id, root, head) = resolve_scope(state, headers, mode, &current_paths).await?;
+    let (project_id, root, head, current_paths) =
+        resolve_scope(state, headers, mode, &current_paths).await?;
     let Some(task_text) = extract_task(body, flavor)? else {
         // No user turn carries text (a degenerate but protocol-valid
         // conversation): there is no task to compile context for, so forward
@@ -459,7 +460,7 @@ async fn resolve_scope(
     headers: &HeaderMap,
     mode: ContextMode,
     current_paths: &[String],
-) -> std::result::Result<(ProjectId, Option<PathBuf>, Option<String>), ProxyError> {
+) -> std::result::Result<(ProjectId, Option<PathBuf>, Option<String>, Vec<String>), ProxyError> {
     if let Some(path) = header_text(headers, "x-leb-project-path")? {
         let path = PathBuf::from(path);
         let status =
@@ -488,8 +489,23 @@ async fn resolve_scope(
                     ProxyError::upstream(format!("source freshness refresh failed: {error}"))
                 })?;
         }
+        // No client sends x-leb-current-paths in practice; the repo's own
+        // dirty files ARE the files being worked on, and they let the
+        // structural-overlap ranking actually engage. Bounded, and only a
+        // fallback: an explicit header always wins.
+        let effective_paths = if current_paths.is_empty() {
+            git.as_ref().map_or_else(Vec::new, |git| {
+                git.changed_paths
+                    .iter()
+                    .take(32)
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .collect()
+            })
+        } else {
+            current_paths.to_vec()
+        };
         let head = git.and_then(|git| git.head);
-        return Ok((project_id, Some(root), head));
+        return Ok((project_id, Some(root), head, effective_paths));
     }
     if let Some(id) = header_text(headers, "x-leb-project-id")? {
         if mode == ContextMode::Brain {
@@ -498,7 +514,7 @@ async fn resolve_scope(
             ));
         }
         return ProjectId::parse(id)
-            .map(|id| (id, None, None))
+            .map(|id| (id, None, None, current_paths.to_vec()))
             .map_err(|error| ProxyError::bad_request(error.to_string()));
     }
     Err(ProxyError::bad_request(
