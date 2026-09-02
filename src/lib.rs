@@ -33,6 +33,7 @@ pub mod scheduler;
 pub mod security;
 pub mod semantic;
 pub mod storage;
+pub mod sync;
 pub mod synthesis;
 pub mod techstack;
 pub mod vault;

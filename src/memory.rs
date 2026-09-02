@@ -648,6 +648,211 @@ impl MemoryStore {
     /// # Errors
     ///
     /// Returns an error for storage or corrupt typed identifiers.
+    /// Whether a synced memory already exists here: same id, or an exact
+    /// active (project, kind, claim) equivalent.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors.
+    pub fn replica_exists(
+        &self,
+        project_id: &ProjectId,
+        incoming: &crate::sync::SyncMemory,
+    ) -> Result<bool> {
+        let by_id: bool = self.database.with_reader(|connection| {
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?1)",
+                    [incoming.id.as_str()],
+                    |row| row.get(0),
+                )
+                .map_err(Error::from)
+        })?;
+        if by_id {
+            return Ok(true);
+        }
+        Ok(self
+            .find_exact(
+                project_id,
+                "project",
+                &project_id.to_string(),
+                &incoming.kind,
+                &incoming.claim,
+            )?
+            .is_some())
+    }
+
+    /// Upsert a replica of a memory validated on another instance. Keeps the
+    /// remote identity so re-syncs converge; local non-active statuses
+    /// always win (a locally forgotten memory stays forgotten).
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors.
+    #[allow(clippy::too_many_lines)]
+    pub fn upsert_replica(
+        &self,
+        project_id: &ProjectId,
+        incoming: &crate::sync::SyncMemory,
+    ) -> Result<ReplicaOutcome> {
+        let existing = self.database.with_reader(|connection| {
+            use rusqlite::OptionalExtension as _;
+            connection
+                .query_row(
+                    "SELECT status, updated_at_ms, project_id FROM memories WHERE id = ?1",
+                    [incoming.id.as_str()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(Error::from)
+        })?;
+        let claim = self.redactor.redact_text(&incoming.claim);
+        let claim = claim.trim().to_owned();
+        let rationale = self.redactor.redact_text(&incoming.rationale);
+        let rationale = rationale.trim().to_owned();
+        let mut tags = incoming
+            .tags
+            .iter()
+            .map(|tag| tag.trim().to_lowercase())
+            .filter(|tag| !tag.is_empty())
+            .collect::<Vec<_>>();
+        tags.push("synced".to_owned());
+        tags.sort();
+        tags.dedup();
+        let tags_json = serde_json::to_string(&tags)?;
+        let tags_text = tags.join(" ");
+        let normalized_claim = normalize_claim(&claim);
+        let token_estimate = estimate_tokens(&claim) + estimate_tokens(&rationale);
+        let confidence = incoming.confidence.clamp(0.0, 1.0);
+        let importance = incoming.importance.clamp(0.0, 1.0);
+        let kind = incoming.kind.clone();
+        let now = unix_time_ms();
+
+        if let Some((status, local_updated, owner)) = existing {
+            if owner != project_id.as_str() {
+                // An id collision across projects would be corruption; treat
+                // the incoming record as unrelated and skip.
+                return Ok(ReplicaOutcome::Skipped);
+            }
+            if status != "active" {
+                return Ok(ReplicaOutcome::Skipped);
+            }
+            if incoming.updated_at_ms <= local_updated {
+                return Ok(ReplicaOutcome::Skipped);
+            }
+            let id = incoming.id.clone();
+            let from = incoming.valid_from_commit.clone();
+            let to = incoming.valid_to_commit.clone();
+            self.database.write_immediate(|transaction| {
+                transaction.execute(
+                    "UPDATE memories SET claim = ?2, normalized_claim = ?3, rationale = ?4,
+                            confidence = ?5, importance = ?6, tags_json = ?7,
+                            token_estimate = ?8, valid_from_commit = ?9,
+                            valid_to_commit = ?10, epistemic_state = 'validated',
+                            updated_at_ms = ?11
+                     WHERE id = ?1",
+                    params![
+                        id,
+                        claim,
+                        normalized_claim,
+                        rationale,
+                        confidence,
+                        importance,
+                        tags_json,
+                        token_estimate,
+                        from,
+                        to,
+                        now
+                    ],
+                )?;
+                transaction.execute(
+                    "DELETE FROM memories_fts WHERE memory_id = ?1",
+                    [id.as_str()],
+                )?;
+                transaction.execute(
+                    "INSERT INTO memories_fts(memory_id, project_id, claim, rationale, tags)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![id, project_id.as_str(), claim, rationale, tags_text],
+                )?;
+                upsert_compact_injection_in_transaction(
+                    transaction,
+                    &MemoryId::parse(&id)?,
+                    &kind,
+                    &claim,
+                )?;
+                Ok(())
+            })?;
+            return Ok(ReplicaOutcome::Updated);
+        }
+
+        if self
+            .find_exact(
+                project_id,
+                "project",
+                &project_id.to_string(),
+                &kind,
+                &claim,
+            )?
+            .is_some()
+        {
+            return Ok(ReplicaOutcome::Skipped);
+        }
+        let id = incoming.id.clone();
+        let from = incoming.valid_from_commit.clone();
+        let to = incoming.valid_to_commit.clone();
+        self.database.write_immediate(|transaction| {
+            transaction.execute(
+                "INSERT INTO memories
+                 (id, project_id, scope_type, scope_id, kind, epistemic_state, status,
+                  claim, normalized_claim, rationale, confidence, importance, tags_json,
+                  token_estimate, valid_from_commit, valid_to_commit, known_from_ms,
+                  trust_source, updated_at_ms)
+                 VALUES (?1, ?2, 'project', ?2, ?3, 'validated', 'active', ?4, ?5, ?6,
+                         ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?13)",
+                params![
+                    id,
+                    project_id.as_str(),
+                    kind,
+                    claim,
+                    normalized_claim,
+                    rationale,
+                    confidence,
+                    importance,
+                    tags_json,
+                    token_estimate,
+                    from,
+                    to,
+                    now,
+                    crate::sync::SYNCED_TRUST,
+                ],
+            )?;
+            transaction.execute(
+                "INSERT INTO memories_fts(memory_id, project_id, claim, rationale, tags)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, project_id.as_str(), claim, rationale, tags_text],
+            )?;
+            upsert_compact_injection_in_transaction(
+                transaction,
+                &MemoryId::parse(&id)?,
+                &kind,
+                &claim,
+            )?;
+            Ok(())
+        })?;
+        Ok(ReplicaOutcome::Added)
+    }
+
+    /// Find an active memory with the exact (scope, kind, normalized claim).
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors.
     pub fn find_exact(
         &self,
         project_id: &ProjectId,
@@ -1367,6 +1572,14 @@ fn sha256(bytes: &[u8]) -> String {
         let _ = write!(output, "{byte:02x}");
     }
     output
+}
+
+/// Outcome of one replica upsert.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReplicaOutcome {
+    Added,
+    Updated,
+    Skipped,
 }
 
 pub(crate) fn normalize_claim(claim: &str) -> String {

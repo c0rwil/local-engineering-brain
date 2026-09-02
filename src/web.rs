@@ -114,6 +114,8 @@ pub fn router(config: &Config) -> Router {
         .route("/api/facts/unset", post(fact_unset))
         .route("/api/linkscan", post(link_scan))
         .route("/webhook/repo-updated", post(webhook_repo_updated))
+        .route("/api/sync/knowledge", get(sync_knowledge))
+        .route("/api/sync/offer", post(sync_offer))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             require_token,
@@ -147,6 +149,19 @@ async fn require_token(
         }
     }
     next.run(request).await
+}
+
+async fn sync_knowledge(
+    State(state): State<WebState>,
+) -> std::result::Result<Json<crate::sync::SyncKnowledge>, WebError> {
+    Ok(Json(state.client().sync_export().await?))
+}
+
+async fn sync_offer(
+    State(state): State<WebState>,
+    Json(offers): Json<crate::sync::SyncKnowledge>,
+) -> std::result::Result<Json<crate::sync::OfferReport>, WebError> {
+    Ok(Json(state.client().sync_accept(&offers).await?))
 }
 
 /// CI-driven freshness: after a merge to main, the pipeline POSTs the repo

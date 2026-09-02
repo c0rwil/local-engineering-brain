@@ -256,6 +256,26 @@ enum Commands {
         json: bool,
     },
 
+    /// Synchronize knowledge with the configured central instance
+    /// (`[sync] central_url`): pull validated knowledge down, offer local
+    /// validated memories up as candidates.
+    Sync {
+        /// Central instance URL (overrides `[sync] central_url`).
+        #[arg(long)]
+        central: Option<String>,
+        /// Bearer token (overrides `[sync] token`).
+        #[arg(long)]
+        token: Option<String>,
+        /// Only pull central knowledge.
+        #[arg(long)]
+        pull_only: bool,
+        /// Only offer local knowledge upstream.
+        #[arg(long)]
+        push_only: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Serve the local workspace browser (facts, links, architecture).
     Web {
         /// Loopback port to bind.
@@ -681,6 +701,21 @@ fn run(cli: Cli) -> Result<bool> {
         Commands::Onboard { path, claude, json } => {
             run_onboard(&overrides, socket_override.as_deref(), &path, claude, json)
         }
+        Commands::Sync {
+            central,
+            token,
+            pull_only,
+            push_only,
+            json,
+        } => run_sync(
+            &overrides,
+            socket_override.as_deref(),
+            central.as_deref(),
+            token.as_deref(),
+            pull_only,
+            push_only,
+            json,
+        ),
         Commands::Web { port, path } => {
             run_web(&overrides, socket_override.as_deref(), &path, port)
         }
@@ -2215,6 +2250,62 @@ fn run_onboard(
             "\nVault: {}\nBrowser: http://127.0.0.1:{}",
             report.root, config.web.port
         );
+    }
+    Ok(true)
+}
+
+#[allow(clippy::fn_params_excessive_bools, clippy::too_many_arguments)]
+fn run_sync(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    central: Option<&str>,
+    token: Option<&str>,
+    pull_only: bool,
+    push_only: bool,
+    json: bool,
+) -> Result<bool> {
+    let mut config = Config::load_for(None, overrides)?;
+    apply_socket_override(&mut config, socket)?;
+    let central_url = central.map_or_else(|| config.sync.central_url.clone(), str::to_owned);
+    let bearer = token
+        .map(str::to_owned)
+        .or_else(|| config.sync.token.clone());
+    if central_url.is_empty() {
+        return Err(leb::Error::Config(
+            "no central instance configured: set [sync] central_url or pass --central".to_owned(),
+        ));
+    }
+    require_daemon(&config)?;
+    let local = client(&config);
+    let report = block_on(leb::sync::run_sync_cycle(
+        &local,
+        &central_url,
+        bearer.as_deref(),
+        !push_only,
+        !pull_only && config.sync.push || push_only,
+    ))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        if let Some(pulled) = &report.pulled {
+            println!(
+                "Pulled: {} project(s) matched · {} memories added · {} updated · {} facts · {} links",
+                pulled.projects_matched,
+                pulled.memories_added,
+                pulled.memories_updated,
+                pulled.facts_applied,
+                pulled.links_applied
+            );
+        }
+        if let Some(offered) = &report.offered {
+            println!(
+                "Offered upstream: {} accepted as candidates · {} already known",
+                offered.accepted_as_candidates, offered.deduplicated
+            );
+        }
+        if report.pulled.is_none() && report.offered.is_none() {
+            println!("Nothing to do.");
+        }
     }
     Ok(true)
 }

@@ -96,6 +96,10 @@ const API_FACT_UNSET: &str = "/api/v1/projects/facts/unset";
 const API_FACT_LIST: &str = "/api/v1/projects/facts/list";
 const API_ARCHITECT_DOSSIER: &str = "/api/v1/architect/dossier";
 const API_WORKSPACE: &str = "/api/v1/workspace";
+const API_SYNC_EXPORT: &str = "/api/v1/sync/export";
+const API_SYNC_OFFERS: &str = "/api/v1/sync/offers";
+const API_SYNC_APPLY: &str = "/api/v1/sync/apply";
+const API_SYNC_ACCEPT: &str = "/api/v1/sync/accept";
 const API_ACTIVITY: &str = "/api/v1/workspace/activity";
 const API_MODULE_MAP: &str = "/api/v1/projects/module-map";
 const API_MODULE_SYMBOLS: &str = "/api/v1/projects/module-symbols";
@@ -1330,6 +1334,53 @@ impl DaemonClient {
             .await
     }
 
+    /// Export this instance's promoted knowledge for down-sync.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn sync_export(&self) -> Result<crate::sync::SyncKnowledge> {
+        self.request::<(), _>(hyper::Method::GET, API_SYNC_EXPORT, None)
+            .await
+    }
+
+    /// Collect local validated memories to offer upstream.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn sync_offers(&self) -> Result<crate::sync::SyncKnowledge> {
+        self.request::<(), _>(hyper::Method::GET, API_SYNC_OFFERS, None)
+            .await
+    }
+
+    /// Apply downloaded central knowledge to this instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn sync_apply(
+        &self,
+        knowledge: &crate::sync::SyncKnowledge,
+    ) -> Result<crate::sync::SyncApplyReport> {
+        self.request(hyper::Method::POST, API_SYNC_APPLY, Some(knowledge))
+            .await
+    }
+
+    /// Accept up-sync offers (central side): unknown memories become
+    /// candidates for curation.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn sync_accept(
+        &self,
+        offers: &crate::sync::SyncKnowledge,
+    ) -> Result<crate::sync::OfferReport> {
+        self.request(hyper::Method::POST, API_SYNC_ACCEPT, Some(offers))
+            .await
+    }
+
     /// Fetch the whole-workspace snapshot for UIs.
     ///
     /// # Errors
@@ -1644,6 +1695,10 @@ where
         .route(API_FACT_LIST, post(list_facts))
         .route(API_ARCHITECT_DOSSIER, get(architect_dossier))
         .route(API_WORKSPACE, get(workspace_snapshot))
+        .route(API_SYNC_EXPORT, get(sync_export_handler))
+        .route(API_SYNC_OFFERS, get(sync_offers_handler))
+        .route(API_SYNC_APPLY, post(sync_apply_handler))
+        .route(API_SYNC_ACCEPT, post(sync_accept_handler))
         .route(API_ACTIVITY, get(workspace_activity))
         .route(API_MODULE_MAP, post(project_module_map))
         .route(API_MODULE_SYMBOLS, post(project_module_symbols))
@@ -1722,6 +1777,12 @@ async fn start_job_system(
             state_dir,
             std::time::Duration::from_secs(config.watch.local_poll_secs.max(5)),
             origin_poll,
+            SyncAuto {
+                central_url: config.sync.central_url.clone(),
+                token: config.sync.token.clone(),
+                every: std::time::Duration::from_secs(config.sync.every_secs.max(60)),
+                push: config.sync.push,
+            },
             GuideAuto {
                 mode: config.architect.auto.clone(),
                 min_interval: std::time::Duration::from_secs(
@@ -2975,6 +3036,52 @@ async fn project_module_symbols(
     Ok(Json(result))
 }
 
+async fn sync_export_handler(
+    State(state): State<DaemonState>,
+) -> std::result::Result<Json<crate::sync::SyncKnowledge>, ApiError> {
+    let database = state.database.clone();
+    let knowledge = run_blocking(&state, move || crate::sync::export_knowledge(&database)).await?;
+    Ok(Json(knowledge))
+}
+
+async fn sync_offers_handler(
+    State(state): State<DaemonState>,
+) -> std::result::Result<Json<crate::sync::SyncKnowledge>, ApiError> {
+    let database = state.database.clone();
+    let offers = run_blocking(&state, move || crate::sync::collect_offers(&database)).await?;
+    Ok(Json(offers))
+}
+
+async fn sync_apply_handler(
+    State(state): State<DaemonState>,
+    Json(knowledge): Json<crate::sync::SyncKnowledge>,
+) -> std::result::Result<Json<crate::sync::SyncApplyReport>, ApiError> {
+    let database = state.database.clone();
+    let redactor = state.redactor.clone();
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::BackgroundLearning, move || {
+            crate::sync::apply_knowledge(&database, &redactor, &knowledge)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
+async fn sync_accept_handler(
+    State(state): State<DaemonState>,
+    Json(offers): Json<crate::sync::SyncKnowledge>,
+) -> std::result::Result<Json<crate::sync::OfferReport>, ApiError> {
+    let database = state.database.clone();
+    let redactor = state.redactor.clone();
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::BackgroundLearning, move || {
+            crate::sync::accept_offers(&database, &redactor, &offers)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
 async fn workspace_activity(
     State(state): State<DaemonState>,
 ) -> std::result::Result<Json<Vec<ActivityEvent>>, ApiError> {
@@ -3804,6 +3911,14 @@ pub async fn refresh_origin_view(
     Ok(reference)
 }
 
+/// Automatic cross-instance sync settings for the watcher.
+struct SyncAuto {
+    central_url: String,
+    token: Option<String>,
+    every: std::time::Duration,
+    push: bool,
+}
+
 /// Automatic architecture-guide regeneration settings for the watcher.
 struct GuideAuto {
     mode: String,
@@ -3898,16 +4013,19 @@ async fn maybe_regenerate_guide(guide: &GuideAuto, database: &Database) -> bool 
 /// Commit-driven auto refresh. Compares committed HEADs only — uncommitted
 /// edits never trigger a scan — and, on a slower cadence, fetches origin to
 /// keep the shared-truth views current.
+#[allow(clippy::too_many_lines)]
 async fn watch_loop(
     socket_path: PathBuf,
     database: Database,
     state_dir: PathBuf,
     local_poll: std::time::Duration,
     origin_poll: Option<std::time::Duration>,
+    sync: SyncAuto,
     guide: GuideAuto,
 ) {
     let client = DaemonClient::new(&socket_path, std::time::Duration::from_secs(300));
     let mut last_origin = std::time::Instant::now();
+    let mut last_sync = std::time::Instant::now();
     // First guide check fires shortly after startup rather than a full
     // interval later: daemon restarts must not defer catching real drift.
     let mut last_guide = std::time::Instant::now()
@@ -3963,6 +4081,33 @@ async fn watch_loop(
                     &head[..head.len().min(10)]
                 );
                 let _ = client.refresh_index(&repo).await;
+            }
+        }
+        if !sync.central_url.is_empty()
+            && sync.every > std::time::Duration::ZERO
+            && last_sync.elapsed() >= sync.every
+        {
+            last_sync = std::time::Instant::now();
+            match crate::sync::run_sync_cycle(
+                &client,
+                &sync.central_url,
+                sync.token.as_deref(),
+                true,
+                sync.push,
+            )
+            .await
+            {
+                Ok(report) => {
+                    if let Some(pulled) = &report.pulled
+                        && (pulled.memories_added > 0 || pulled.memories_updated > 0)
+                    {
+                        eprintln!(
+                            "sync: pulled {} new / {} updated memories from central",
+                            pulled.memories_added, pulled.memories_updated
+                        );
+                    }
+                }
+                Err(error) => eprintln!("sync: cycle failed: {error}"),
             }
         }
         if last_guide.elapsed() >= guide.min_interval {

@@ -30,6 +30,36 @@ pub struct Config {
     pub architect: ArchitectConfig,
     pub web: WebConfig,
     pub watch: WatchConfig,
+    pub sync: SyncConfig,
+}
+
+/// Cross-instance knowledge sync (`src/sync.rs`). Down-sync replicates the
+/// central instance's validated knowledge; up-sync offers local validated
+/// memories as central candidates.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SyncConfig {
+    /// Central instance base URL (e.g. `http://leb.internal:11436`).
+    /// Empty disables sync entirely.
+    pub central_url: String,
+    /// Bearer token for the central instance's API.
+    pub token: Option<String>,
+    /// Automatic sync cadence in the daemon watcher. 0 = manual `leb sync`
+    /// only.
+    pub every_secs: u64,
+    /// Also offer local validated memories upstream.
+    pub push: bool,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            central_url: String::new(),
+            token: None,
+            every_secs: 900,
+            push: true,
+        }
+    }
 }
 
 /// Automatic commit-driven refresh (`src/daemon.rs` watcher task).
