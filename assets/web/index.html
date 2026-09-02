@@ -782,20 +782,29 @@ function renderModuleMap(map) {
     }
     if (!changed) break;
   }
-  const columns = new Map();
+  const byLayer = new Map();
   for (const g of map.groups) {
     const l = layer.get(g.label) ?? 0;
-    if (!columns.has(l)) columns.set(l, []);
-    columns.get(l).push(g);
+    if (!byLayer.has(l)) byLayer.set(l, []);
+    byLayer.get(l).push(g);
   }
-  const layers = [...columns.keys()].sort((a, b) => a - b);
+  // Sparse graphs collapse into one giant layer; wrap oversized layers into
+  // side-by-side columns so the diagram stays readable instead of becoming a
+  // skinny tower scaled to illegibility.
+  const MAX_ROWS = 8;
+  const columns = [];
+  for (const l of [...byLayer.keys()].sort((a, b) => a - b)) {
+    const nodes = byLayer.get(l);
+    nodes.sort((a, b) => b.nodes - a.nodes);
+    for (let i = 0; i < nodes.length; i += MAX_ROWS) {
+      columns.push(nodes.slice(i, i + MAX_ROWS));
+    }
+  }
   const colW = 190, rowH = 46, padX = 20, padY = 16;
-  const H = Math.max(...layers.map(l => columns.get(l).length)) * rowH + padY * 2;
-  const W = layers.length * colW + padX * 2;
+  const H = Math.max(...columns.map(c => c.length)) * rowH + padY * 2;
+  const W = columns.length * colW + padX * 2;
   const pos = new Map();
-  layers.forEach((l, ci) => {
-    const col = columns.get(l);
-    col.sort((a, b) => b.nodes - a.nodes);
+  columns.forEach((col, ci) => {
     const offset = (H - col.length * rowH) / 2;
     col.forEach((g, ri) => {
       pos.set(g.label, { x: padX + ci * colW + 80, y: offset + ri * rowH + rowH / 2 });
