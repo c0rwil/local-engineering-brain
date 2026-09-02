@@ -217,13 +217,31 @@ enum Commands {
         action: FactAction,
     },
 
+    /// Hook runtime for stock coding agents (invoked by Claude Code hooks;
+    /// reads the hook JSON on stdin and always exits 0 - fail open).
+    #[command(hide = true)]
+    Hook {
+        /// `prompt` (`UserPromptSubmit`) or `bash` (`PostToolUse` for Bash).
+        event: String,
+    },
+
+    /// Install or inspect the stock-agent integration (hooks + MCP).
+    Hooks {
+        #[command(subcommand)]
+        action: HooksAction,
+    },
+
     /// Print the CLAUDE.md snippet that teaches a coding agent the LEB
     /// episode loop (recall, record, verify, learn) via the MCP tools.
     AgentMd {
-        /// Append the snippet to this repo's CLAUDE.md (idempotent: skipped
+        /// Append the snippet to this repo's agent file (idempotent: skipped
         /// when the section is already present). Repeatable.
         #[arg(long, value_name = "REPO")]
         install: Vec<PathBuf>,
+        /// Agent file name to install into (CLAUDE.md for Claude Code,
+        /// AGENTS.md for Codex).
+        #[arg(long, default_value = "CLAUDE.md")]
+        file: String,
     },
 
     /// Sweep a folder of repositories into the brain: register, index,
@@ -351,6 +369,20 @@ enum FactAction {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum HooksAction {
+    /// Merge LEB's hooks into a repo's .claude/settings.json (idempotent)
+    /// and register the `leb` MCP server for it.
+    Install {
+        #[arg(default_value = ".")]
+        repo: PathBuf,
+    },
+    /// Print the hooks JSON without writing anything.
+    Show,
+    /// Print Codex setup: AGENTS.md snippet target and MCP configuration.
+    Codex,
 }
 
 #[derive(Debug, Subcommand)]
@@ -618,12 +650,14 @@ fn run(cli: Cli) -> Result<bool> {
             json,
         ),
         Commands::Fact { action } => run_fact(&overrides, socket_override.as_deref(), &action),
-        Commands::AgentMd { install } => {
+        Commands::Hook { event } => run_hook_event(&overrides, socket_override.as_deref(), &event),
+        Commands::Hooks { action } => run_hooks_action(&action),
+        Commands::AgentMd { install, file } => {
             if install.is_empty() {
                 println!("{AGENT_MD_SNIPPET}");
             }
             for repo in &install {
-                let target = repo.join("CLAUDE.md");
+                let target = repo.join(&file);
                 let existing = std::fs::read_to_string(&target).unwrap_or_default();
                 if existing.contains("## Engineering memory (LEB)") {
                     println!("{}: already installed", target.display());
@@ -1901,6 +1935,204 @@ After accepted work that surfaced a durable rule:
 - If a failed approach was instructive, it is already captured by the failed
   attempt; `leb_get_past_failures` replays those to future sessions.
 ";
+
+/// Hook runtime. EVERY failure path prints nothing and returns Ok: a broken
+/// or absent brain must never break the user's coding session.
+#[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
+fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &str) -> Result<bool> {
+    use std::io::Read as _;
+    let mut stdin = String::new();
+    if std::io::stdin().read_to_string(&mut stdin).is_err() {
+        return Ok(true);
+    }
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&stdin) else {
+        return Ok(true);
+    };
+    let session_id = payload
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown-session")
+        .to_owned();
+    let cwd = payload
+        .get("cwd")
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let Ok(mut config) = Config::load_for(discover_project_root(&cwd).ok().as_deref(), overrides)
+    else {
+        return Ok(true);
+    };
+    if apply_socket_override(&mut config, socket).is_err() || require_daemon(&config).is_err() {
+        return Ok(true);
+    }
+    let state_dir = config
+        .storage
+        .db_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let client = client(&config);
+    match event {
+        "prompt" => {
+            if leb::agenthooks::load_session(&state_dir, &session_id).is_some() {
+                return Ok(true); // session already primed (pinned semantics)
+            }
+            let prompt = payload
+                .get("user_prompt")
+                .or_else(|| payload.get("prompt"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_owned();
+            if prompt.is_empty() {
+                return Ok(true);
+            }
+            let Ok(status) = block_on(client.resolve_project(&cwd)) else {
+                return Ok(true);
+            };
+            let project_id = status.resolved.project.id.clone();
+            let task = block_on(client.start_task(&TaskStartRequest {
+                project_id: project_id.clone(),
+                prompt: prompt.clone(),
+                session_id: Some(session_id.clone()),
+            }))
+            .ok();
+            let Ok(context) = block_on(client.compile_context(&ContextCompileRequest {
+                request_id: format!("hook_{session_id}"),
+                project_id: project_id.clone(),
+                task_text: prompt,
+                current_paths: Vec::new(),
+                token_budget: config.context.max_injected_tokens,
+                mode: ContextMode::Brain,
+                repository_root: Some(status.resolved.root),
+                head: status.resolved.git.and_then(|git| git.head),
+                task_id: task.as_ref().map(|task| task.id.clone()),
+                framing: None,
+            })) else {
+                return Ok(true);
+            };
+            if let Some(task) = task {
+                let _ = leb::agenthooks::save_session(
+                    &state_dir,
+                    &session_id,
+                    &leb::agenthooks::HookSession {
+                        task_id: task.id,
+                        project_id,
+                    },
+                );
+            }
+            let injected = format!("{}{}", context.stable_prefix, context.dynamic_context);
+            if !injected.trim().is_empty() {
+                println!("{injected}");
+            }
+        }
+        "bash" => {
+            let command = payload
+                .get("tool_input")
+                .and_then(|input| input.get("command"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let Some(kind) = leb::agenthooks::detect_verification(command) else {
+                return Ok(true);
+            };
+            let Some(session) = leb::agenthooks::load_session(&state_dir, &session_id) else {
+                return Ok(true);
+            };
+            let empty = serde_json::Value::Null;
+            let tool_result = payload
+                .get("tool_result")
+                .or_else(|| payload.get("tool_response"))
+                .unwrap_or(&empty);
+            let Some(exit_code) = leb::agenthooks::extract_exit_code(tool_result) else {
+                return Ok(true);
+            };
+            let _ = block_on(client.record_evidence(&EvidenceCreateRequest {
+                project_id: session.project_id,
+                task_id: Some(session.task_id),
+                attempt_id: None,
+                kind: kind.to_owned(),
+                strength: EvidenceStrength::Deterministic,
+                commit_hash: None,
+                command: Some(command.chars().take(500).collect()),
+                exit_code: Some(exit_code),
+                artifact_text: leb::agenthooks::extract_artifact(tool_result),
+                metadata: serde_json::json!({"source": "claude-code-hook"}),
+            }));
+        }
+        _ => {}
+    }
+    Ok(true)
+}
+
+fn run_hooks_action(action: &HooksAction) -> Result<bool> {
+    let hooks = leb::agenthooks::claude_hooks_json("leb");
+    match action {
+        HooksAction::Show => {
+            println!("{}", serde_json::to_string_pretty(&hooks)?);
+        }
+        HooksAction::Install { repo } => {
+            let settings_dir = repo.join(".claude");
+            std::fs::create_dir_all(&settings_dir)
+                .map_err(|error| leb::Error::Config(format!("settings dir: {error}")))?;
+            let settings_path = settings_dir.join("settings.json");
+            let mut settings: serde_json::Value = std::fs::read_to_string(&settings_path)
+                .ok()
+                .and_then(|content| serde_json::from_str(&content).ok())
+                .unwrap_or_else(|| serde_json::json!({}));
+            let existing = settings
+                .get("hooks")
+                .map(std::string::ToString::to_string)
+                .unwrap_or_default();
+            if existing.contains("leb hook") {
+                println!("{}: hooks already installed", settings_path.display());
+            } else {
+                let hooks_slot = settings
+                    .as_object_mut()
+                    .ok_or_else(|| {
+                        leb::Error::Config("settings.json is not a JSON object".to_owned())
+                    })?
+                    .entry("hooks")
+                    .or_insert_with(|| serde_json::json!({}));
+                let hooks_object = hooks_slot.as_object_mut().ok_or_else(|| {
+                    leb::Error::Config("settings.json hooks is not an object".to_owned())
+                })?;
+                for (event, entries) in hooks.as_object().into_iter().flatten() {
+                    let slot = hooks_object
+                        .entry(event.clone())
+                        .or_insert_with(|| serde_json::json!([]));
+                    if let (Some(target), Some(additions)) =
+                        (slot.as_array_mut(), entries.as_array())
+                    {
+                        target.extend(additions.iter().cloned());
+                    }
+                }
+                std::fs::write(
+                    &settings_path,
+                    serde_json::to_string_pretty(&settings)
+                        .map_err(|error| leb::Error::Config(error.to_string()))?,
+                )
+                .map_err(|error| leb::Error::Config(format!("settings write: {error}")))?;
+                println!("{}: hooks installed", settings_path.display());
+            }
+            println!(
+                "Context injection + automatic evidence capture are active for stock \
+                 `claude` sessions in this repo. Also run `leb agent-md --install {}` \
+                 so the agent knows the wider tool loop.",
+                repo.display()
+            );
+        }
+        HooksAction::Codex => {
+            println!(
+                "Codex setup:\n\n1. MCP server (once, in ~/.codex/config.toml):\n\n\
+                 [mcp_servers.leb]\ncommand = \"leb-mcp\"\n\n\
+                 2. Per repo, install the agent loop instructions into AGENTS.md:\n\n\
+                 leb agent-md --install <repo> --file AGENTS.md\n\n\
+                 Codex reads AGENTS.md automatically and reaches the brain through MCP\n\
+                 (recall, workspace map, symbol search, episode recording)."
+            );
+        }
+    }
+    Ok(true)
+}
 
 fn run_onboard(
     overrides: &ConfigOverrides,

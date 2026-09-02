@@ -4,6 +4,7 @@
 //! configuration, canonical `SQLite` storage, immutable events, and project identity.
 
 #[doc(hidden)]
+pub mod agenthooks;
 pub mod architect;
 pub mod autostart;
 pub mod blobs;
