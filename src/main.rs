@@ -1843,7 +1843,7 @@ fn run_fact(
     Ok(true)
 }
 
-const AGENT_MD_SNIPPET: &str = r#"## Engineering memory (LEB)
+const AGENT_MD_SNIPPET: &str = r"## Engineering memory (LEB)
 
 This repository is tracked by LEB, a local evidence-gated memory system. The
 `leb` MCP server is available; use it so finished work compounds instead of
@@ -1873,7 +1873,7 @@ After accepted work that surfaced a durable rule:
   the side of recording.
 - If a failed approach was instructive, it is already captured by the failed
   attempt; `leb_get_past_failures` replays those to future sessions.
-"#;
+";
 
 fn run_onboard(
     overrides: &ConfigOverrides,
