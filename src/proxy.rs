@@ -1389,4 +1389,217 @@ mod tests {
             .expect("daemon join")
             .expect("daemon result");
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[allow(clippy::too_many_lines)]
+    async fn dirty_working_files_bias_injection_toward_touched_code() {
+        // A/B of the dirty-files fallback: two equally lexical memories, one
+        // anchored to src/auth.rs. With a CLEAN tree the decoy's importance
+        // edge (0.05 weight) wins the single injection slot; once auth.rs is
+        // dirty, the structural-overlap term (0.18 weight) must flip the
+        // slot to the memory anchored to the code actually being touched.
+        let temp = TempDir::new().expect("temp");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(project.join("src")).expect("project");
+        std::fs::write(
+            project.join("src/auth.rs"),
+            "pub fn check_token() -> bool { true }\n",
+        )
+        .expect("auth");
+        std::fs::write(
+            project.join("src/billing.rs"),
+            "pub fn charge() -> bool { true }\n",
+        )
+        .expect("billing");
+        git(&project, &["init", "-q"]);
+        git(&project, &["config", "user.email", "leb@example.invalid"]);
+        git(&project, &["config", "user.name", "LEB Tests"]);
+        git(&project, &["add", "."]);
+        git(&project, &["commit", "-qm", "initial"]);
+        // The single-slot cap must live in the SCOPED (repo) config: the
+        // compile handler prefers it over the daemon's global config.
+        std::fs::create_dir_all(project.join(".leb")).expect("scoped dir");
+        std::fs::write(
+            project.join(".leb/config.toml"),
+            "[context]\nmax_injected_memories = 1\n",
+        )
+        .expect("scoped config");
+
+        let mut config = Config::default();
+        config.storage.db_path = temp.path().join("brain.sqlite");
+        config.daemon.socket_path = temp.path().join("lebd.sock");
+        config.daemon.request_timeout_ms = 5_000;
+        let (daemon_stop_tx, daemon_stop_rx) = oneshot::channel::<()>();
+        let daemon_config = config.clone();
+        let daemon_server = tokio::spawn(crate::daemon::serve_until(daemon_config, async move {
+            let _ = daemon_stop_rx.await;
+        }));
+        let daemon = DaemonClient::new(&config.daemon.socket_path, Duration::from_secs(5));
+        for _ in 0..100 {
+            if daemon.health().await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let indexed = daemon
+            .index_project_with_provider(&project, None, Some("tree_sitter".to_owned()), None)
+            .await
+            .expect("initial index");
+        let project_id = indexed.resolved.project.id.clone();
+        let nodes = daemon
+            .search_world(&crate::daemon::WorldSearchRequest {
+                project_id: project_id.clone(),
+                query: "check_token".to_owned(),
+                limit: 10,
+            })
+            .await
+            .expect("node search");
+        let auth_node = nodes
+            .iter()
+            .find(|node| node.label == "check_token")
+            .expect("auth node");
+
+        let mut seed = |claim: &str, importance: f64, node_ids: Vec<crate::ids::NodeId>| {
+            let daemon = daemon.clone();
+            let project_id = project_id.clone();
+            let claim = claim.to_owned();
+            async move {
+                let memory = daemon
+                    .create_memory(&MemoryCreateRequest {
+                        project_id: project_id.clone(),
+                        memory: MemoryDraft {
+                            scope_type: "project".to_owned(),
+                            scope_id: project_id.to_string(),
+                            kind: "lesson".to_owned(),
+                            claim,
+                            rationale: "fixture".to_owned(),
+                            confidence: 0.5,
+                            importance,
+                            tags: vec!["session".to_owned()],
+                            valid_from_commit: None,
+                            valid_to_commit: None,
+                            trust_source: "human_instruction".to_owned(),
+                            evidence_ids: Vec::new(),
+                            source_task_ids: Vec::new(),
+                            node_ids,
+                        },
+                    })
+                    .await
+                    .expect("memory");
+                daemon
+                    .promote_memory(
+                        &memory.id,
+                        &MemoryPromoteRequest {
+                            target: EpistemicState::Validated,
+                            human_override: true,
+                        },
+                    )
+                    .await
+                    .expect("promote");
+            }
+        };
+        seed(
+            "Session flow helpers stay beside their token checks",
+            0.6,
+            vec![auth_node.id.clone()],
+        )
+        .await;
+        seed(
+            "Session flow constants stay beside their price tables",
+            0.9,
+            Vec::new(),
+        )
+        .await;
+
+        let captured = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let runtime_capture = Arc::clone(&captured);
+        let runtime_router = Router::new().route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let capture = Arc::clone(&runtime_capture);
+                async move {
+                    capture.lock().expect("capture").push(body);
+                    (StatusCode::OK, Json(json!({"choices": []})))
+                }
+            }),
+        );
+        let runtime_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("runtime");
+        let runtime_address = runtime_listener.local_addr().expect("runtime address");
+        let (runtime_stop_tx, runtime_stop_rx) = oneshot::channel::<()>();
+        let runtime_server = tokio::spawn(async move {
+            axum::serve(runtime_listener, runtime_router)
+                .with_graceful_shutdown(async move {
+                    let _ = runtime_stop_rx.await;
+                })
+                .await
+                .expect("runtime server");
+        });
+        config.proxy.runtime_url = format!("http://{runtime_address}");
+        let proxy_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("proxy");
+        let proxy_address = proxy_listener.local_addr().expect("proxy address");
+        let (proxy_stop_tx, proxy_stop_rx) = oneshot::channel::<()>();
+        let proxy_server = tokio::spawn(serve_on_listener(config, proxy_listener, async move {
+            let _ = proxy_stop_rx.await;
+        }));
+
+        let send = |task: &str| {
+            let task = task.to_owned();
+            let project = project.clone();
+            async move {
+                let response = reqwest::Client::new()
+                    .post(format!("http://{proxy_address}/v1/chat/completions"))
+                    .header("x-leb-project-path", project.to_string_lossy().as_ref())
+                    .json(&json!({
+                        "model": "local",
+                        "messages": [{"role": "user", "content": task}]
+                    }))
+                    .send()
+                    .await
+                    .expect("proxy request");
+                assert!(response.status().is_success());
+            }
+        };
+
+        // Arm A: clean tree. The importance edge picks the decoy.
+        send("tidy the session flow").await;
+        // Arm B: auth.rs becomes dirty WITHOUT changing the anchored symbol
+        // (append-only edit, so drift quarantine must not fire).
+        std::fs::write(
+            project.join("src/auth.rs"),
+            "pub fn check_token() -> bool { true }\npub fn refresh_token() -> bool { true }\n",
+        )
+        .expect("append edit");
+        send("tidy the session flow again").await;
+
+        let forwarded = captured.lock().expect("capture");
+        assert_eq!(forwarded.len(), 2);
+        let clean = forwarded[0].to_string();
+        let dirty = forwarded[1].to_string();
+        assert!(
+            clean.contains("price tables") && !clean.contains("token checks"),
+            "clean tree: importance edge wins the single slot: {clean}"
+        );
+        assert!(
+            dirty.contains("token checks") && !dirty.contains("price tables"),
+            "dirty auth.rs: structural overlap must flip the slot: {dirty}"
+        );
+        drop(forwarded);
+
+        let _ = proxy_stop_tx.send(());
+        let _ = runtime_stop_tx.send(());
+        let _ = daemon_stop_tx.send(());
+        proxy_server
+            .await
+            .expect("proxy join")
+            .expect("proxy result");
+        runtime_server.await.expect("runtime join");
+        daemon_server
+            .await
+            .expect("daemon join")
+            .expect("daemon result");
+    }
 }
