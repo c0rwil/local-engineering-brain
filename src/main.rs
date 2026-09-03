@@ -286,6 +286,37 @@ enum Commands {
         json: bool,
     },
 
+    /// Answer a question from the workspace's own knowledge: validated
+    /// memories, facts, links, code symbols, and documentation sections
+    /// retrieved for the question, then synthesized by a model (or printed
+    /// as an evidence pack with --dry-run).
+    Ask {
+        /// The question.
+        question: String,
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        /// Synthesize via the `claude` CLI (frontier quality).
+        #[arg(long)]
+        claude: bool,
+        /// Synthesize via the configured local runtime with this model.
+        #[arg(long)]
+        model: Option<String>,
+        /// Print the retrieved evidence pack without calling any model.
+        #[arg(long)]
+        dry_run: bool,
+        /// Token budget for the compiled-context portion.
+        #[arg(long, default_value_t = 2_000)]
+        budget: u32,
+    },
+
+    /// Coordinate live agent sessions: send messages between them and see
+    /// who is active. Delivery is at the recipient's next prompt, through
+    /// its own hooks — no daemon required.
+    Relay {
+        #[command(subcommand)]
+        action: RelayAction,
+    },
+
     /// Update LEB in place: pull the recorded source checkout and rebuild
     /// through the atomic installer. The daemon restarts on the next CLI
     /// call, so a running session keeps the binary it started with.
@@ -417,6 +448,22 @@ enum FactAction {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum RelayAction {
+    /// Send a message to one session (`leb relay board` lists ids) or to
+    /// every active session with `all`.
+    Send {
+        /// Recipient session id, or `all`.
+        to: String,
+        message: String,
+        /// Sender label shown to the recipient (defaults to `operator`).
+        #[arg(long, default_value = "operator")]
+        from: String,
+    },
+    /// List active sessions: id, project, open task, last activity.
+    Board,
 }
 
 #[derive(Debug, Subcommand)]
@@ -737,6 +784,24 @@ fn run(cli: Cli) -> Result<bool> {
         Commands::Hooks { action } => run_hooks_action(&action),
         Commands::Skills { action } => run_skills_action(&action),
         Commands::Update { check } => run_update(check),
+        Commands::Relay { action } => run_relay_action(&overrides, &action),
+        Commands::Ask {
+            question,
+            path,
+            claude,
+            model,
+            dry_run,
+            budget,
+        } => run_ask(
+            &overrides,
+            socket_override.as_deref(),
+            &question,
+            &path,
+            claude,
+            model.as_deref(),
+            dry_run,
+            budget,
+        ),
         Commands::AgentMd {
             install,
             global,
@@ -2104,7 +2169,25 @@ fn run_hook_event(
     let client = client(&config);
     match event {
         "prompt" => {
+            // Relay delivery point: every prompt drains this session's inbox,
+            // pinned or not — a message queued mid-session still arrives.
+            let relayed = leb::agenthooks::relay_drain(&state_dir, &session_id);
+            let relay_block = if relayed.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "# Messages from other sessions (leb relay)\n{}\n",
+                    relayed
+                        .iter()
+                        .map(|message| format!("- {message}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            };
             if leb::agenthooks::load_session(&state_dir, &session_id).is_some() {
+                if !relay_block.is_empty() {
+                    emit("UserPromptSubmit", &relay_block);
+                }
                 return Ok(true); // session already primed (pinned semantics)
             }
             let prompt = payload
@@ -2164,7 +2247,10 @@ fn run_hook_event(
                     },
                 );
             }
-            let injected = format!("{}{}", context.stable_prefix, context.dynamic_context);
+            let injected = format!(
+                "{relay_block}{}{}",
+                context.stable_prefix, context.dynamic_context
+            );
             if !injected.trim().is_empty() {
                 emit("UserPromptSubmit", &injected);
             }
@@ -2334,6 +2420,223 @@ fn run_hook_event(
             );
         }
         _ => {}
+    }
+    Ok(true)
+}
+
+/// Extract a section's text: from its heading until the next heading of the
+/// same or higher level, bounded.
+fn section_excerpt(content: &str, start_byte: usize) -> String {
+    let Some(section) = content.get(start_byte..) else {
+        return String::new();
+    };
+    let level = section.chars().take_while(|c| *c == '#').count().max(1);
+    let mut end = section.len();
+    let mut offset = 0_usize;
+    for line in section.lines().skip(1) {
+        offset += 1; // newline of the previous line
+        if line.starts_with('#') && line.chars().take_while(|c| *c == '#').count() <= level {
+            end = section[..end]
+                .find(line)
+                .map_or(end, |position| position.min(end));
+            break;
+        }
+        offset += line.len();
+        if offset > 1_500 {
+            end = end.min(offset);
+            break;
+        }
+    }
+    let mut excerpt = section[..end.min(section.len())].to_owned();
+    excerpt.truncate(1_500);
+    excerpt
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn run_ask(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    question: &str,
+    path: &Path,
+    claude: bool,
+    model: Option<&str>,
+    dry_run: bool,
+    budget: u32,
+) -> Result<bool> {
+    use std::fmt::Write as _;
+    let config = load_daemon_config(overrides, socket, Some(path))?;
+    let client = client(&config);
+    let status = block_on(client.resolve_project(path))?;
+    let project_id = status.resolved.project.id.clone();
+    let root = status.resolved.root.clone();
+
+    let context = block_on(
+        client.compile_context(&ContextCompileRequest {
+            request_id: format!("ask_{}", uuid::Uuid::new_v4()),
+            project_id: project_id.clone(),
+            task_text: question.to_owned(),
+            current_paths: Vec::new(),
+            token_budget: budget,
+            mode: ContextMode::Brain,
+            repository_root: Some(root.clone()),
+            head: status
+                .resolved
+                .git
+                .as_ref()
+                .and_then(|git| git.head.clone()),
+            task_id: None,
+            framing: None,
+        }),
+    )?;
+
+    // Retrieve graph matter for the question's salient words: code symbols
+    // ground the answer in real definitions, Section hits pull in the
+    // documentation text itself.
+    let mut seen = std::collections::BTreeSet::new();
+    let keywords: Vec<String> = question
+        .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
+        .filter(|word| word.len() >= 4)
+        .map(str::to_lowercase)
+        .filter(|word| seen.insert(word.clone()))
+        .take(6)
+        .collect();
+    let mut symbols = Vec::new();
+    let mut sections = Vec::new();
+    for keyword in &keywords {
+        let Ok(nodes) = block_on(client.search_world(&leb::daemon::WorldSearchRequest {
+            project_id: project_id.clone(),
+            query: keyword.clone(),
+            limit: 8,
+        })) else {
+            continue;
+        };
+        for node in nodes {
+            if node.kind == "Section" {
+                sections.push(node);
+            } else if node.kind != "ExternalReference" && node.kind != "File" {
+                // Production symbols answer questions; test fixtures bury them.
+                let is_test = node.file_path.as_deref().is_some_and(|path| {
+                    path.split('/').any(|segment| {
+                        segment == "test" || segment == "tests" || segment.starts_with("test")
+                    }) || path.contains("Test.")
+                });
+                if !is_test {
+                    symbols.push(node);
+                }
+            }
+        }
+    }
+    sections.truncate(5);
+    symbols.truncate(12);
+
+    let mut pack = format!(
+        "# Question\n{question}\n\n# Workspace knowledge (validated)\n{}{}\n",
+        context.stable_prefix, context.dynamic_context
+    );
+    if !symbols.is_empty() {
+        pack.push_str("\n# Matching code symbols\n");
+        for node in &symbols {
+            let file = node.file_path.as_deref().unwrap_or("?");
+            let _ = writeln!(pack, "- {} ({}) — {}", node.label, node.kind, file);
+        }
+    }
+    if !sections.is_empty() {
+        pack.push_str("\n# Documentation excerpts\n");
+        for node in &sections {
+            let Some(file) = node.file_path.as_deref() else {
+                continue;
+            };
+            let Ok(document) = std::fs::read_to_string(root.join(file)) else {
+                continue;
+            };
+            let start = usize::try_from(node.start_byte.unwrap_or(0)).unwrap_or(0);
+            let excerpt = section_excerpt(&document, start);
+            if !excerpt.trim().is_empty() {
+                let _ = writeln!(pack, "\n## {file} § {}\n{excerpt}", node.label);
+            }
+        }
+    }
+
+    if dry_run || (!claude && model.is_none()) {
+        println!("{pack}");
+        if !dry_run {
+            println!(
+                "\n(no model selected — pass --claude or --model <m> for a synthesized answer)"
+            );
+        }
+        return Ok(true);
+    }
+    let prompt = format!(
+        "Answer the question strictly from the workspace evidence below. Cite the \
+         file or memory each claim comes from. If the evidence does not answer the \
+         question, say exactly what is missing — do not guess.\n\n{pack}"
+    );
+    let answer = if claude {
+        let model = model.unwrap_or("claude-opus-4-8");
+        leb::architect::synthesize_with_claude_cli(model, &prompt)?
+    } else {
+        let model = model.expect("checked above");
+        leb::architect::enforce_local_only(
+            &config.architect.runtime_url,
+            config.network.local_only,
+        )?;
+        block_on(leb::architect::synthesize(
+            &config.architect.runtime_url,
+            model,
+            &prompt,
+        ))?
+    };
+    println!("{answer}");
+    Ok(true)
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_relay_action(overrides: &ConfigOverrides, action: &RelayAction) -> Result<bool> {
+    let config = Config::load_for(None, overrides)?;
+    let state_dir = config
+        .storage
+        .db_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    match action {
+        RelayAction::Send { to, message, from } => {
+            let recipients: Vec<String> = if to == "all" {
+                leb::agenthooks::active_sessions(&state_dir)
+                    .into_iter()
+                    .map(|(id, _, _)| id)
+                    .collect()
+            } else {
+                vec![to.clone()]
+            };
+            if recipients.is_empty() {
+                println!("No active sessions.");
+                return Ok(true);
+            }
+            for recipient in &recipients {
+                leb::agenthooks::relay_send(&state_dir, recipient, from, message)?;
+            }
+            println!(
+                "Queued for {} session(s); delivery at each recipient's next prompt.",
+                recipients.len()
+            );
+        }
+        RelayAction::Board => {
+            let sessions = leb::agenthooks::active_sessions(&state_dir);
+            if sessions.is_empty() {
+                println!("No active sessions.");
+            }
+            for (id, session, modified) in sessions {
+                let age_minutes = modified
+                    .elapsed()
+                    .map(|elapsed| elapsed.as_secs() / 60)
+                    .unwrap_or_default();
+                println!(
+                    "{id}  project={}  task={}  active {age_minutes}m ago",
+                    session.project_id, session.task_id
+                );
+            }
+        }
     }
     Ok(true)
 }

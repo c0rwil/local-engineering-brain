@@ -86,6 +86,101 @@ pub fn mark_file_briefed(state_dir: &Path, session_id: &str, file_path: &str) ->
     std::fs::write(&path, updated).is_ok()
 }
 
+/// Root of the session relay: per-session inbox directories under the
+/// brain's state dir. Messages are plain files; delivery happens when the
+/// recipient session's next hook fires. No daemon involvement, so the
+/// relay works even while the daemon is down.
+#[must_use]
+pub fn relay_inbox(state_dir: &Path, session_id: &str) -> PathBuf {
+    let safe: String = session_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(80)
+        .collect();
+    state_dir.join("relay").join(safe)
+}
+
+/// Deposit one relay message for a session.
+///
+/// # Errors
+///
+/// Returns filesystem errors.
+pub fn relay_send(state_dir: &Path, session_id: &str, from: &str, message: &str) -> Result<()> {
+    let inbox = relay_inbox(state_dir, session_id);
+    std::fs::create_dir_all(&inbox)
+        .map_err(|error| Error::Config(format!("relay inbox: {error}")))?;
+    let name = format!(
+        "{}-{}.txt",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default(),
+        &uuid::Uuid::new_v4().to_string()[..8]
+    );
+    let mut body: String = message.chars().take(4_000).collect();
+    body.insert_str(0, &format!("from {from}: "));
+    std::fs::write(inbox.join(name), body)
+        .map_err(|error| Error::Config(format!("relay write: {error}")))
+}
+
+/// Drain a session's relay inbox: return pending messages oldest-first and
+/// delete them. Empty when there is nothing (the common case — one cheap
+/// directory probe).
+#[must_use]
+pub fn relay_drain(state_dir: &Path, session_id: &str) -> Vec<String> {
+    let inbox = relay_inbox(state_dir, session_id);
+    let Ok(entries) = std::fs::read_dir(&inbox) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "txt"))
+        .collect();
+    files.sort();
+    let mut messages = Vec::new();
+    for path in files.into_iter().take(20) {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            messages.push(content);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+    messages
+}
+
+/// Active hook sessions (the relay board's data): session id, project id,
+/// and last-activity time, from the session state files.
+#[must_use]
+pub fn active_sessions(state_dir: &Path) -> Vec<(String, HookSession, std::time::SystemTime)> {
+    let dir = state_dir.join("hook-sessions");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut sessions = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(session) = serde_json::from_str::<HookSession>(&content) else {
+            continue;
+        };
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        sessions.push((stem, session, modified));
+    }
+    sessions.sort_by_key(|entry| std::cmp::Reverse(entry.2));
+    sessions
+}
+
 /// Wrap hook context in the `hookSpecificOutput.additionalContext` JSON
 /// envelope. Claude Code accepts it for PreToolUse/PostToolUse; Codex
 /// expects it for every event.
@@ -569,6 +664,22 @@ mod tests {
         assert!(shape.contains("validate (Function)"));
         assert!(shape.contains("login [src/routes.rs]"));
         assert!(shape.contains("crate::db"));
+    }
+
+    #[test]
+    fn relay_messages_queue_and_drain_once() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        relay_send(temp.path(), "sess-a", "operator", "check the auth tests").expect("send");
+        relay_send(temp.path(), "sess-a", "sess-b", "backend contract changed").expect("send 2");
+        let drained = relay_drain(temp.path(), "sess-a");
+        assert_eq!(drained.len(), 2);
+        assert!(drained[0].starts_with("from operator: check the auth tests"));
+        assert!(drained[1].starts_with("from sess-b: "));
+        assert!(
+            relay_drain(temp.path(), "sess-a").is_empty(),
+            "drain consumes"
+        );
+        assert!(relay_drain(temp.path(), "sess-c").is_empty(), "empty inbox");
     }
 
     #[test]

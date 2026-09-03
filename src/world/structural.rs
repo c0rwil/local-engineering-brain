@@ -634,6 +634,13 @@ enum SupportedLanguage {
     Go,
     Java,
     Kotlin,
+    C,
+    Cpp,
+    CSharp,
+    Ruby,
+    Php,
+    Bash,
+    Scala,
     /// Documentation is part of the world model: headings become Section
     /// nodes so docs are searchable and scope-matchable like code. No
     /// tree-sitter grammar — a bounded line scanner.
@@ -651,6 +658,13 @@ impl SupportedLanguage {
             "go" => Some(Self::Go),
             "java" => Some(Self::Java),
             "kt" | "kts" => Some(Self::Kotlin),
+            "c" | "h" => Some(Self::C),
+            "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Some(Self::Cpp),
+            "cs" => Some(Self::CSharp),
+            "rb" | "rake" => Some(Self::Ruby),
+            "php" => Some(Self::Php),
+            "sh" | "bash" | "zsh" => Some(Self::Bash),
+            "scala" | "sc" => Some(Self::Scala),
             "md" | "markdown" => Some(Self::Markdown),
             _ => None,
         }
@@ -666,6 +680,13 @@ impl SupportedLanguage {
             Self::Go => "go",
             Self::Java => "java",
             Self::Kotlin => "kotlin",
+            Self::C => "c",
+            Self::Cpp => "cpp",
+            Self::CSharp => "csharp",
+            Self::Ruby => "ruby",
+            Self::Php => "php",
+            Self::Bash => "bash",
+            Self::Scala => "scala",
             Self::Markdown => "markdown",
         }
     }
@@ -681,6 +702,13 @@ impl SupportedLanguage {
             Self::Go => tree_sitter_go::LANGUAGE.into(),
             Self::Java => tree_sitter_java::LANGUAGE.into(),
             Self::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
+            Self::C => tree_sitter_c::LANGUAGE.into(),
+            Self::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+            Self::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            Self::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+            Self::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+            Self::Bash => tree_sitter_bash::LANGUAGE.into(),
+            Self::Scala => tree_sitter_scala::LANGUAGE.into(),
             // parse_file branches to the markdown scanner before reaching
             // the parser; this arm is unreachable by construction.
             Self::Markdown => unreachable!("markdown has no tree-sitter grammar"),
@@ -700,6 +728,11 @@ impl SupportedLanguage {
         ) || matches!(
             (self, kind),
             (Self::Go | Self::Kotlin, "function_declaration")
+                | (
+                    Self::C | Self::Cpp | Self::Php | Self::Bash | Self::Scala,
+                    "function_definition"
+                )
+                | (Self::Ruby, "method")
         );
         if function {
             return Some("Function");
@@ -721,19 +754,38 @@ impl SupportedLanguage {
                     "class_declaration" | "enum_declaration" | "record_declaration"
                 )
                 | (Self::Kotlin, "class_declaration" | "object_declaration")
+                | (
+                    Self::C | Self::Cpp,
+                    "struct_specifier" | "enum_specifier" | "union_specifier"
+                )
+                | (Self::Cpp, "class_specifier")
+                | (
+                    Self::CSharp,
+                    "class_declaration"
+                        | "struct_declaration"
+                        | "enum_declaration"
+                        | "record_declaration"
+                )
+                | (Self::Ruby, "class" | "module")
+                | (Self::Php, "class_declaration" | "trait_declaration")
+                | (Self::Scala, "class_definition" | "object_definition")
         );
         if data_type {
             return Some("Type");
         }
         match (self, kind) {
-            (Self::Rust, "trait_item") | (Self::Java, "interface_declaration") => Some("Interface"),
+            (Self::Rust, "trait_item")
+            | (Self::Java | Self::CSharp | Self::Php, "interface_declaration")
+            | (Self::Scala, "trait_definition") => Some("Interface"),
             (Self::Rust, "mod_item") => Some("Module"),
             (
                 Self::JavaScript | Self::TypeScript | Self::Tsx,
                 "method_definition" | "method_signature",
             )
-            | (Self::Go, "method_declaration")
-            | (Self::Java, "method_declaration" | "constructor_declaration") => Some("Method"),
+            | (Self::Go | Self::Php, "method_declaration")
+            | (Self::Java | Self::CSharp, "method_declaration" | "constructor_declaration") => {
+                Some("Method")
+            }
             _ => None,
         }
     }
@@ -743,16 +795,27 @@ impl SupportedLanguage {
             Self::Rust => kind == "use_declaration" || kind == "extern_crate_declaration",
             Self::Python => kind == "import_statement" || kind == "import_from_statement",
             Self::JavaScript | Self::TypeScript | Self::Tsx => kind == "import_statement",
-            Self::Go | Self::Java => kind == "import_declaration",
+            Self::Go | Self::Java | Self::Scala => kind == "import_declaration",
             Self::Kotlin => kind == "import_header" || kind == "import",
-            Self::Markdown => false,
+            Self::C | Self::Cpp => kind == "preproc_include",
+            Self::CSharp => kind == "using_directive",
+            Self::Php => kind == "namespace_use_declaration",
+            Self::Ruby | Self::Bash | Self::Markdown => false,
         }
     }
 
     fn is_call(self, kind: &str) -> bool {
         match self {
             Self::Java => matches!(kind, "method_invocation" | "object_creation_expression"),
-            Self::Markdown => false,
+            Self::CSharp => matches!(kind, "invocation_expression" | "object_creation_expression"),
+            Self::Ruby => kind == "call",
+            Self::Php => matches!(
+                kind,
+                "function_call_expression"
+                    | "member_call_expression"
+                    | "object_creation_expression"
+            ),
+            Self::Bash | Self::Markdown => false,
             _ => matches!(kind, "call_expression" | "macro_invocation"),
         }
     }
@@ -837,11 +900,48 @@ fn parse_markdown(relative: &str, source: &[u8], digest: String) -> FileScan {
     let mut offset = 0_usize;
     let mut in_fence = false;
     let mut sections = 0_usize;
+    let mut links = 0_usize;
     for line in text.lines() {
         let line_len = line.len() + 1;
         if line.trim_start().starts_with("```") {
             in_fence = !in_fence;
-        } else if !in_fence && let Some(rest) = line.strip_prefix('#') {
+        } else if !in_fence {
+            // Doc links become graph edges: [[wikilinks]] and markdown link
+            // targets each get an ExternalReference resolved later by label
+            // (the same mechanism call references use), so documents that
+            // cite each other connect the way code that calls each other does.
+            for label in markdown_link_labels(line) {
+                if links >= 60 {
+                    break;
+                }
+                links += 1;
+                let target_key = format!("reference:{relative}:doclink:{label}");
+                let start = usize_to_u64(offset);
+                let end = usize_to_u64(offset + line.len());
+                let link_digest = sha256(label.as_bytes());
+                nodes
+                    .entry(target_key.clone())
+                    .or_insert_with(|| ScannedNode {
+                        stable_key: target_key.clone(),
+                        kind: "ExternalReference".to_owned(),
+                        label,
+                        file_path: relative.to_owned(),
+                        language: "markdown".to_owned(),
+                        start_byte: start,
+                        end_byte: end,
+                        digest: link_digest,
+                    });
+                insert_edge(
+                    &mut edges,
+                    &file_key,
+                    "LINKS_TO",
+                    &target_key,
+                    0.9,
+                    relative,
+                );
+            }
+        }
+        if !in_fence && let Some(rest) = line.strip_prefix('#') {
             let level = 1 + rest.chars().take_while(|c| *c == '#').count();
             let title = rest.trim_start_matches('#').trim();
             if level <= 6 && !title.is_empty() && sections < MAX_SECTIONS {
@@ -933,6 +1033,67 @@ fn parse_file(
     })
 }
 
+/// Link labels on one markdown line: `[[wikilink]]` inner text and
+/// markdown link targets `](target)` (fragments/queries stripped, external
+/// URLs skipped). Bounded by the caller.
+fn markdown_link_labels(line: &str) -> Vec<String> {
+    let mut labels = Vec::new();
+    let mut rest = line;
+    while let Some(start) = rest.find("[[") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("]]") else { break };
+        let inner = after[..end].split('|').next().unwrap_or("").trim();
+        if !inner.is_empty() && inner.len() <= 120 {
+            labels.push(inner.to_owned());
+        }
+        rest = &after[end + 2..];
+    }
+    let mut rest = line;
+    while let Some(start) = rest.find("](") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find(')') else { break };
+        let target = after[..end].trim();
+        rest = &after[end + 1..];
+        if target.is_empty()
+            || target.len() > 200
+            || target.starts_with("http://")
+            || target.starts_with("https://")
+            || target.starts_with('#')
+        {
+            continue;
+        }
+        let cleaned = target
+            .split(['#', '?'])
+            .next()
+            .unwrap_or(target)
+            .trim_start_matches("./");
+        if !cleaned.is_empty() {
+            labels.push(cleaned.to_owned());
+        }
+    }
+    labels
+}
+
+/// C-family declarations bury the name under nested `declarator` fields
+/// (`function_definition` -> `function_declarator` -> identifier): descend
+/// bounded until an identifier appears.
+fn declarator_identifier(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = node.child_by_field_name("declarator")?;
+    for _ in 0..6 {
+        if matches!(
+            current.kind(),
+            "identifier" | "field_identifier" | "type_identifier" | "qualified_identifier"
+        ) {
+            return Some(current);
+        }
+        match current.child_by_field_name("declarator") {
+            Some(next) => current = next,
+            None => return named_identifier_child(current),
+        }
+    }
+    None
+}
+
 /// Fallback for grammars without a `name` field on declarations (Kotlin
 /// notably): the first named child that is an identifier.
 fn named_identifier_child(node: Node<'_>) -> Option<Node<'_>> {
@@ -961,6 +1122,7 @@ fn visit_tree(
     if let Some(kind) = language.definition_kind(node.kind())
         && let Some(name_node) = node
             .child_by_field_name("name")
+            .or_else(|| declarator_identifier(node))
             .or_else(|| named_identifier_child(node))
         && let Ok(name) = name_node.utf8_text(source)
     {
@@ -1013,10 +1175,12 @@ fn visit_tree(
     } else if language.is_call(node.kind())
         && let Some(function) = node
             .child_by_field_name("function")
-            // Java method_invocation names its callee "name"; Java `new`
-            // expressions name the constructed type "type".
+            // Java/C# invocations name their callee "name"/"function"; `new`
+            // expressions name the constructed type "type"; Ruby calls use
+            // "method".
             .or_else(|| node.child_by_field_name("name"))
             .or_else(|| node.child_by_field_name("type"))
+            .or_else(|| node.child_by_field_name("method"))
             .or_else(|| node.child(0))
         && let Ok(text) = function.utf8_text(source)
         && text.len() <= 200
@@ -1630,6 +1794,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn new_languages_and_markdown_extract_symbols() {
         let temp = TempDir::new().expect("temp");
         let root = temp.path().join("poly");
@@ -1654,6 +1819,41 @@ mod tests {
             "# Operations guide\n\nIntro.\n\n## Deploy steps\n\n```sh\n# not a heading\n```\n\n## Rollback\n",
         )
         .expect("markdown");
+        fs::write(
+            root.join("core.c"),
+            "#include <stdio.h>\nstruct Packet { int id; };\nint checksum(struct Packet p) { return p.id; }\n",
+        )
+        .expect("c");
+        fs::write(
+            root.join("engine.cpp"),
+            "class Reactor { public: void ignite(); };\nvoid Reactor::ignite() { }\nint boot() { return 0; }\n",
+        )
+        .expect("cpp");
+        fs::write(
+            root.join("Billing.cs"),
+            "using System;\npublic interface IInvoice {}\npublic class Billing {\n  public void Charge() { Console.WriteLine(\"ok\"); }\n}\n",
+        )
+        .expect("csharp");
+        fs::write(
+            root.join("worker.rb"),
+            "class Worker\n  def perform\n    puts 'ok'\n  end\nend\n",
+        )
+        .expect("ruby");
+        fs::write(
+            root.join("index.php"),
+            "<?php\nclass Cart {\n  public function total() { return 0; }\n}\nfunction render() { }\n",
+        )
+        .expect("php");
+        fs::write(
+            root.join("deploy.sh"),
+            "#!/bin/bash\nrollout() {\n  echo done\n}\n",
+        )
+        .expect("bash");
+        fs::write(
+            root.join("Api.scala"),
+            "trait Api {}\nobject Server {\n  def start(): Unit = {}\n}\nclass Router {}\n",
+        )
+        .expect("scala");
         let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
         let project = ProjectRegistry::new(database.clone())
             .resolve_or_register(&root)
@@ -1661,7 +1861,7 @@ mod tests {
         let world = WorldModel::new(database);
         let provider = TreeSitterProvider::new(100, 1_000_000, 10_000, 20_000, 16_000_000);
         let report = world.index(&provider, &project, None).expect("index");
-        assert_eq!(report.parsed_files, 4);
+        assert_eq!(report.parsed_files, 11);
 
         let find = |query: &str| {
             world
@@ -1699,6 +1899,66 @@ mod tests {
             find("not a heading").is_empty(),
             "fenced code lines are not sections"
         );
+        assert!(
+            find("checksum").iter().any(|n| n.kind == "Function"),
+            "c fn via declarator"
+        );
+        assert!(find("Packet").iter().any(|n| n.kind == "Type"), "c struct");
+        assert!(
+            find("Reactor").iter().any(|n| n.kind == "Type"),
+            "cpp class"
+        );
+        assert!(find("boot").iter().any(|n| n.kind == "Function"), "cpp fn");
+        assert!(find("Billing").iter().any(|n| n.kind == "Type"), "cs class");
+        assert!(
+            find("IInvoice").iter().any(|n| n.kind == "Interface"),
+            "cs interface"
+        );
+        assert!(
+            find("Charge").iter().any(|n| n.kind == "Method"),
+            "cs method"
+        );
+        assert!(
+            find("Worker").iter().any(|n| n.kind == "Type"),
+            "ruby class"
+        );
+        assert!(
+            find("perform").iter().any(|n| n.kind == "Function"),
+            "ruby method"
+        );
+        assert!(find("Cart").iter().any(|n| n.kind == "Type"), "php class");
+        assert!(
+            find("render").iter().any(|n| n.kind == "Function"),
+            "php fn"
+        );
+        assert!(
+            find("rollout").iter().any(|n| n.kind == "Function"),
+            "bash fn"
+        );
+        assert!(
+            find("Api").iter().any(|n| n.kind == "Interface"),
+            "scala trait"
+        );
+        assert!(
+            find("Server").iter().any(|n| n.kind == "Type"),
+            "scala object"
+        );
+        assert!(
+            find("start").iter().any(|n| n.kind == "Function"),
+            "scala def"
+        );
+    }
+
+    #[test]
+    fn markdown_link_labels_extract_wikilinks_and_targets() {
+        let labels = markdown_link_labels(
+            "See [[Deploy steps]] and [runbook](docs/runbook.md#top), not [x](https://e.com).",
+        );
+        assert_eq!(
+            labels,
+            vec!["Deploy steps".to_owned(), "docs/runbook.md".to_owned()]
+        );
+        assert!(markdown_link_labels("no links here").is_empty());
     }
 
     #[test]

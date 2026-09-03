@@ -771,6 +771,29 @@ impl JobExecutor {
                 }
             }
         }
+        // Relay inboxes age out with their sessions: stale per-session
+        // directories (undelivered messages included) are swept whole.
+        let relay = self
+            .database
+            .path()
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("relay");
+        if let Ok(entries) = std::fs::read_dir(&relay) {
+            for entry in entries.flatten() {
+                let stale = entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                    .is_some_and(|age| {
+                        i64::try_from(age.as_millis()).unwrap_or(i64::MAX) > STALE_MS
+                    });
+                if stale && std::fs::remove_dir_all(entry.path()).is_ok() {
+                    files_removed += 1;
+                }
+            }
+        }
         let cutoff = now_ms - STALE_MS;
         let database = self.database.clone();
         let abandoned = self

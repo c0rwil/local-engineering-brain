@@ -1,0 +1,49 @@
+# Prebuilt release binaries: push a tag like v0.2.0 and each platform's
+# bundle (leb, lebd, leb-proxy, leb-mcp) lands on the GitHub release, so
+# engineers install without a Rust toolchain. macOS arm64 + Linux x86_64;
+# Windows is out by architecture (Unix-socket daemon).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Bundle
+        run: |
+          set -eu
+          STAGE="leb-${GITHUB_REF_NAME}-${{ matrix.label }}"
+          mkdir -p "${STAGE}"
+          for binary in leb lebd leb-proxy leb-mcp; do
+            cp "target/${{ matrix.target }}/release/${binary}" "${STAGE}/"
+          done
+          cp README.md LICENSE* "${STAGE}/" 2>/dev/null || cp README.md "${STAGE}/"
+          tar czf "${STAGE}.tar.gz" "${STAGE}"
+          shasum -a 256 "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            leb-*.tar.gz
+            leb-*.tar.gz.sha256

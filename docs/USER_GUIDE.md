@@ -40,8 +40,10 @@ leb index ~/code/my-repo
 ```
 
 Indexing builds the world model — a provenance-bearing code graph
-(tree-sitter for Rust, Python, JS/TS, Go, Java, and Kotlin, plus markdown
-headings as searchable Section nodes so docs are part of the graph) — and
+(tree-sitter for Rust, Python, JS/TS/TSX, Go, Java, Kotlin, C, C++, C#,
+Ruby, PHP, Bash, and Scala — 16 languages — plus markdown headings as
+searchable Section nodes and doc links as graph edges, so documentation is
+part of the graph) — and
 detects the technology stack from manifests and infra files. Definitive cross-repo dependencies (path deps,
 `file:` packages, submodules) auto-link on every index; `leb link scan`
 proposes fuzzier matches, `leb link add` records what you know by hand.
@@ -175,6 +177,8 @@ knowledge never ping-pongs back.
 | Task | Command |
 |---|---|
 | Health check | `leb doctor` |
+| Ask the workspace a question | `leb ask "…" --path <repo> --claude` (cited answer from memories, facts, code symbols, and doc sections; `--dry-run` shows the evidence) |
+| Message another live session | `leb relay send <session\|all> "…"` (`leb relay board` lists them; delivered at the next prompt) |
 | Update LEB in place (pull + atomic rebuild) | `leb update` (`--check` to only report) |
 | Backup now (transactional; daily automatic, 7 kept) | `leb backup create` |
 | Verify a backup | `leb backup verify` |
