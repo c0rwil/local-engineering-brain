@@ -2880,7 +2880,14 @@ fn run_daemon_action(
 ) -> Result<bool> {
     let mut config = Config::load_for(None, overrides)?;
     apply_socket_override(&mut config, socket)?;
-    require_daemon(&config)?;
+    // `stop` must not require a build-matched daemon: after an upgrade the
+    // whole point of stopping is that the socket serves an OLD build, and
+    // refusing creates a chicken-and-egg lockout (observed). Status and
+    // stop talk to whatever answers the socket; auto-start still applies
+    // to status so it can report a freshly started daemon.
+    if !matches!(action, DaemonAction::Stop { .. }) {
+        require_daemon(&config)?;
+    }
     let client = client(&config);
     match action {
         DaemonAction::Status { json } => {

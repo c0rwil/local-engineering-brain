@@ -2158,22 +2158,52 @@ async fn file_shape(
             // Tree-sitter records a CALLS target as an ExternalReference in
             // the REFERENCING file; recover this file's callers by matching
             // reference labels to the definitions here (same resolution the
-            // vault uses, but filtered to one file — milliseconds).
+            // vault uses). Drive the join FROM this file's few definitions —
+            // label-first — so every step is index-covered; joining from the
+            // edge side scans the whole project's CALLS set and times out on
+            // large graphs (observed on a 41k-node monorepo).
+            // CROSS JOIN pins the join order (SQLite honors it strictly):
+            // without pinning — and without ANALYZE stats, which a fresh
+            // brain never has — the planner drives from the project's whole
+            // CALLS edge set instead of this file's handful of labels, and
+            // a 40k-node monorepo blows the request deadline (observed:
+            // 113 s → sub-second pinned).
             let mut statement = connection.prepare(
-                "SELECT DISTINCT caller.label, caller.file_path FROM edges e
-                 JOIN nodes caller ON caller.id = e.source_id
-                 JOIN nodes target ON target.id = e.target_id
-                 LEFT JOIN nodes defined ON target.kind = 'ExternalReference'
-                    AND defined.project_id = e.project_id
-                    AND defined.kind IN ('Function', 'Type', 'Interface', 'Method')
-                    AND defined.label = target.label
-                    AND defined.tombstoned_at_ms IS NULL
-                 WHERE e.project_id = ?1 AND e.relation = 'CALLS'
-                   AND e.tombstoned_at_ms IS NULL
-                   AND caller.tombstoned_at_ms IS NULL
-                   AND caller.file_path IS NOT NULL AND caller.file_path != ?2
-                   AND COALESCE(defined.file_path, target.file_path) = ?2
-                 ORDER BY caller.file_path, caller.label LIMIT 25",
+                "SELECT caller_label, caller_path FROM (
+                     SELECT DISTINCT caller.label AS caller_label,
+                            caller.file_path AS caller_path
+                     FROM nodes defined
+                     CROSS JOIN nodes target
+                     CROSS JOIN edges e
+                     CROSS JOIN nodes caller
+                     WHERE defined.project_id = ?1 AND defined.file_path = ?2
+                       AND defined.kind IN ('Function', 'Type', 'Interface', 'Method')
+                       AND defined.tombstoned_at_ms IS NULL
+                       AND target.project_id = defined.project_id
+                       AND target.kind = 'ExternalReference'
+                       AND target.label = defined.label
+                       AND target.tombstoned_at_ms IS NULL
+                       AND e.project_id = defined.project_id
+                       AND e.target_id = target.id AND e.relation = 'CALLS'
+                       AND e.tombstoned_at_ms IS NULL
+                       AND caller.id = e.source_id
+                       AND caller.tombstoned_at_ms IS NULL
+                       AND caller.file_path IS NOT NULL AND caller.file_path != ?2
+                     UNION
+                     SELECT DISTINCT caller.label, caller.file_path
+                     FROM nodes callee
+                     CROSS JOIN edges e
+                     CROSS JOIN nodes caller
+                     WHERE callee.project_id = ?1 AND callee.file_path = ?2
+                       AND callee.kind <> 'ExternalReference'
+                       AND callee.tombstoned_at_ms IS NULL
+                       AND e.project_id = callee.project_id
+                       AND e.target_id = callee.id AND e.relation = 'CALLS'
+                       AND e.tombstoned_at_ms IS NULL
+                       AND caller.id = e.source_id
+                       AND caller.tombstoned_at_ms IS NULL
+                       AND caller.file_path IS NOT NULL AND caller.file_path != ?2
+                 ) ORDER BY caller_path, caller_label LIMIT 25",
             )?;
             let callers = statement
                 .query_map(
