@@ -40,8 +40,9 @@ leb index ~/code/my-repo
 ```
 
 Indexing builds the world model — a provenance-bearing code graph
-(tree-sitter for Rust/Python/JS/TS) — and detects the technology stack from
-manifests and infra files. Definitive cross-repo dependencies (path deps,
+(tree-sitter for Rust, Python, JS/TS, Go, Java, and Kotlin, plus markdown
+headings as searchable Section nodes so docs are part of the graph) — and
+detects the technology stack from manifests and infra files. Definitive cross-repo dependencies (path deps,
 `file:` packages, submodules) auto-link on every index; `leb link scan`
 proposes fuzzier matches, `leb link add` records what you know by hand.
 
@@ -86,11 +87,17 @@ leb agent-md --global        # the agent tool loop: ~/.claude/CLAUDE.md
 leb hooks codex              # Codex: MCP server + AGENTS.md instructions
 ```
 
-What the hooks do, invisibly, in every session:
+Codex gets the same automatic loop: `leb hooks codex --install` writes
+`~/.codex/hooks.json`, where context returns through
+`hookSpecificOutput.additionalContext`.
+
+What the hooks do, invisibly, in every session — five injection moments:
 
 | Hook | When | Effect |
 |---|---|---|
+| session-start | session opens | standing brief: open episodes from earlier sessions (resume or close), last completed outcome. In an untracked git repo: a one-line enrollment hint, nothing else |
 | prompt | first prompt of a session | opens a task episode, compiles brain context for that exact task, injects it |
+| pretool | before Read/Edit/Write | the file's graph shape — symbols it defines, who calls into it from elsewhere, imports — lands before the content does; once per file per session |
 | bash | after each Bash tool call | recognizable verifications (test/build/lint/typecheck) recorded as deterministic evidence with exit codes — failures included |
 | session-end | session closes | episode auto-closed conservatively (success only if the last verification passed) |
 
@@ -168,6 +175,7 @@ knowledge never ping-pongs back.
 | Task | Command |
 |---|---|
 | Health check | `leb doctor` |
+| Update LEB in place (pull + atomic rebuild) | `leb update` (`--check` to only report) |
 | Backup now (transactional; daily automatic, 7 kept) | `leb backup create` |
 | Verify a backup | `leb backup verify` |
 | See what would inject and why | `leb context "…" --path <repo> --json` |

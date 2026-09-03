@@ -631,6 +631,13 @@ enum SupportedLanguage {
     JavaScript,
     TypeScript,
     Tsx,
+    Go,
+    Java,
+    Kotlin,
+    /// Documentation is part of the world model: headings become Section
+    /// nodes so docs are searchable and scope-matchable like code. No
+    /// tree-sitter grammar — a bounded line scanner.
+    Markdown,
 }
 
 impl SupportedLanguage {
@@ -641,6 +648,10 @@ impl SupportedLanguage {
             "js" | "jsx" | "mjs" | "cjs" => Some(Self::JavaScript),
             "ts" | "mts" | "cts" => Some(Self::TypeScript),
             "tsx" => Some(Self::Tsx),
+            "go" => Some(Self::Go),
+            "java" => Some(Self::Java),
+            "kt" | "kts" => Some(Self::Kotlin),
+            "md" | "markdown" => Some(Self::Markdown),
             _ => None,
         }
     }
@@ -652,6 +663,10 @@ impl SupportedLanguage {
             Self::JavaScript => "javascript",
             Self::TypeScript => "typescript",
             Self::Tsx => "tsx",
+            Self::Go => "go",
+            Self::Java => "java",
+            Self::Kotlin => "kotlin",
+            Self::Markdown => "markdown",
         }
     }
 
@@ -663,6 +678,12 @@ impl SupportedLanguage {
                 tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
             }
             Self::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+            Self::Go => tree_sitter_go::LANGUAGE.into(),
+            Self::Java => tree_sitter_java::LANGUAGE.into(),
+            Self::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
+            // parse_file branches to the markdown scanner before reaching
+            // the parser; this arm is unreachable by construction.
+            Self::Markdown => unreachable!("markdown has no tree-sitter grammar"),
         }
     }
 
@@ -676,6 +697,9 @@ impl SupportedLanguage {
                 Self::JavaScript | Self::TypeScript | Self::Tsx,
                 "function_declaration" | "generator_function_declaration"
             )
+        ) || matches!(
+            (self, kind),
+            (Self::Go | Self::Kotlin, "function_declaration")
         );
         if function {
             return Some("Function");
@@ -689,17 +713,27 @@ impl SupportedLanguage {
                 Self::JavaScript | Self::TypeScript | Self::Tsx,
                 "class_declaration" | "interface_declaration" | "type_alias_declaration"
             )
+        ) || matches!(
+            (self, kind),
+            (Self::Go, "type_spec")
+                | (
+                    Self::Java,
+                    "class_declaration" | "enum_declaration" | "record_declaration"
+                )
+                | (Self::Kotlin, "class_declaration" | "object_declaration")
         );
         if data_type {
             return Some("Type");
         }
         match (self, kind) {
-            (Self::Rust, "trait_item") => Some("Interface"),
+            (Self::Rust, "trait_item") | (Self::Java, "interface_declaration") => Some("Interface"),
             (Self::Rust, "mod_item") => Some("Module"),
             (
                 Self::JavaScript | Self::TypeScript | Self::Tsx,
                 "method_definition" | "method_signature",
-            ) => Some("Method"),
+            )
+            | (Self::Go, "method_declaration")
+            | (Self::Java, "method_declaration" | "constructor_declaration") => Some("Method"),
             _ => None,
         }
     }
@@ -709,11 +743,18 @@ impl SupportedLanguage {
             Self::Rust => kind == "use_declaration" || kind == "extern_crate_declaration",
             Self::Python => kind == "import_statement" || kind == "import_from_statement",
             Self::JavaScript | Self::TypeScript | Self::Tsx => kind == "import_statement",
+            Self::Go | Self::Java => kind == "import_declaration",
+            Self::Kotlin => kind == "import_header" || kind == "import",
+            Self::Markdown => false,
         }
     }
 
-    fn is_call(kind: &str) -> bool {
-        matches!(kind, "call_expression" | "macro_invocation")
+    fn is_call(self, kind: &str) -> bool {
+        match self {
+            Self::Java => matches!(kind, "method_invocation" | "object_creation_expression"),
+            Self::Markdown => false,
+            _ => matches!(kind, "call_expression" | "macro_invocation"),
+        }
     }
 }
 
@@ -772,12 +813,83 @@ fn candidate_paths(
     Ok(paths.into_iter().collect())
 }
 
+/// Markdown scanner: the file node plus one Section node per heading, so
+/// documentation participates in symbol search and scope matching.
+fn parse_markdown(relative: &str, source: &[u8], digest: String) -> FileScan {
+    const MAX_SECTIONS: usize = 80;
+    let text = String::from_utf8_lossy(source);
+    let file_key = format!("file:{relative}");
+    let mut nodes = BTreeMap::new();
+    nodes.insert(
+        file_key.clone(),
+        ScannedNode {
+            stable_key: file_key.clone(),
+            kind: "File".to_owned(),
+            label: relative.to_owned(),
+            file_path: relative.to_owned(),
+            language: "markdown".to_owned(),
+            start_byte: 0,
+            end_byte: u64::try_from(source.len()).unwrap_or(u64::MAX),
+            digest: digest.clone(),
+        },
+    );
+    let mut edges = BTreeMap::new();
+    let mut offset = 0_usize;
+    let mut in_fence = false;
+    let mut sections = 0_usize;
+    for line in text.lines() {
+        let line_len = line.len() + 1;
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+        } else if !in_fence && let Some(rest) = line.strip_prefix('#') {
+            let level = 1 + rest.chars().take_while(|c| *c == '#').count();
+            let title = rest.trim_start_matches('#').trim();
+            if level <= 6 && !title.is_empty() && sections < MAX_SECTIONS {
+                sections += 1;
+                let label: String = title.chars().take(120).collect();
+                let base_key = format!("symbol:{relative}:Section:{label}");
+                let stable_key = if nodes.contains_key(&base_key) {
+                    format!("{base_key}:{offset}")
+                } else {
+                    base_key
+                };
+                nodes.insert(
+                    stable_key.clone(),
+                    ScannedNode {
+                        stable_key: stable_key.clone(),
+                        kind: "Section".to_owned(),
+                        label,
+                        file_path: relative.to_owned(),
+                        language: "markdown".to_owned(),
+                        start_byte: usize_to_u64(offset),
+                        end_byte: usize_to_u64(offset + line.len()),
+                        digest: sha256(line.as_bytes()),
+                    },
+                );
+                insert_edge(&mut edges, &file_key, "DEFINES", &stable_key, 1.0, relative);
+            }
+        }
+        offset += line_len;
+    }
+    FileScan {
+        path: relative.to_owned(),
+        language: "markdown".to_owned(),
+        digest,
+        size_bytes: u64::try_from(source.len()).unwrap_or(u64::MAX),
+        nodes: nodes.into_values().collect(),
+        edges: edges.into_values().collect(),
+    }
+}
+
 fn parse_file(
     relative: &str,
     language: SupportedLanguage,
     source: &[u8],
     digest: String,
 ) -> Result<FileScan> {
+    if matches!(language, SupportedLanguage::Markdown) {
+        return Ok(parse_markdown(relative, source, digest));
+    }
     let mut parser = Parser::new();
     parser
         .set_language(&language.grammar())
@@ -821,6 +933,18 @@ fn parse_file(
     })
 }
 
+/// Fallback for grammars without a `name` field on declarations (Kotlin
+/// notably): the first named child that is an identifier.
+fn named_identifier_child(node: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).find(|child| {
+        matches!(
+            child.kind(),
+            "identifier" | "simple_identifier" | "type_identifier"
+        )
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn visit_tree(
     node: Node<'_>,
@@ -835,7 +959,9 @@ fn visit_tree(
     let mut child_owner = owner_key.to_owned();
     let mut child_scope = scope.to_owned();
     if let Some(kind) = language.definition_kind(node.kind())
-        && let Some(name_node) = node.child_by_field_name("name")
+        && let Some(name_node) = node
+            .child_by_field_name("name")
+            .or_else(|| named_identifier_child(node))
         && let Ok(name) = name_node.utf8_text(source)
     {
         let qualified = if scope.is_empty() {
@@ -884,9 +1010,13 @@ fn visit_tree(
                 });
             insert_edge(edges, owner_key, "IMPORTS", &target_key, 1.0, path);
         }
-    } else if SupportedLanguage::is_call(node.kind())
+    } else if language.is_call(node.kind())
         && let Some(function) = node
             .child_by_field_name("function")
+            // Java method_invocation names its callee "name"; Java `new`
+            // expressions name the constructed type "type".
+            .or_else(|| node.child_by_field_name("name"))
+            .or_else(|| node.child_by_field_name("type"))
             .or_else(|| node.child(0))
         && let Ok(text) = function.utf8_text(source)
         && text.len() <= 200
@@ -1497,6 +1627,78 @@ mod tests {
             .neighbors(&project.project.id, &engines[0].id, 2, 100)
             .expect("neighbors");
         assert!(slice.nodes.len() >= 2);
+    }
+
+    #[test]
+    fn new_languages_and_markdown_extract_symbols() {
+        let temp = TempDir::new().expect("temp");
+        let root = temp.path().join("poly");
+        fs::create_dir_all(&root).expect("root");
+        fs::write(
+            root.join("svc.go"),
+            "package svc\n\nimport \"fmt\"\n\ntype Handler struct{}\n\nfunc Serve() { fmt.Println(\"ok\") }\n\nfunc (h Handler) Route() { Serve() }\n",
+        )
+        .expect("go");
+        fs::write(
+            root.join("App.java"),
+            "import java.util.List;\npublic class App {\n  public void boot() { helper(); }\n  private void helper() {}\n}\ninterface Api {}\n",
+        )
+        .expect("java");
+        fs::write(
+            root.join("Main.kt"),
+            "import kotlin.io.println\n\nclass Session {}\n\nfun launch() { println(\"go\") }\n",
+        )
+        .expect("kotlin");
+        fs::write(
+            root.join("GUIDE.md"),
+            "# Operations guide\n\nIntro.\n\n## Deploy steps\n\n```sh\n# not a heading\n```\n\n## Rollback\n",
+        )
+        .expect("markdown");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let project = ProjectRegistry::new(database.clone())
+            .resolve_or_register(&root)
+            .expect("project");
+        let world = WorldModel::new(database);
+        let provider = TreeSitterProvider::new(100, 1_000_000, 10_000, 20_000, 16_000_000);
+        let report = world.index(&provider, &project, None).expect("index");
+        assert_eq!(report.parsed_files, 4);
+
+        let find = |query: &str| {
+            world
+                .search_symbols(&project.project.id, query, 10)
+                .expect("search")
+        };
+        assert!(find("Serve").iter().any(|n| n.kind == "Function"), "go fn");
+        assert!(find("Handler").iter().any(|n| n.kind == "Type"), "go type");
+        assert!(
+            find("Route").iter().any(|n| n.kind == "Method"),
+            "go method"
+        );
+        assert!(find("App").iter().any(|n| n.kind == "Type"), "java class");
+        assert!(
+            find("Api").iter().any(|n| n.kind == "Interface"),
+            "java interface"
+        );
+        assert!(
+            find("boot").iter().any(|n| n.kind == "Method"),
+            "java method"
+        );
+        assert!(
+            find("Session").iter().any(|n| n.kind == "Type"),
+            "kotlin class"
+        );
+        assert!(
+            find("launch").iter().any(|n| n.kind == "Function"),
+            "kotlin fn"
+        );
+        assert!(
+            find("Deploy steps").iter().any(|n| n.kind == "Section"),
+            "markdown heading"
+        );
+        assert!(
+            find("not a heading").is_empty(),
+            "fenced code lines are not sections"
+        );
     }
 
     #[test]

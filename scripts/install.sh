@@ -69,6 +69,7 @@ done
 MANIFEST_TMP="${INSTALL_STATE_DIR}/.install-manifest.json.$$"
 {
   printf '{\n  "version": "0.1.0",\n  "source_hash": "%s",\n' "${SOURCE_HASH}"
+  printf '  "source_dir": "%s",\n' "${PROJECT_ROOT}"
   printf '  "release_dir": "%s",\n  "sha256": {\n' "${RELEASE_DIR}"
   first=1
   for binary in leb lebd leb-proxy leb-mcp claude-mtplx claude-mtplx-quality; do

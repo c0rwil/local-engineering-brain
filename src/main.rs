@@ -221,8 +221,14 @@ enum Commands {
     /// reads the hook JSON on stdin and always exits 0 - fail open).
     #[command(hide = true)]
     Hook {
-        /// `prompt` (`UserPromptSubmit`) or `bash` (`PostToolUse` for Bash).
+        /// `session-start`, `prompt` (`UserPromptSubmit`), `pretool`
+        /// (`PreToolUse` for Read/Edit/Write), `bash` (`PostToolUse` for
+        /// Bash), or `session-end`.
         event: String,
+        /// Emit context as `hookSpecificOutput.additionalContext` JSON (the
+        /// Codex CLI contract) instead of plain stdout.
+        #[arg(long)]
+        codex: bool,
     },
 
     /// Install or inspect the stock-agent integration (hooks + MCP).
@@ -278,6 +284,15 @@ enum Commands {
         push_only: bool,
         #[arg(long)]
         json: bool,
+    },
+
+    /// Update LEB in place: pull the recorded source checkout and rebuild
+    /// through the atomic installer. The daemon restarts on the next CLI
+    /// call, so a running session keeps the binary it started with.
+    Update {
+        /// Only report whether an update is available; change nothing.
+        #[arg(long)]
+        check: bool,
     },
 
     /// Manage skill packs: agent-native skills (`<name>/SKILL.md`)
@@ -442,7 +457,13 @@ enum HooksAction {
     /// Print the hooks JSON without writing anything.
     Show,
     /// Print Codex setup: AGENTS.md snippet target and MCP configuration.
-    Codex,
+    Codex {
+        /// Also write the automatic hooks into ~/.codex/hooks.json
+        /// (session brief, context injection, file shapes, evidence
+        /// capture — the same loop stock `claude` gets).
+        #[arg(long)]
+        install: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -710,9 +731,12 @@ fn run(cli: Cli) -> Result<bool> {
             json,
         ),
         Commands::Fact { action } => run_fact(&overrides, socket_override.as_deref(), &action),
-        Commands::Hook { event } => run_hook_event(&overrides, socket_override.as_deref(), &event),
+        Commands::Hook { event, codex } => {
+            run_hook_event(&overrides, socket_override.as_deref(), &event, codex)
+        }
         Commands::Hooks { action } => run_hooks_action(&action),
         Commands::Skills { action } => run_skills_action(&action),
+        Commands::Update { check } => run_update(check),
         Commands::AgentMd {
             install,
             global,
@@ -2027,8 +2051,27 @@ After accepted work that surfaced a durable rule:
 /// Hook runtime. EVERY failure path prints nothing and returns Ok: a broken
 /// or absent brain must never break the user's coding session.
 #[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
-fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &str) -> Result<bool> {
+fn run_hook_event(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    event: &str,
+    codex: bool,
+) -> Result<bool> {
     use std::io::Read as _;
+    // One emitter for every context-bearing event: plain stdout for Claude
+    // Code (its native contract for SessionStart/UserPromptSubmit), the
+    // additionalContext envelope for Codex — and for PreToolUse everywhere,
+    // where plain stdout is not read back into context.
+    let emit = |event_name: &str, context: &str| {
+        if codex || event_name == "PreToolUse" {
+            println!(
+                "{}",
+                leb::agenthooks::additional_context_output(event_name, context)
+            );
+        } else {
+            println!("{context}");
+        }
+    };
     let mut stdin = String::new();
     if std::io::stdin().read_to_string(&mut stdin).is_err() {
         return Ok(true);
@@ -2123,7 +2166,98 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
             }
             let injected = format!("{}{}", context.stable_prefix, context.dynamic_context);
             if !injected.trim().is_empty() {
-                println!("{injected}");
+                emit("UserPromptSubmit", &injected);
+            }
+        }
+        "session-start" => {
+            let Ok(lookup) = block_on(client.lookup_project(&cwd)) else {
+                return Ok(true);
+            };
+            let Some(project) = lookup.project else {
+                // Untracked repo: one opt-in line (never auto-enroll). Only
+                // for actual git repositories — a bare folder stays silent.
+                if cwd.join(".git").exists() {
+                    emit(
+                        "SessionStart",
+                        "LEB: this repository is not tracked by the engineering brain. \
+                         Run `leb index .` once to enroll it (context injection, evidence \
+                         capture, and the workspace encyclopedia activate automatically).",
+                    );
+                }
+                return Ok(true);
+            };
+            let Ok(brief) = block_on(client.tasks_brief(&project.id)) else {
+                return Ok(true);
+            };
+            let open: Vec<(String, String, i64)> = brief
+                .open
+                .iter()
+                .map(|task| (task.id.clone(), task.prompt.clone(), task.started_at_ms))
+                .collect();
+            let last_completed = brief
+                .last_completed
+                .as_ref()
+                .map(|task| (task.status.as_str(), task.prompt.as_str()));
+            let now_ms = i64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_millis())
+                    .unwrap_or_default(),
+            )
+            .unwrap_or(i64::MAX);
+            if let Some(text) =
+                leb::agenthooks::render_session_brief(&project.name, &open, last_completed, now_ms)
+            {
+                emit("SessionStart", &text);
+            }
+        }
+        "pretool" => {
+            let tool_input = payload.get("tool_input").cloned().unwrap_or_default();
+            let Some(file_path) = leb::agenthooks::extract_file_path(&tool_input) else {
+                return Ok(true);
+            };
+            let Ok(lookup) = block_on(client.lookup_project(&cwd)) else {
+                return Ok(true);
+            };
+            let Some(project) = lookup.project else {
+                return Ok(true);
+            };
+            // Repo-relative path: the graph stores paths relative to the root.
+            let absolute = if Path::new(&file_path).is_absolute() {
+                PathBuf::from(&file_path)
+            } else {
+                cwd.join(&file_path)
+            };
+            let Ok(root) = discover_project_root(&cwd) else {
+                return Ok(true);
+            };
+            let Ok(relative) = absolute.strip_prefix(&root) else {
+                return Ok(true); // outside the repo: nothing to know
+            };
+            let relative = relative.to_string_lossy().into_owned();
+            if !leb::agenthooks::mark_file_briefed(&state_dir, &session_id, &relative) {
+                return Ok(true); // already briefed this session
+            }
+            let Ok(shape) = block_on(client.file_shape(&leb::daemon::FileShapeRequest {
+                project_id: project.id,
+                file_path: relative.clone(),
+            })) else {
+                return Ok(true);
+            };
+            let symbols: Vec<(String, String)> = shape
+                .symbols
+                .iter()
+                .map(|symbol| (symbol.kind.clone(), symbol.label.clone()))
+                .collect();
+            let callers: Vec<(String, String)> = shape
+                .callers
+                .iter()
+                .map(|caller| (caller.label.clone(), caller.file_path.clone()))
+                .collect();
+            if let Some(text) =
+                leb::agenthooks::render_file_shape(&relative, &symbols, &callers, &shape.imports)
+            {
+                emit("PreToolUse", &text);
             }
         }
         "session-end" => {
@@ -2150,6 +2284,8 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
             ));
             let _ =
                 std::fs::remove_file(leb::agenthooks::session_state_path(&state_dir, &session_id));
+            let _ =
+                std::fs::remove_file(leb::agenthooks::session_files_path(&state_dir, &session_id));
         }
         "bash" => {
             let command = payload
@@ -2199,6 +2335,90 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
         }
         _ => {}
     }
+    Ok(true)
+}
+
+fn run_update(check: bool) -> Result<bool> {
+    let manifest_path = dirs_home()
+        .join(".local/share/leb")
+        .join("install-manifest.json");
+    let manifest = std::fs::read_to_string(&manifest_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .ok_or_else(|| {
+            leb::error::Error::Config(format!(
+                "no install manifest at {} — run scripts/install.sh once first",
+                manifest_path.display()
+            ))
+        })?;
+    let Some(source_dir) = manifest
+        .get("source_dir")
+        .and_then(serde_json::Value::as_str)
+        .map(PathBuf::from)
+        .filter(|dir| dir.join("scripts/install.sh").is_file())
+    else {
+        return Err(leb::error::Error::Config(
+            "install manifest predates `leb update` (no source_dir) — \
+             re-run scripts/install.sh from the LEB checkout once, then \
+             `leb update` works from anywhere"
+                .to_owned(),
+        ));
+    };
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&source_dir)
+            .args(args)
+            .output()
+            .map_err(|error| leb::error::Error::Config(format!("git: {error}")))
+    };
+    let fetch = git(&["fetch", "--quiet"])?;
+    if !fetch.status.success() {
+        return Err(leb::error::Error::Config(format!(
+            "git fetch in {} failed: {}",
+            source_dir.display(),
+            String::from_utf8_lossy(&fetch.stderr).trim()
+        )));
+    }
+    let behind = git(&["rev-list", "--count", "HEAD..@{upstream}"])?;
+    let behind_count = String::from_utf8_lossy(&behind.stdout)
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
+    if check {
+        if behind_count == 0 {
+            println!("Up to date (source checkout matches upstream).");
+        } else {
+            println!("Update available: {behind_count} commit(s) behind. Run `leb update`.");
+        }
+        return Ok(true);
+    }
+    if behind_count > 0 {
+        let pull = git(&["pull", "--ff-only", "--quiet"])?;
+        if !pull.status.success() {
+            return Err(leb::error::Error::Config(format!(
+                "git pull --ff-only failed (local changes or divergence): {}",
+                String::from_utf8_lossy(&pull.stderr).trim()
+            )));
+        }
+        println!("Pulled {behind_count} commit(s).");
+    } else {
+        println!("Source already current; rebuilding to match.");
+    }
+    let status = std::process::Command::new("sh")
+        .arg(source_dir.join("scripts/install.sh"))
+        .status()
+        .map_err(|error| leb::error::Error::Config(format!("installer: {error}")))?;
+    if !status.success() {
+        return Err(leb::error::Error::Config(
+            "installer failed — the previous release remains active".to_owned(),
+        ));
+    }
+    println!(
+        "Updated. Restart the daemon when convenient (`leb daemon stop`; the next \
+         CLI call starts the new binary) — running sessions keep the binary they \
+         started with."
+    );
     Ok(true)
 }
 
@@ -2286,6 +2506,33 @@ fn run_skills_action(action: &SkillsAction) -> Result<bool> {
     Ok(true)
 }
 
+fn install_codex_hooks() -> Result<()> {
+    let hooks_path = dirs_home().join(".codex").join("hooks.json");
+    let mut document = std::fs::read_to_string(&hooks_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let hooks = leb::agenthooks::codex_hooks_json("leb");
+    if let (Some(object), Some(new_hooks)) = (document.as_object_mut(), hooks.as_object()) {
+        for (event, value) in new_hooks {
+            object.insert(event.clone(), value.clone());
+        }
+    }
+    if let Some(parent) = hooks_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| leb::error::Error::Config(format!("codex dir: {error}")))?;
+    }
+    std::fs::write(&hooks_path, serde_json::to_string_pretty(&document)?)
+        .map_err(|error| leb::error::Error::Config(format!("codex hooks: {error}")))?;
+    println!(
+        "Wrote {} — Codex sessions now get the full automatic loop \
+         (session brief, context injection, file shapes, evidence capture, \
+         auto-close) via hookSpecificOutput.additionalContext.",
+        hooks_path.display()
+    );
+    Ok(())
+}
+
 fn run_hooks_action(action: &HooksAction) -> Result<bool> {
     let hooks = leb::agenthooks::claude_hooks_json("leb");
     match action {
@@ -2309,9 +2556,8 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
                 .get("hooks")
                 .map(std::string::ToString::to_string)
                 .unwrap_or_default();
-            if existing.contains("leb hook") {
-                println!("{}: hooks already installed", settings_path.display());
-            } else {
+            let refreshed = existing.contains("leb hook");
+            {
                 let hooks_slot = settings
                     .as_object_mut()
                     .ok_or_else(|| {
@@ -2322,6 +2568,14 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
                 let hooks_object = hooks_slot.as_object_mut().ok_or_else(|| {
                     leb::Error::Config("settings.json hooks is not an object".to_owned())
                 })?;
+                // Refresh in place: drop previously installed leb entries so
+                // upgrades ship new hook events, then add the current set.
+                // Foreign (non-leb) hook entries are preserved untouched.
+                for slot in hooks_object.values_mut() {
+                    if let Some(entries) = slot.as_array_mut() {
+                        entries.retain(|entry| !entry.to_string().contains("leb hook"));
+                    }
+                }
                 for (event, entries) in hooks.as_object().into_iter().flatten() {
                     let slot = hooks_object
                         .entry(event.clone())
@@ -2332,13 +2586,18 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
                         target.extend(additions.iter().cloned());
                     }
                 }
+                hooks_object.retain(|_, slot| slot.as_array().is_none_or(|a| !a.is_empty()));
                 std::fs::write(
                     &settings_path,
                     serde_json::to_string_pretty(&settings)
                         .map_err(|error| leb::Error::Config(error.to_string()))?,
                 )
                 .map_err(|error| leb::Error::Config(format!("settings write: {error}")))?;
-                println!("{}: hooks installed", settings_path.display());
+                println!(
+                    "{}: hooks {}",
+                    settings_path.display(),
+                    if refreshed { "refreshed" } else { "installed" }
+                );
             }
             if *global {
                 println!(
@@ -2355,12 +2614,16 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
                 );
             }
         }
-        HooksAction::Codex => {
+        HooksAction::Codex { install } => {
+            if *install {
+                install_codex_hooks()?;
+            }
             println!(
                 "Codex setup:\n\n1. MCP server (once, in ~/.codex/config.toml):\n\n\
                  [mcp_servers.leb]\ncommand = \"leb-mcp\"\n\n\
                  2. Per repo, install the agent loop instructions into AGENTS.md:\n\n\
                  leb agent-md --install <repo> --file AGENTS.md\n\n\
+                 3. Automatic hooks (recommended): leb hooks codex --install\n\n\
                  Codex reads AGENTS.md automatically and reaches the brain through MCP\n\
                  (recall, workspace map, symbol search, episode recording)."
             );

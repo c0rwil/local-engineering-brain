@@ -65,6 +65,8 @@ const API_DOCTOR: &str = "/api/v1/admin/doctor";
 const API_SHUTDOWN: &str = "/api/v1/admin/shutdown";
 const API_RESOLVE_PROJECT: &str = "/api/v1/projects/resolve";
 const API_LOOKUP_PROJECT: &str = "/api/v1/projects/lookup";
+const API_FILE_SHAPE: &str = "/api/v1/world/file-shape";
+const API_TASKS_BRIEF: &str = "/api/v1/tasks/brief";
 const API_INDEX_PROJECT: &str = "/api/v1/projects/index";
 const API_WORLD_SEARCH: &str = "/api/v1/world/search";
 const API_CONTEXT_COMPILE: &str = "/api/v1/context/compile";
@@ -321,6 +323,58 @@ pub struct ProjectResolveRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectLookupResponse {
     pub project: Option<ProjectRecord>,
+}
+
+/// Request for the graph shape of one file (repo-relative path).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FileShapeRequest {
+    pub project_id: ProjectId,
+    pub file_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FileShapeSymbol {
+    pub kind: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FileShapeCaller {
+    pub label: String,
+    pub file_path: String,
+}
+
+/// The graph's answer to "what is the file about to be touched": the
+/// symbols it defines, who calls into it from elsewhere, and what it
+/// imports. Powers pre-tool context injection.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FileShape {
+    pub symbols: Vec<FileShapeSymbol>,
+    pub callers: Vec<FileShapeCaller>,
+    pub imports: Vec<String>,
+}
+
+/// Request for a project's session brief of episodic state.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TasksBriefRequest {
+    pub project_id: ProjectId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TaskBriefItem {
+    pub id: String,
+    pub prompt: String,
+    pub status: String,
+    pub started_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+}
+
+/// Open episodes (handoffs to resurface) plus the most recently completed
+/// one, for the session-start standing brief.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TasksBrief {
+    pub open: Vec<TaskBriefItem>,
+    pub last_completed: Option<TaskBriefItem>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -867,6 +921,32 @@ impl DaemonClient {
             API_RESOLVE_PROJECT,
             Some(&ProjectResolveRequest {
                 path: path.to_path_buf(),
+            }),
+        )
+        .await
+    }
+
+    /// Graph shape of one file: defined symbols, external callers, imports.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage-read errors.
+    pub async fn file_shape(&self, request: &FileShapeRequest) -> Result<FileShape> {
+        self.request(hyper::Method::POST, API_FILE_SHAPE, Some(request))
+            .await
+    }
+
+    /// Open episodes + last completed one, for the session-start brief.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage-read errors.
+    pub async fn tasks_brief(&self, project_id: &ProjectId) -> Result<TasksBrief> {
+        self.request(
+            hyper::Method::POST,
+            API_TASKS_BRIEF,
+            Some(&TasksBriefRequest {
+                project_id: project_id.clone(),
             }),
         )
         .await
@@ -1684,6 +1764,8 @@ where
         .route(API_PROJECT_EXPORT, post(export_project_handler))
         .route(API_RESOLVE_PROJECT, post(resolve_project))
         .route(API_LOOKUP_PROJECT, post(lookup_project))
+        .route(API_FILE_SHAPE, post(file_shape))
+        .route(API_TASKS_BRIEF, post(tasks_brief))
         .route(API_INDEX_PROJECT, post(index_project))
         .route(API_WORLD_SEARCH, post(search_world))
         .route(API_WORLD_NEIGHBORS, post(world_neighbors))
@@ -2042,6 +2124,134 @@ async fn export_project_handler(
     })
     .await?;
     Ok(Json(report))
+}
+
+async fn file_shape(
+    State(state): State<DaemonState>,
+    Json(request): Json<FileShapeRequest>,
+) -> std::result::Result<Json<FileShape>, ApiError> {
+    if request.file_path.len() > 500 {
+        return Err(ApiError::from_core(&Error::Config(
+            "file path too long".to_owned(),
+        )));
+    }
+    let database = state.database.clone();
+    let shape = run_blocking(&state, move || {
+        database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT kind, label FROM nodes
+                 WHERE project_id = ?1 AND file_path = ?2 AND tombstoned_at_ms IS NULL
+                   AND kind IN ('Function', 'Type', 'Interface', 'Method', 'Module', 'Section')
+                 ORDER BY start_byte LIMIT 40",
+            )?;
+            let symbols = statement
+                .query_map(
+                    rusqlite::params![request.project_id.as_str(), request.file_path],
+                    |row| {
+                        Ok(FileShapeSymbol {
+                            kind: row.get(0)?,
+                            label: row.get(1)?,
+                        })
+                    },
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            // Tree-sitter records a CALLS target as an ExternalReference in
+            // the REFERENCING file; recover this file's callers by matching
+            // reference labels to the definitions here (same resolution the
+            // vault uses, but filtered to one file — milliseconds).
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT caller.label, caller.file_path FROM edges e
+                 JOIN nodes caller ON caller.id = e.source_id
+                 JOIN nodes target ON target.id = e.target_id
+                 LEFT JOIN nodes defined ON target.kind = 'ExternalReference'
+                    AND defined.project_id = e.project_id
+                    AND defined.kind IN ('Function', 'Type', 'Interface', 'Method')
+                    AND defined.label = target.label
+                    AND defined.tombstoned_at_ms IS NULL
+                 WHERE e.project_id = ?1 AND e.relation = 'CALLS'
+                   AND e.tombstoned_at_ms IS NULL
+                   AND caller.tombstoned_at_ms IS NULL
+                   AND caller.file_path IS NOT NULL AND caller.file_path != ?2
+                   AND COALESCE(defined.file_path, target.file_path) = ?2
+                 ORDER BY caller.file_path, caller.label LIMIT 25",
+            )?;
+            let callers = statement
+                .query_map(
+                    rusqlite::params![request.project_id.as_str(), request.file_path],
+                    |row| {
+                        Ok(FileShapeCaller {
+                            label: row.get(0)?,
+                            file_path: row.get(1)?,
+                        })
+                    },
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT target.label FROM edges e
+                 JOIN nodes source ON e.source_id = source.id
+                 JOIN nodes target ON e.target_id = target.id
+                 WHERE e.project_id = ?1 AND e.relation = 'IMPORTS'
+                   AND source.file_path = ?2 AND target.tombstoned_at_ms IS NULL
+                 ORDER BY target.label LIMIT 20",
+            )?;
+            let imports = statement
+                .query_map(
+                    rusqlite::params![request.project_id.as_str(), request.file_path],
+                    |row| row.get::<_, String>(0),
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(FileShape {
+                symbols,
+                callers,
+                imports,
+            })
+        })
+    })
+    .await?;
+    Ok(Json(shape))
+}
+
+async fn tasks_brief(
+    State(state): State<DaemonState>,
+    Json(request): Json<TasksBriefRequest>,
+) -> std::result::Result<Json<TasksBrief>, ApiError> {
+    let database = state.database.clone();
+    let brief = run_blocking(&state, move || {
+        database.with_reader(|connection| {
+            fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskBriefItem> {
+                Ok(TaskBriefItem {
+                    id: row.get(0)?,
+                    prompt: row.get(1)?,
+                    status: row.get(2)?,
+                    started_at_ms: row.get(3)?,
+                    completed_at_ms: row.get(4)?,
+                })
+            }
+            let mut statement = connection.prepare(
+                "SELECT id, prompt, status, started_at_ms, completed_at_ms FROM tasks
+                 WHERE project_id = ?1 AND status = 'open'
+                 ORDER BY started_at_ms DESC LIMIT 5",
+            )?;
+            let open = statement
+                .query_map([request.project_id.as_str()], row_to_item)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let mut statement = connection.prepare(
+                "SELECT id, prompt, status, started_at_ms, completed_at_ms FROM tasks
+                 WHERE project_id = ?1 AND status != 'open'
+                 ORDER BY completed_at_ms DESC LIMIT 1",
+            )?;
+            let last_completed = statement
+                .query_map([request.project_id.as_str()], row_to_item)?
+                .next()
+                .transpose()?;
+            Ok(TasksBrief {
+                open,
+                last_completed,
+            })
+        })
+    })
+    .await?;
+    Ok(Json(brief))
 }
 
 async fn lookup_project(
@@ -4244,6 +4454,89 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("daemon did not become ready");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn daemon_serves_file_shape_and_tasks_brief() {
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        std::fs::write(
+            project.join("engine.rs"),
+            "pub fn run() {}\npub struct Engine;\n",
+        )
+        .expect("engine");
+        std::fs::write(project.join("caller.rs"), "fn boot() { run(); }\n").expect("caller");
+        let config = test_config(&temp);
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+
+        let status = client.resolve_project(&project).await.expect("resolve");
+        let project_id = status.resolved.project.id.clone();
+        client.index_project(&project, None).await.expect("index");
+
+        let shape = client
+            .file_shape(&FileShapeRequest {
+                project_id: project_id.clone(),
+                file_path: "engine.rs".to_owned(),
+            })
+            .await
+            .expect("file shape");
+        assert!(shape.symbols.iter().any(|s| s.label == "run"));
+        assert!(shape.symbols.iter().any(|s| s.label == "Engine"));
+        assert!(
+            shape
+                .callers
+                .iter()
+                .any(|c| c.label == "boot" && c.file_path == "caller.rs"),
+            "cross-file caller resolved by label: {:?}",
+            shape.callers
+        );
+
+        let unknown = client
+            .file_shape(&FileShapeRequest {
+                project_id: project_id.clone(),
+                file_path: "missing.rs".to_owned(),
+            })
+            .await
+            .expect("unknown file");
+        assert!(unknown.symbols.is_empty() && unknown.callers.is_empty());
+
+        let task = client
+            .start_task(&TaskStartRequest {
+                project_id: project_id.clone(),
+                prompt: "wire the engine into the scheduler".to_owned(),
+                session_id: None,
+            })
+            .await
+            .expect("start task");
+        let brief = client.tasks_brief(&project_id).await.expect("brief");
+        assert_eq!(brief.open.len(), 1);
+        assert_eq!(brief.open[0].id, task.id.as_str());
+        assert!(brief.last_completed.is_none());
+
+        client
+            .finish_task(
+                &task.id,
+                &TaskFinishRequest {
+                    outcome: TaskOutcome::Success,
+                    accepted_by_user: Some(true),
+                    final_commit: None,
+                },
+            )
+            .await
+            .expect("finish");
+        let brief = client.tasks_brief(&project_id).await.expect("brief 2");
+        assert!(brief.open.is_empty());
+        assert_eq!(brief.last_completed.expect("completed").status, "success");
+
+        let _ = shutdown_sender.send(());
+        let _ = server.await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

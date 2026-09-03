@@ -25,6 +25,8 @@ path, ever.
 | Workspace encyclopedia (browser UI) | always on at http://127.0.0.1:11436 while the daemon runs (`[web]` config); `leb web` for a custom port. Refresh buttons index origin/main by default |
 | Architecture guide (LLM synthesis) | `leb architect --claude` (opus via claude CLI) or `--model <m>` (local runtime); guide staleness tracked by dossier digest |
 | Link repos (cross-repo context) | `leb link add <target> --path <repo> --relation uses` / `leb link list` / auto-discovery: `leb link scan [--apply]` (definitive manifest deps auto-link on every `leb index`) |
+| Self-update | `leb update` (pulls the recorded source checkout, atomic reinstall; `--check` reports only) |
+| Codex automatic loop | `leb hooks codex --install` writes `~/.codex/hooks.json` (context via `hookSpecificOutput.additionalContext`) |
 | Skill packs (agent-native skills) | `leb skills add <git-url>` fetches into `~/.leb/skillpacks/` and installs each `SKILL.md` skill into every detected agent (`~/.claude/skills`, `~/.codex/skills`); `list` / `update` / `install` / `remove`. LEB-installed skills carry a `.leb-skillpack` marker — hand-written skills are never clobbered |
 
 Tests are hermetic: no network, no live model, no pre-existing daemon needed.

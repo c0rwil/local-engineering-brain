@@ -66,10 +66,11 @@ leb onboard ~/code                 # registers, indexes, auto-links, vault
 open http://127.0.0.1:11436        # served by the daemon whenever it runs
 
 # Make stock `claude` sessions draw from and feed the brain — once, machine-wide:
-leb hooks install --global         # user-level hooks (~/.claude/settings.json);
-                                   # silent no-op in repos LEB does not track
+leb hooks install --global         # user-level hooks: session brief, context
+                                   # injection, pre-read file shapes, evidence
+                                   # capture; silent no-op in untracked repos
 leb agent-md --global              # the agent tool loop, in ~/.claude/CLAUDE.md
-leb hooks codex                    # Codex: MCP + AGENTS.md instructions
+leb hooks codex --install          # Codex: the same automatic hook loop
 # (or per repo: leb hooks install <repo> / leb agent-md --install <repo>)
 
 # Distribute agent-native skills to every agent on the machine:

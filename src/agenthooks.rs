@@ -15,6 +15,7 @@
 //!
 //! Every hook fails OPEN: a broken brain must never break a coding session.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,135 @@ pub struct HookSession {
 #[must_use]
 pub fn evidence_fingerprint(command: &str, exit_code: i32) -> String {
     format!("{exit_code}:{}", command.trim())
+}
+
+/// Pull the file path out of a tool input (Read/Edit/Write shapes).
+#[must_use]
+pub fn extract_file_path(tool_input: &serde_json::Value) -> Option<String> {
+    for key in ["file_path", "filePath", "path", "notebook_path"] {
+        if let Some(path) = tool_input.get(key).and_then(serde_json::Value::as_str) {
+            if !path.trim().is_empty() {
+                return Some(path.to_owned());
+            }
+        }
+    }
+    None
+}
+
+/// Sidecar tracking which files a session has already been briefed on, so
+/// pre-tool shape injection fires once per file per session.
+#[must_use]
+pub fn session_files_path(state_dir: &Path, session_id: &str) -> PathBuf {
+    session_state_path(state_dir, session_id).with_extension("files")
+}
+
+/// Record `file_path` as briefed; returns false when it already was (skip).
+#[must_use]
+pub fn mark_file_briefed(state_dir: &Path, session_id: &str, file_path: &str) -> bool {
+    let path = session_files_path(state_dir, session_id);
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    if existing.lines().any(|line| line == file_path) {
+        return false;
+    }
+    if existing.lines().count() >= 200 {
+        return false; // hard cap: stop briefing rather than growing unbounded
+    }
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut updated = existing;
+    updated.push_str(file_path);
+    updated.push('\n');
+    std::fs::write(&path, updated).is_ok()
+}
+
+/// Wrap hook context in the `hookSpecificOutput.additionalContext` JSON
+/// envelope. Claude Code accepts it for PreToolUse/PostToolUse; Codex
+/// expects it for every event.
+#[must_use]
+pub fn additional_context_output(event_name: &str, context: &str) -> String {
+    serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": event_name,
+            "additionalContext": context,
+        }
+    })
+    .to_string()
+}
+
+/// Render the session-start standing brief from episodic state. Returns
+/// `None` when there is nothing worth saying (a quiet project stays quiet).
+#[must_use]
+pub fn render_session_brief(
+    project_name: &str,
+    open: &[(String, String, i64)],
+    last_completed: Option<(&str, &str)>,
+    now_ms: i64,
+) -> Option<String> {
+    if open.is_empty() && last_completed.is_none() {
+        return None;
+    }
+    let mut brief = format!("# LEB session brief — {project_name}\n");
+    if !open.is_empty() {
+        brief.push_str("Open episodes from earlier sessions (resume or close them):\n");
+        for (id, prompt, started_at_ms) in open.iter().take(3) {
+            let mut prompt: String = prompt.chars().take(110).collect();
+            if let Some(cut) = prompt.rfind(' ').filter(|_| prompt.len() >= 110) {
+                prompt.truncate(cut);
+            }
+            let age_hours = (now_ms.saturating_sub(*started_at_ms)) / 3_600_000;
+            let _ = writeln!(brief, "- [{id}] {prompt} ({age_hours}h ago)");
+        }
+    }
+    if let Some((status, prompt)) = last_completed {
+        let prompt: String = prompt.chars().take(90).collect();
+        let _ = writeln!(brief, "Last completed episode: {status} — {prompt}");
+    }
+    Some(brief)
+}
+
+/// Render a pre-tool file-shape brief. `None` when the graph knows nothing
+/// about the file (inject silence, not filler).
+#[must_use]
+pub fn render_file_shape(
+    file_path: &str,
+    symbols: &[(String, String)],
+    callers: &[(String, String)],
+    imports: &[String],
+) -> Option<String> {
+    if symbols.is_empty() && callers.is_empty() {
+        return None;
+    }
+    let mut brief = format!("# Graph shape: {file_path}\n");
+    if !symbols.is_empty() {
+        let listed: Vec<String> = symbols
+            .iter()
+            .take(20)
+            .map(|(kind, label)| format!("{label} ({kind})"))
+            .collect();
+        let _ = writeln!(brief, "Defines: {}", listed.join(", "));
+    }
+    if !callers.is_empty() {
+        let listed: Vec<String> = callers
+            .iter()
+            .take(12)
+            .map(|(label, file)| format!("{label} [{file}]"))
+            .collect();
+        let _ = writeln!(brief, "Called from elsewhere by: {}", listed.join(", "));
+    }
+    if !imports.is_empty() {
+        let _ = writeln!(
+            brief,
+            "Imports: {}",
+            imports
+                .iter()
+                .take(12)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    Some(brief)
 }
 
 /// Where a session's state lives (under the brain's state dir).
@@ -211,6 +341,13 @@ pub fn auto_close_outcome(last_verification_exit: Option<i32>) -> &'static str {
 #[must_use]
 pub fn claude_hooks_json(leb_binary: &str) -> serde_json::Value {
     serde_json::json!({
+        "SessionStart": [{
+            "hooks": [{
+                "type": "command",
+                "command": format!("{leb_binary} hook session-start"),
+                "timeout": 15
+            }]
+        }],
         "UserPromptSubmit": [{
             "hooks": [{
                 "type": "command",
@@ -218,8 +355,63 @@ pub fn claude_hooks_json(leb_binary: &str) -> serde_json::Value {
                 "timeout": 30
             }]
         }],
+        "PreToolUse": [{
+            "matcher": "Read|Edit|Write|MultiEdit",
+            "hooks": [{
+                "type": "command",
+                "command": format!("{leb_binary} hook pretool"),
+                "timeout": 10
+            }]
+        }],
         "PostToolUse": [{
             "matcher": "Bash",
+            "hooks": [{
+                "type": "command",
+                "command": format!("{leb_binary} hook bash"),
+                "timeout": 15
+            }]
+        }],
+        "SessionEnd": [{
+            "hooks": [{
+                "type": "command",
+                "command": format!("{leb_binary} hook session-end"),
+                "timeout": 15
+            }]
+        }]
+    })
+}
+
+/// The hooks block for Codex CLI (`~/.codex/hooks.json`): same events, same
+/// stdin shape, but context returns via `hookSpecificOutput.additionalContext`
+/// — the `--codex` flag switches the emitter. Evidence capture and session
+/// close are format-agnostic.
+#[must_use]
+pub fn codex_hooks_json(leb_binary: &str) -> serde_json::Value {
+    serde_json::json!({
+        "SessionStart": [{
+            "hooks": [{
+                "type": "command",
+                "command": format!("{leb_binary} hook session-start --codex"),
+                "timeout": 15
+            }]
+        }],
+        "UserPromptSubmit": [{
+            "hooks": [{
+                "type": "command",
+                "command": format!("{leb_binary} hook prompt --codex"),
+                "timeout": 30
+            }]
+        }],
+        "PreToolUse": [{
+            "matcher": "Read|Edit|Write",
+            "hooks": [{
+                "type": "command",
+                "command": format!("{leb_binary} hook pretool --codex"),
+                "timeout": 10
+            }]
+        }],
+        "PostToolUse": [{
+            "matcher": "Bash|shell",
             "hooks": [{
                 "type": "command",
                 "command": format!("{leb_binary} hook bash"),
@@ -303,6 +495,80 @@ mod tests {
         assert_eq!(first, evidence_fingerprint("  cargo test --lib  ", 0));
         assert_ne!(first, evidence_fingerprint("cargo test --lib", 1));
         assert_ne!(first, evidence_fingerprint("cargo test", 0));
+    }
+
+    #[test]
+    fn file_paths_extract_from_common_tool_shapes() {
+        assert_eq!(
+            extract_file_path(&serde_json::json!({"file_path": "src/a.rs"})).as_deref(),
+            Some("src/a.rs")
+        );
+        assert_eq!(
+            extract_file_path(&serde_json::json!({"filePath": "b.ts"})).as_deref(),
+            Some("b.ts")
+        );
+        assert_eq!(
+            extract_file_path(&serde_json::json!({"command": "ls"})),
+            None
+        );
+    }
+
+    #[test]
+    fn file_briefing_dedupes_per_session() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        assert!(mark_file_briefed(temp.path(), "s1", "src/a.rs"));
+        assert!(!mark_file_briefed(temp.path(), "s1", "src/a.rs"));
+        assert!(mark_file_briefed(temp.path(), "s1", "src/b.rs"));
+        assert!(
+            mark_file_briefed(temp.path(), "s2", "src/a.rs"),
+            "per-session"
+        );
+    }
+
+    #[test]
+    fn additional_context_envelope_is_well_formed() {
+        let output = additional_context_output("PreToolUse", "shape here");
+        let parsed: serde_json::Value = serde_json::from_str(&output).expect("json");
+        assert_eq!(parsed["hookSpecificOutput"]["hookEventName"], "PreToolUse");
+        assert_eq!(
+            parsed["hookSpecificOutput"]["additionalContext"],
+            "shape here"
+        );
+    }
+
+    #[test]
+    fn session_brief_renders_open_and_stays_silent_when_quiet() {
+        assert_eq!(render_session_brief("app", &[], None, 0), None);
+        let open = vec![(
+            "tsk_1".to_owned(),
+            "fix the flaky auth test".to_owned(),
+            0_i64,
+        )];
+        let brief = render_session_brief(
+            "app",
+            &open,
+            Some(("success", "add rate limits")),
+            7_200_000,
+        )
+        .expect("brief");
+        assert!(brief.contains("tsk_1"));
+        assert!(brief.contains("2h ago"));
+        assert!(brief.contains("success — add rate limits"));
+    }
+
+    #[test]
+    fn file_shape_renders_bounded_and_skips_unknown_files() {
+        assert_eq!(render_file_shape("x.rs", &[], &[], &[]), None);
+        let shape = render_file_shape(
+            "src/auth.rs",
+            &[("Function".to_owned(), "validate".to_owned())],
+            &[("login".to_owned(), "src/routes.rs".to_owned())],
+            &["crate::db".to_owned()],
+        )
+        .expect("shape");
+        assert!(shape.contains("validate (Function)"));
+        assert!(shape.contains("login [src/routes.rs]"));
+        assert!(shape.contains("crate::db"));
     }
 
     #[test]
