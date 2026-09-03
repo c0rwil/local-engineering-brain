@@ -32,6 +32,7 @@ pub mod retrieval;
 pub mod scheduler;
 pub mod security;
 pub mod semantic;
+pub mod skillpacks;
 pub mod storage;
 pub mod sync;
 pub mod synthesis;

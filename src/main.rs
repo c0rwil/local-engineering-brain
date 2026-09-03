@@ -280,6 +280,15 @@ enum Commands {
         json: bool,
     },
 
+    /// Manage skill packs: agent-native skills (`<name>/SKILL.md`)
+    /// distributed through LEB into every detected agent's user-level
+    /// skills directory (Claude Code, Codex), where they trigger natively
+    /// when relevant to the task at hand.
+    Skills {
+        #[command(subcommand)]
+        action: SkillsAction,
+    },
+
     /// Serve the local workspace browser (facts, links, architecture).
     Web {
         /// Loopback port to bind.
@@ -393,6 +402,28 @@ enum FactAction {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum SkillsAction {
+    /// Fetch a pack (git URL or local git repo) and install its skills
+    /// into every detected agent (Claude Code, Codex).
+    Add {
+        /// Git URL or local repository path.
+        source: String,
+        /// Pack name (defaults to the source's last path segment).
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// List fetched packs and the skills they carry.
+    List,
+    /// `git pull` every pack and re-install its skills everywhere.
+    Update,
+    /// Re-install all packs' skills into detected agents (e.g. after a new
+    /// agent is installed on the machine).
+    Install,
+    /// Uninstall a pack's skills from every agent and delete the pack.
+    Remove { name: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -681,6 +712,7 @@ fn run(cli: Cli) -> Result<bool> {
         Commands::Fact { action } => run_fact(&overrides, socket_override.as_deref(), &action),
         Commands::Hook { event } => run_hook_event(&overrides, socket_override.as_deref(), &event),
         Commands::Hooks { action } => run_hooks_action(&action),
+        Commands::Skills { action } => run_skills_action(&action),
         Commands::AgentMd {
             install,
             global,
@@ -2166,6 +2198,90 @@ fn run_hook_event(overrides: &ConfigOverrides, socket: Option<&Path>, event: &st
             );
         }
         _ => {}
+    }
+    Ok(true)
+}
+
+fn install_pack_everywhere(pack: &leb::skillpacks::SkillPack, home: &Path) -> Result<()> {
+    let targets = leb::skillpacks::detect_targets(home);
+    if targets.is_empty() {
+        println!("No agent installations detected (~/.claude or ~/.codex).");
+        return Ok(());
+    }
+    for target in &targets {
+        let outcomes = leb::skillpacks::install_into(pack, target)?;
+        for (skill, outcome) in outcomes {
+            let verb = match outcome {
+                leb::skillpacks::InstallOutcome::Installed => "installed",
+                leb::skillpacks::InstallOutcome::Updated => "updated",
+                leb::skillpacks::InstallOutcome::SkippedForeign => {
+                    "SKIPPED (a non-LEB skill of this name already exists)"
+                }
+            };
+            println!("  {}: {skill} {verb}", target.label);
+        }
+    }
+    Ok(())
+}
+
+fn run_skills_action(action: &SkillsAction) -> Result<bool> {
+    let home = dirs_home();
+    match action {
+        SkillsAction::Add { source, name } => {
+            let pack = leb::skillpacks::add(&home, source, name.as_deref())?;
+            let skills = leb::skillpacks::discover_skills(&pack.path)?;
+            println!(
+                "Fetched pack '{}' ({} skill{}).",
+                pack.name,
+                skills.len(),
+                if skills.len() == 1 { "" } else { "s" }
+            );
+            install_pack_everywhere(&pack, &home)?;
+            println!("Skills trigger natively when relevant; `leb skills update` refreshes them.");
+        }
+        SkillsAction::List => {
+            let packs = leb::skillpacks::list(&home)?;
+            if packs.is_empty() {
+                println!("No skill packs. `leb skills add <git-url>` fetches one.");
+            }
+            for pack in packs {
+                let source = pack.source.clone().unwrap_or_else(|| "local".to_owned());
+                println!("{} ({source})", pack.name);
+                for skill in leb::skillpacks::discover_skills(&pack.path)? {
+                    let description: String = skill.description.chars().take(96).collect();
+                    println!("  {} — {description}", skill.name);
+                }
+            }
+        }
+        SkillsAction::Update => {
+            for pack in leb::skillpacks::list(&home)? {
+                leb::skillpacks::update(&pack)?;
+                println!("Pulled '{}'.", pack.name);
+                install_pack_everywhere(&pack, &home)?;
+            }
+        }
+        SkillsAction::Install => {
+            for pack in leb::skillpacks::list(&home)? {
+                println!("Pack '{}':", pack.name);
+                install_pack_everywhere(&pack, &home)?;
+            }
+        }
+        SkillsAction::Remove { name } => {
+            let packs = leb::skillpacks::list(&home)?;
+            let Some(pack) = packs.into_iter().find(|pack| &pack.name == name) else {
+                return Err(leb::error::Error::Config(format!(
+                    "no skill pack named '{name}'"
+                )));
+            };
+            for target in leb::skillpacks::detect_targets(&home) {
+                for skill in leb::skillpacks::uninstall_from(&pack.name, &target)? {
+                    println!("  {}: {skill} removed", target.label);
+                }
+            }
+            std::fs::remove_dir_all(&pack.path)
+                .map_err(|error| leb::error::Error::Config(format!("remove pack: {error}")))?;
+            println!("Removed pack '{name}'.");
+        }
     }
     Ok(true)
 }

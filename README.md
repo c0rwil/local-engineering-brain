@@ -72,6 +72,12 @@ leb agent-md --global              # the agent tool loop, in ~/.claude/CLAUDE.md
 leb hooks codex                    # Codex: MCP + AGENTS.md instructions
 # (or per repo: leb hooks install <repo> / leb agent-md --install <repo>)
 
+# Distribute agent-native skills to every agent on the machine:
+leb skills add https://github.com/DietrichGebert/ponytail
+# installs each SKILL.md into ~/.claude/skills and ~/.codex/skills, where
+# Claude Code and Codex trigger them natively when relevant to the task;
+# `leb skills update` pulls and re-installs every pack.
+
 # Team setup (optional): docs/CENTRAL_SERVER.md — central source of truth
 # from origin/main, CI webhooks, and cross-instance brain sync (leb sync).
 ```
