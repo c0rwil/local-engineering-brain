@@ -78,8 +78,9 @@ leb skills add https://github.com/DietrichGebert/ponytail
 # Claude Code and Codex trigger them natively when relevant to the task;
 # `leb skills update` pulls and re-installs every pack.
 
-# Team setup (optional): docs/CENTRAL_SERVER.md — central source of truth
-# from origin/main, CI webhooks, and cross-instance brain sync (leb sync).
+# Day-to-day guide: docs/USER_GUIDE.md
+# Team/company rollout: docs/COMPANY_ROLLOUT.md (central source of truth
+# from origin/main, CI webhooks, cross-instance sync, incremental freshness).
 ```
 
 The atomic installer builds all four binaries (`leb`, `lebd`, `leb-proxy`, and `leb-mcp`), installs
