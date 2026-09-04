@@ -2308,15 +2308,20 @@ fn run_hook_event(
             let Some(project) = lookup.project else {
                 return Ok(true);
             };
-            // Repo-relative path: the graph stores paths relative to the root.
+            // Repo-relative path: the graph stores paths relative to the
+            // root. Canonicalize BOTH sides before stripping — the root
+            // comes back canonicalized, and a tool path through a symlink
+            // (macOS /tmp, notably) otherwise never matches it.
             let absolute = if Path::new(&file_path).is_absolute() {
                 PathBuf::from(&file_path)
             } else {
                 cwd.join(&file_path)
             };
+            let absolute = absolute.canonicalize().unwrap_or(absolute);
             let Ok(root) = discover_project_root(&cwd) else {
                 return Ok(true);
             };
+            let root = root.canonicalize().unwrap_or(root);
             let Ok(relative) = absolute.strip_prefix(&root) else {
                 return Ok(true); // outside the repo: nothing to know
             };

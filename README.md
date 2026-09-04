@@ -222,6 +222,7 @@ the CLI reports that limitation explicitly.
 
 ## Measured results
 
+Consolidated results with method notes: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 Every claim below is backed by a dated evidence file in
 [`docs/perf-evidence/`](docs/perf-evidence/) with pinned model identity,
 verified injection telemetry, and honest controls (brain-off is the same
