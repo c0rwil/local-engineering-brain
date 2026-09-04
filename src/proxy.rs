@@ -33,11 +33,11 @@ struct ProxyState {
     daemon: DaemonClient,
     runtime: reqwest::Client,
     runtime_base: String,
-    /// Byte-bounded process-local snapshot of the first compiled LEB block in
+    /// Byte-bounded process-local snapshot of the first compiled Engram block in
     /// each Claude Code session. Canonical memory remains daemon-owned.
     session_injections: Cache<SessionInjectionKey, CachedInjection>,
     /// Process-lifetime outcome counters; the proxy runs in its own process,
-    /// so it serves them itself from `GET /leb/metrics` on this listener.
+    /// so it serves them itself from `GET /engram/metrics` on this listener.
     metrics: Arc<ProxyMetrics>,
 }
 
@@ -125,7 +125,7 @@ impl IntoResponse for ProxyError {
             self.status,
             Json(json!({
                 "error": {
-                    "type": "leb_proxy_error",
+                    "type": "engram_proxy_error",
                     "message": self.message
                 }
             })),
@@ -189,7 +189,7 @@ where
         .map_err(|_| Error::Config("proxy request limit exceeds this platform".to_owned()))?;
     let router = Router::new()
         .route("/health", get(|| async { Json(json!({"status": "ok"})) }))
-        .route("/leb/metrics", get(proxy_metrics))
+        .route("/engram/metrics", get(proxy_metrics))
         .route("/v1/chat/completions", post(openai_chat))
         .route("/v1/messages", post(anthropic_messages))
         .layer(DefaultBodyLimit::max(max_body))
@@ -276,7 +276,7 @@ async fn proxy_request(
         None => {
             state.metrics.count_degraded();
             response.headers_mut().insert(
-                "x-leb-degraded",
+                "x-engram-degraded",
                 axum::http::HeaderValue::from_static("context_unavailable"),
             );
         }
@@ -297,9 +297,9 @@ fn insert_injection_telemetry(
 ) -> std::result::Result<(), ProxyError> {
     let bytes = telemetry.bytes.to_string();
     for (name, value) in [
-        ("x-leb-injection-sha256", telemetry.sha256.as_str()),
-        ("x-leb-injection-bytes", bytes.as_str()),
-        ("x-leb-session-cache", telemetry.session_cache.as_str()),
+        ("x-engram-injection-sha256", telemetry.sha256.as_str()),
+        ("x-engram-injection-bytes", bytes.as_str()),
+        ("x-engram-session-cache", telemetry.session_cache.as_str()),
     ] {
         let value = axum::http::HeaderValue::from_str(value).map_err(|error| {
             ProxyError::upstream(format!("invalid injection telemetry header: {error}"))
@@ -334,10 +334,10 @@ fn resolve_token_budget(
                 .max_injected_tokens
                 .min(state.config.context.max_injected_tokens)
         });
-    header_text(headers, "x-leb-token-budget")?
+    header_text(headers, "x-engram-token-budget")?
         .map(str::parse::<u32>)
         .transpose()
-        .map_err(|_| ProxyError::bad_request("x-leb-token-budget must be an integer"))
+        .map_err(|_| ProxyError::bad_request("x-engram-token-budget must be an integer"))
         .map(|budget| budget.unwrap_or(default_token_budget))
 }
 
@@ -348,19 +348,19 @@ async fn augment_request(
     body: &mut Value,
     flavor: ApiFlavor,
 ) -> std::result::Result<Augmentation, ProxyError> {
-    let mode = match header_text(headers, "x-leb-mode")? {
+    let mode = match header_text(headers, "x-engram-mode")? {
         None | Some("brain" | "on") => ContextMode::Brain,
         Some("off") => ContextMode::Off,
         Some(other) => {
             return Err(ProxyError::bad_request(format!(
-                "unsupported x-leb-mode `{other}`"
+                "unsupported x-engram-mode `{other}`"
             )));
         }
     };
     if mode == ContextMode::Off && !has_project_scope(headers) {
         return Ok(Augmentation::Forwarded);
     }
-    let current_paths = header_text(headers, "x-leb-current-paths")?
+    let current_paths = header_text(headers, "x-engram-current-paths")?
         .map(|paths| {
             paths
                 .split(',')
@@ -379,10 +379,10 @@ async fn augment_request(
         return Ok(Augmentation::Forwarded);
     };
     let token_budget = resolve_token_budget(state, headers, root.as_deref())?;
-    let framing = match header_text(headers, "x-leb-injection-framing")? {
+    let framing = match header_text(headers, "x-engram-injection-framing")? {
         None => None,
         Some(value) => Some(InjectionFraming::parse(value).ok_or_else(|| {
-            ProxyError::bad_request("x-leb-injection-framing must be `reference` or `directive`")
+            ProxyError::bad_request("x-engram-injection-framing must be `reference` or `directive`")
         })?),
     };
     let session_key = session_injection_key(headers, mode, &project_id, token_budget, framing)?;
@@ -461,7 +461,7 @@ async fn resolve_scope(
     mode: ContextMode,
     current_paths: &[String],
 ) -> std::result::Result<(ProjectId, Option<PathBuf>, Option<String>, Vec<String>), ProxyError> {
-    if let Some(path) = header_text(headers, "x-leb-project-path")? {
+    if let Some(path) = header_text(headers, "x-engram-project-path")? {
         let path = PathBuf::from(path);
         let status =
             state.daemon.resolve_project(&path).await.map_err(|error| {
@@ -489,7 +489,7 @@ async fn resolve_scope(
                     ProxyError::upstream(format!("source freshness refresh failed: {error}"))
                 })?;
         }
-        // No client sends x-leb-current-paths in practice; the repo's own
+        // No client sends x-engram-current-paths in practice; the repo's own
         // dirty files ARE the files being worked on, and they let the
         // structural-overlap ranking actually engage. Bounded, and only a
         // fallback: an explicit header always wins.
@@ -507,10 +507,10 @@ async fn resolve_scope(
         let head = git.and_then(|git| git.head);
         return Ok((project_id, Some(root), head, effective_paths));
     }
-    if let Some(id) = header_text(headers, "x-leb-project-id")? {
+    if let Some(id) = header_text(headers, "x-engram-project-id")? {
         if mode == ContextMode::Brain {
             return Err(ProxyError::bad_request(
-                "brain mode requires x-leb-project-path for source freshness verification",
+                "brain mode requires x-engram-project-path for source freshness verification",
             ));
         }
         return ProjectId::parse(id)
@@ -518,7 +518,7 @@ async fn resolve_scope(
             .map_err(|error| ProxyError::bad_request(error.to_string()));
     }
     Err(ProxyError::bad_request(
-        "brain mode requires x-leb-project-path or x-leb-project-id",
+        "brain mode requires x-engram-project-path or x-engram-project-id",
     ))
 }
 
@@ -612,7 +612,7 @@ fn inject_anthropic(body: &mut Value, context: &str) -> std::result::Result<(), 
         Some(Value::Array(mut blocks)) => {
             // Claude gateways assign protocol and cache semantics to the
             // caller's leading blocks. Preserve their content and ordering,
-            // then append LEB as an independent block.
+            // then append Engram as an independent block.
             blocks.push(context_block());
             object.insert("system".to_owned(), Value::Array(blocks));
         }
@@ -673,7 +673,7 @@ fn is_hop_response_header(name: &str) -> bool {
 }
 
 fn has_project_scope(headers: &HeaderMap) -> bool {
-    headers.contains_key("x-leb-project-path") || headers.contains_key("x-leb-project-id")
+    headers.contains_key("x-engram-project-path") || headers.contains_key("x-engram-project-id")
 }
 
 fn session_injection_key(
@@ -720,7 +720,7 @@ fn header_text<'a>(
 }
 
 fn is_hop_or_leb_header(name: &str) -> bool {
-    name.starts_with("x-leb-")
+    name.starts_with("x-engram-")
         || matches!(
             name,
             "host"
@@ -800,7 +800,7 @@ mod tests {
             "messages": [{"role": "user", "content": "fix it"}]
         });
         let original = body["system"].clone();
-        inject_anthropic(&mut body, "leb").expect("inject");
+        inject_anthropic(&mut body, "engram").expect("inject");
         let system = body["system"].as_array().expect("system blocks");
         assert_eq!(
             &system[..original.as_array().expect("original").len()],
@@ -809,7 +809,7 @@ mod tests {
         assert_eq!(system[0]["text"], "Claude Code attribution");
         assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
         assert_eq!(system[1]["text"], "existing instructions");
-        assert_eq!(system[2], json!({"type": "text", "text": "leb"}));
+        assert_eq!(system[2], json!({"type": "text", "text": "engram"}));
     }
 
     #[test]
@@ -818,12 +818,12 @@ mod tests {
             "system": "existing instructions",
             "messages": [{"role": "user", "content": "fix it"}]
         });
-        inject_anthropic(&mut body, "leb").expect("inject");
+        inject_anthropic(&mut body, "engram").expect("inject");
         assert_eq!(
             body["system"],
             json!([
                 {"type": "text", "text": "existing instructions"},
-                {"type": "text", "text": "leb"}
+                {"type": "text", "text": "engram"}
             ])
         );
     }
@@ -916,7 +916,7 @@ mod tests {
 
         let mut config = Config::default();
         config.storage.db_path = temp.path().join("brain.sqlite");
-        config.daemon.socket_path = temp.path().join("lebd.sock");
+        config.daemon.socket_path = temp.path().join("engramd.sock");
         config.proxy.runtime_url = format!("http://{runtime_address}");
         let proxy_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -962,8 +962,8 @@ mod tests {
             .header("x-api-key", "key-test")
             .header("anthropic-version", "2023-06-01")
             .header("anthropic-beta", "tools-test")
-            .header("x-leb-mode", "off")
-            .header("x-leb-private-control", "must-not-leak")
+            .header("x-engram-mode", "off")
+            .header("x-engram-private-control", "must-not-leak")
             .header("connection", "close")
             .json(&request)
             .send()
@@ -987,8 +987,8 @@ mod tests {
             assert_eq!(headers["x-api-key"], "key-test");
             assert_eq!(headers["anthropic-version"], "2023-06-01");
             assert_eq!(headers["anthropic-beta"], "tools-test");
-            assert!(!headers.contains_key("x-leb-mode"));
-            assert!(!headers.contains_key("x-leb-private-control"));
+            assert!(!headers.contains_key("x-engram-mode"));
+            assert!(!headers.contains_key("x-engram-private-control"));
             assert!(!headers.contains_key("connection"));
         }
 
@@ -1006,7 +1006,7 @@ mod tests {
         std::fs::create_dir(&project).expect("project");
         let mut config = Config::default();
         config.storage.db_path = temp.path().join("brain.sqlite");
-        config.daemon.socket_path = temp.path().join("lebd.sock");
+        config.daemon.socket_path = temp.path().join("engramd.sock");
         config.daemon.request_timeout_ms = 2_000;
 
         let captured = Arc::new(Mutex::new(Vec::<(HeaderMap, Value)>::new()));
@@ -1109,8 +1109,8 @@ mod tests {
         });
         let response = reqwest::Client::new()
             .post(format!("http://{proxy_address}/v1/chat/completions"))
-            .header("x-leb-project-path", project.to_string_lossy().as_ref())
-            .header("x-leb-mode", "brain")
+            .header("x-engram-project-path", project.to_string_lossy().as_ref())
+            .header("x-engram-mode", "brain")
             .header("x-claude-code-session-id", "session-stable-1")
             .header("authorization", "Bearer local-test")
             .json(&request)
@@ -1129,9 +1129,9 @@ mod tests {
                 .expect("request id"),
             "runtime-123"
         );
-        assert_eq!(response.headers()["x-leb-session-cache"], "miss");
-        let injection_hash = response.headers()["x-leb-injection-sha256"].clone();
-        let injection_bytes = response.headers()["x-leb-injection-bytes"].clone();
+        assert_eq!(response.headers()["x-engram-session-cache"], "miss");
+        let injection_hash = response.headers()["x-engram-injection-sha256"].clone();
+        let injection_bytes = response.headers()["x-engram-injection-bytes"].clone();
         assert_eq!(
             response.text().await.expect("stream body"),
             "data: {\"delta\":\"ok\"}\n\ndata: [DONE]\n\n"
@@ -1145,29 +1145,35 @@ mod tests {
         });
         let followup = reqwest::Client::new()
             .post(format!("http://{proxy_address}/v1/chat/completions"))
-            .header("x-leb-project-path", project.to_string_lossy().as_ref())
-            .header("x-leb-mode", "brain")
+            .header("x-engram-project-path", project.to_string_lossy().as_ref())
+            .header("x-engram-mode", "brain")
             .header("x-claude-code-session-id", "session-stable-1")
             .json(&followup_request)
             .send()
             .await
             .expect("follow-up request");
         assert_eq!(followup.status(), StatusCode::OK);
-        assert_eq!(followup.headers()["x-leb-session-cache"], "hit");
-        assert_eq!(followup.headers()["x-leb-injection-sha256"], injection_hash);
-        assert_eq!(followup.headers()["x-leb-injection-bytes"], injection_bytes);
+        assert_eq!(followup.headers()["x-engram-session-cache"], "hit");
+        assert_eq!(
+            followup.headers()["x-engram-injection-sha256"],
+            injection_hash
+        );
+        assert_eq!(
+            followup.headers()["x-engram-injection-bytes"],
+            injection_bytes
+        );
         let _ = followup.text().await.expect("follow-up body");
 
         let off = reqwest::Client::new()
             .post(format!("http://{proxy_address}/v1/chat/completions"))
-            .header("x-leb-mode", "off")
+            .header("x-engram-mode", "off")
             .header("x-claude-code-session-id", "session-stable-1")
             .json(&request)
             .send()
             .await
             .expect("off request");
         assert_eq!(off.status(), StatusCode::OK);
-        assert!(!off.headers().contains_key("x-leb-session-cache"));
+        assert!(!off.headers().contains_key("x-engram-session-cache"));
         let _ = off.text().await.expect("off response body");
         {
             let captured = captured.lock().expect("capture lock");
@@ -1184,22 +1190,25 @@ mod tests {
                 followup_request["messages"][0]
             );
             assert_eq!(captured[2].1, request);
-            assert!(!captured[0].0.contains_key("x-leb-project-path"));
+            assert!(!captured[0].0.contains_key("x-engram-project-path"));
         }
 
         daemon_stop_tx.send(()).expect("daemon stop");
         daemon_server.await.expect("daemon task").expect("daemon");
         let degraded = reqwest::Client::new()
             .post(format!("http://{proxy_address}/v1/chat/completions"))
-            .header("x-leb-project-path", project.to_string_lossy().as_ref())
-            .header("x-leb-mode", "brain")
+            .header("x-engram-project-path", project.to_string_lossy().as_ref())
+            .header("x-engram-mode", "brain")
             .json(&request)
             .send()
             .await
             .expect("fail-open request");
         assert_eq!(degraded.status(), StatusCode::OK);
         assert_eq!(
-            degraded.headers().get("x-leb-degraded").expect("degraded"),
+            degraded
+                .headers()
+                .get("x-engram-degraded")
+                .expect("degraded"),
             "context_unavailable"
         );
         let _ = degraded.text().await.expect("degraded response body");
@@ -1210,7 +1219,7 @@ mod tests {
         );
 
         let outcomes: crate::metrics::ProxyMetricsSnapshot = reqwest::Client::new()
-            .get(format!("http://{proxy_address}/leb/metrics"))
+            .get(format!("http://{proxy_address}/engram/metrics"))
             .send()
             .await
             .expect("proxy metrics request")
@@ -1242,14 +1251,17 @@ mod tests {
         )
         .expect("source");
         git(&project, &["init", "-q"]);
-        git(&project, &["config", "user.email", "leb@example.invalid"]);
-        git(&project, &["config", "user.name", "LEB Tests"]);
+        git(
+            &project,
+            &["config", "user.email", "engram@example.invalid"],
+        );
+        git(&project, &["config", "user.name", "Engram Tests"]);
         git(&project, &["add", "src/lib.rs"]);
         git(&project, &["commit", "-qm", "initial"]);
 
         let mut config = Config::default();
         config.storage.db_path = temp.path().join("brain.sqlite");
-        config.daemon.socket_path = temp.path().join("lebd.sock");
+        config.daemon.socket_path = temp.path().join("engramd.sock");
         config.daemon.request_timeout_ms = 5_000;
         let (daemon_stop_tx, daemon_stop_rx) = oneshot::channel::<()>();
         let daemon_config = config.clone();
@@ -1354,7 +1366,7 @@ mod tests {
         .expect("edit source");
         let response = reqwest::Client::new()
             .post(format!("http://{proxy_address}/v1/chat/completions"))
-            .header("x-leb-project-path", project.to_string_lossy().as_ref())
+            .header("x-engram-project-path", project.to_string_lossy().as_ref())
             .json(&json!({
                 "model": "local",
                 "messages": [{"role": "user", "content": "change the guard"}]
@@ -1412,22 +1424,25 @@ mod tests {
         )
         .expect("billing");
         git(&project, &["init", "-q"]);
-        git(&project, &["config", "user.email", "leb@example.invalid"]);
-        git(&project, &["config", "user.name", "LEB Tests"]);
+        git(
+            &project,
+            &["config", "user.email", "engram@example.invalid"],
+        );
+        git(&project, &["config", "user.name", "Engram Tests"]);
         git(&project, &["add", "."]);
         git(&project, &["commit", "-qm", "initial"]);
         // The single-slot cap must live in the SCOPED (repo) config: the
         // compile handler prefers it over the daemon's global config.
-        std::fs::create_dir_all(project.join(".leb")).expect("scoped dir");
+        std::fs::create_dir_all(project.join(".engram")).expect("scoped dir");
         std::fs::write(
-            project.join(".leb/config.toml"),
+            project.join(".engram/config.toml"),
             "[context]\nmax_injected_memories = 1\n",
         )
         .expect("scoped config");
 
         let mut config = Config::default();
         config.storage.db_path = temp.path().join("brain.sqlite");
-        config.daemon.socket_path = temp.path().join("lebd.sock");
+        config.daemon.socket_path = temp.path().join("engramd.sock");
         config.daemon.request_timeout_ms = 5_000;
         let (daemon_stop_tx, daemon_stop_rx) = oneshot::channel::<()>();
         let daemon_config = config.clone();
@@ -1552,7 +1567,7 @@ mod tests {
             async move {
                 let response = reqwest::Client::new()
                     .post(format!("http://{proxy_address}/v1/chat/completions"))
-                    .header("x-leb-project-path", project.to_string_lossy().as_ref())
+                    .header("x-engram-project-path", project.to_string_lossy().as_ref())
                     .json(&json!({
                         "model": "local",
                         "messages": [{"role": "user", "content": task}]

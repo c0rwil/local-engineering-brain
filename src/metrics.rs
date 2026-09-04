@@ -414,9 +414,9 @@ pub struct MetricsSnapshot {
     pub requests_ms: BTreeMap<String, HistogramSnapshot>,
 }
 
-/// Request-outcome counters for the separate `leb-proxy` process. The proxy
+/// Request-outcome counters for the separate `engram-proxy` process. The proxy
 /// does not share the daemon's address space, so it owns this tiny registry
-/// and serves it from `GET /leb/metrics` on its loopback listener.
+/// and serves it from `GET /engram/metrics` on its loopback listener.
 #[derive(Debug, Default)]
 pub struct ProxyMetrics {
     forwarded: AtomicU64,

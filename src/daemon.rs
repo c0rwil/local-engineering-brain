@@ -1,6 +1,6 @@
 //! Local single-owner daemon and Unix-socket API.
 //!
-//! `lebd` owns canonical database connections and the bounded mutation
+//! `engramd` owns canonical database connections and the bounded mutation
 //! scheduler. Concurrent local clients never need to coordinate `SQLite` writes
 //! themselves, and overload is surfaced explicitly instead of growing memory.
 
@@ -731,7 +731,7 @@ pub struct SemanticRebuildRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SynthesisRunRequest {
     /// Project path; resolved and scoped like `projects/index`, so a project's
-    /// own `.leb/config.toml` `[synthesis]` section governs its thresholds.
+    /// own `.engram/config.toml` `[synthesis]` section governs its thresholds.
     pub path: PathBuf,
 }
 
@@ -1721,7 +1721,7 @@ where
     F: Future<Output = ()> + Send + 'static,
 {
     // Claim the database-scoped socket before opening canonical storage. Two
-    // edge processes may race to auto-start `lebd`; the socket is the
+    // edge processes may race to auto-start `engramd`; the socket is the
     // cross-process ownership primitive that prevents concurrent migration
     // and writer initialization.
     let (listener, _guard) = bind_socket(
@@ -2485,7 +2485,7 @@ async fn index_project(
         .unwrap_or(false);
     // Auto-link discovery: definitive manifest signals (path deps,
     // submodules) auto-apply with evidence in the note; name matches are
-    // proposals only, surfaced by `leb link scan`. Shadow origin-views are
+    // proposals only, surfaced by `engram link scan`. Shadow origin-views are
     // documentation snapshots, not real projects — they never link or
     // export a vault folder of their own.
     if state.config.links.auto_scan && !is_view_project {
@@ -4179,7 +4179,7 @@ pub async fn refresh_origin_view(
     .await
     .map_err(|error| Error::Daemon(format!("worktree task: {error}")))??;
     let reference = worktree.reference.clone();
-    let metadata_dir = worktree.path().join(".leb");
+    let metadata_dir = worktree.path().join(".engram");
     std::fs::create_dir_all(&metadata_dir)
         .map_err(|error| Error::Daemon(format!("shadow metadata dir: {error}")))?;
     std::fs::write(
@@ -4198,7 +4198,7 @@ pub async fn refresh_origin_view(
                 project_id: project_id.clone(),
                 key: "internal.origin_view".to_owned(),
                 value: shadow_id.to_string(),
-                note: Some("shared-truth view marker (managed by LEB)".to_owned()),
+                note: Some("shared-truth view marker (managed by Engram)".to_owned()),
             })
             .await?;
         client
@@ -4471,7 +4471,7 @@ mod tests {
     fn test_config(temp: &TempDir) -> Config {
         let mut config = Config::default();
         config.storage.db_path = temp.path().join("brain.sqlite");
-        config.daemon.socket_path = temp.path().join("lebd.sock");
+        config.daemon.socket_path = temp.path().join("engramd.sock");
         config.daemon.request_timeout_ms = 2_000;
         config
     }
@@ -4574,9 +4574,9 @@ mod tests {
     async fn daemon_serves_health_and_serialized_project_registration() {
         let temp = TempDir::new().expect("temp dir");
         let project = temp.path().join("project");
-        std::fs::create_dir_all(project.join(".leb")).expect("project dir");
+        std::fs::create_dir_all(project.join(".engram")).expect("project dir");
         std::fs::write(
-            project.join(".leb/config.toml"),
+            project.join(".engram/config.toml"),
             "[context]\nmax_injected_tokens = 200\nstable_prefix_tokens = 30\n",
         )
         .expect("project config");
@@ -4791,9 +4791,9 @@ mod tests {
     async fn semantic_rebuild_and_scoped_semantic_context_compile_work() {
         let temp = TempDir::new().expect("temp dir");
         let project = temp.path().join("project");
-        std::fs::create_dir_all(project.join(".leb")).expect("project dir");
+        std::fs::create_dir_all(project.join(".engram")).expect("project dir");
         std::fs::write(
-            project.join(".leb/config.toml"),
+            project.join(".engram/config.toml"),
             "[context]\nsemantic_retrieval = true\n",
         )
         .expect("project config");
@@ -5569,8 +5569,11 @@ mod tests {
         std::fs::write(project.join("alpha.rs"), alpha_original).expect("alpha");
         std::fs::write(project.join("beta.rs"), "pub fn beta_original() {}\n").expect("beta");
         git(&project, &["init", "-q"]);
-        git(&project, &["config", "user.email", "leb@example.invalid"]);
-        git(&project, &["config", "user.name", "LEB Tests"]);
+        git(
+            &project,
+            &["config", "user.email", "engram@example.invalid"],
+        );
+        git(&project, &["config", "user.name", "Engram Tests"]);
         git(&project, &["add", "alpha.rs", "beta.rs"]);
         git(&project, &["commit", "-qm", "initial"]);
 

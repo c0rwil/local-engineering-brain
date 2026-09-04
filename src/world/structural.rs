@@ -850,7 +850,9 @@ fn candidate_paths(
             .filter_entry(|entry| {
                 !matches!(
                     entry.file_name().to_str(),
-                    Some(".git" | ".leb" | "target" | "node_modules" | ".venv" | "venv")
+                    Some(
+                        ".git" | ".engram" | ".leb" | "target" | "node_modules" | ".venv" | "venv"
+                    )
                 )
             })
             .build();

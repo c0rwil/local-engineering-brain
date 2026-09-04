@@ -4,32 +4,32 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use leb::Result;
-use leb::config::{Config, ConfigOverrides};
-use leb::context::{ContextCompileRequest, ContextMode};
-use leb::daemon::{
+use engram::Result;
+use engram::config::{Config, ConfigOverrides};
+use engram::context::{ContextCompileRequest, ContextMode};
+use engram::daemon::{
     AttemptCreateRequest, EvidenceCreateRequest, JobEnqueueRequest, JobListRequest,
     MemoryCreateRequest, MemoryListRequest, MemoryPromoteRequest, ProjectExportRequest,
     SemanticRebuildRequest, SkillPromoteRequest, SynthesisRunRequest, TaskFinishRequest,
     TaskStartRequest, WorldSearchRequest,
 };
-use leb::daemon::{DaemonClient, ProjectStatus};
-use leb::doctor::DoctorReport;
-use leb::evaluation::EvaluationRunner;
-use leb::events::EventStore;
-use leb::experience::{AttemptOutcome, EvidenceStrength, TaskOutcome};
-use leb::ids::{AttemptId, EvidenceId, JobId, MemoryId, TaskId};
-use leb::jobs::{JobRecord, JobStatus, JobType};
-use leb::learning::DistillationRequest;
-use leb::memory::{EpistemicState, MemoryDraft};
-use leb::projects::GitState;
-use leb::storage::Database;
+use engram::daemon::{DaemonClient, ProjectStatus};
+use engram::doctor::DoctorReport;
+use engram::evaluation::EvaluationRunner;
+use engram::events::EventStore;
+use engram::experience::{AttemptOutcome, EvidenceStrength, TaskOutcome};
+use engram::ids::{AttemptId, EvidenceId, JobId, MemoryId, TaskId};
+use engram::jobs::{JobRecord, JobStatus, JobType};
+use engram::learning::DistillationRequest;
+use engram::memory::{EpistemicState, MemoryDraft};
+use engram::projects::GitState;
+use engram::storage::Database;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "leb",
+    name = "engram",
     version,
-    about = "Local Engineering Brain",
+    about = "Engram",
     long_about = "Local-first engineering memory, world-model, and runtime tooling"
 )]
 struct Cli {
@@ -237,7 +237,7 @@ enum Commands {
         action: HooksAction,
     },
 
-    /// Print the CLAUDE.md snippet that teaches a coding agent the LEB
+    /// Print the CLAUDE.md snippet that teaches a coding agent the Engram
     /// episode loop (recall, record, verify, learn) via the MCP tools.
     AgentMd {
         /// Append the snippet to this repo's agent file (idempotent: skipped
@@ -317,7 +317,7 @@ enum Commands {
         action: RelayAction,
     },
 
-    /// Update LEB in place: pull the recorded source checkout and rebuild
+    /// Update Engram in place: pull the recorded source checkout and rebuild
     /// through the atomic installer. The daemon restarts on the next CLI
     /// call, so a running session keeps the binary it started with.
     Update {
@@ -327,7 +327,7 @@ enum Commands {
     },
 
     /// Manage skill packs: agent-native skills (`<name>/SKILL.md`)
-    /// distributed through LEB into every detected agent's user-level
+    /// distributed through Engram into every detected agent's user-level
     /// skills directory (Claude Code, Codex), where they trigger natively
     /// when relevant to the task at hand.
     Skills {
@@ -452,7 +452,7 @@ enum FactAction {
 
 #[derive(Debug, Subcommand)]
 enum RelayAction {
-    /// Send a message to one session (`leb relay board` lists ids) or to
+    /// Send a message to one session (`engram relay board` lists ids) or to
     /// every active session with `all`.
     Send {
         /// Recipient session id, or `all`.
@@ -490,13 +490,13 @@ enum SkillsAction {
 
 #[derive(Debug, Subcommand)]
 enum HooksAction {
-    /// Merge LEB's hooks into a repo's .claude/settings.json (idempotent)
-    /// and register the `leb` MCP server for it.
+    /// Merge Engram's hooks into a repo's .claude/settings.json (idempotent)
+    /// and register the `engram` MCP server for it.
     Install {
         #[arg(default_value = ".")]
         repo: PathBuf,
         /// Install at the USER level (~/.claude/settings.json) so every
-        /// Claude session in every registered repo uses LEB. Unregistered
+        /// Claude session in every registered repo uses Engram. Unregistered
         /// repos are untouched: the hooks stay silent there.
         #[arg(long)]
         global: bool,
@@ -738,7 +738,7 @@ fn main() -> ExitCode {
             }
         }
         Err(error) => {
-            eprintln!("leb: {error}");
+            eprintln!("engram: {error}");
             ExitCode::FAILURE
         }
     }
@@ -817,8 +817,29 @@ fn run(cli: Cli) -> Result<bool> {
             for repo in &install {
                 let target = repo.join(&file);
                 let existing = std::fs::read_to_string(&target).unwrap_or_default();
-                if existing.contains("## Engineering memory (LEB)") {
-                    println!("{}: already installed", target.display());
+                // Refresh in place: an existing section (current or legacy
+                // LEB header) is replaced so tool names and guidance update.
+                let header = [
+                    "## Engineering memory (Engram)",
+                    "## Engineering memory (LEB)",
+                ]
+                .into_iter()
+                .find_map(|marker| existing.find(marker));
+                if let Some(start) = header {
+                    let rest = &existing[start..];
+                    let end = rest[1..]
+                        .find("\n## ")
+                        .map_or(existing.len(), |offset| start + 1 + offset + 1);
+                    let refreshed = format!(
+                        "{}{}{}",
+                        &existing[..start],
+                        AGENT_MD_SNIPPET,
+                        &existing[end..]
+                    );
+                    std::fs::write(&target, refreshed).map_err(|error| {
+                        engram::Error::Config(format!("{}: {error}", target.display()))
+                    })?;
+                    println!("{}: refreshed", target.display());
                     continue;
                 }
                 let separator = if existing.is_empty() || existing.ends_with("\n\n") {
@@ -830,7 +851,7 @@ fn run(cli: Cli) -> Result<bool> {
                 };
                 std::fs::write(&target, format!("{existing}{separator}{AGENT_MD_SNIPPET}"))
                     .map_err(|error| {
-                        leb::Error::Config(format!("{}: {error}", target.display()))
+                        engram::Error::Config(format!("{}: {error}", target.display()))
                     })?;
                 println!("{}: installed", target.display());
             }
@@ -876,7 +897,7 @@ fn run(cli: Cli) -> Result<bool> {
                     .parent()
                     .unwrap_or_else(|| Path::new("."))
                     .join("worktrees");
-                let worktree = leb::gitref::checkout_origin_default(&path, &state_dir)?;
+                let worktree = engram::gitref::checkout_origin_default(&path, &state_dir)?;
                 println!("Indexing {} (shared truth) …", worktree.reference);
                 let result = run_index(
                     &overrides,
@@ -1251,14 +1272,14 @@ fn run_task(
             let project = block_on(client.resolve_project(path))?;
             let artifact_text = if let Some(path) = artifact {
                 let artifact_metadata = std::fs::metadata(path)
-                    .map_err(|source| leb::error::io_error_for_cli(path, source))?;
+                    .map_err(|source| engram::error::io_error_for_cli(path, source))?;
                 if artifact_metadata.len() > u64::from(config.daemon.max_request_bytes / 2) {
-                    return Err(leb::Error::Config(
+                    return Err(engram::Error::Config(
                         "evidence artifact exceeds half the daemon request limit".to_owned(),
                     ));
                 }
                 std::fs::read_to_string(path)
-                    .map_err(|source| leb::error::io_error_for_cli(path, source))?
+                    .map_err(|source| engram::error::io_error_for_cli(path, source))?
             } else {
                 String::new()
             };
@@ -1465,7 +1486,7 @@ fn run_context(
     } else {
         print!("{}{}", context.stable_prefix, context.dynamic_context);
         println!(
-            "\n[LEB: {}/{} tokens, {} items, {} ms]",
+            "\n[Engram: {}/{} tokens, {} items, {} ms]",
             context.metrics.selected_tokens,
             context.metrics.token_budget,
             context.items.len(),
@@ -1564,7 +1585,7 @@ fn run_jobs(
         JobsAction::Status { id, json } => {
             let id = JobId::parse(id)?;
             let job = block_on(client.get_job(&id))?
-                .ok_or_else(|| leb::Error::Config(format!("unknown job `{id}`")))?;
+                .ok_or_else(|| engram::Error::Config(format!("unknown job `{id}`")))?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&job)?);
             } else {
@@ -1636,7 +1657,7 @@ fn run_memory(
         MemoryAction::Show { id, json } => {
             let id = MemoryId::parse(id)?;
             let memory = block_on(client.get_memory(&id))?
-                .ok_or_else(|| leb::Error::Config(format!("unknown memory `{id}`")))?;
+                .ok_or_else(|| engram::Error::Config(format!("unknown memory `{id}`")))?;
             print_memory(&memory, *json)?;
         }
         MemoryAction::Promote {
@@ -1696,7 +1717,7 @@ fn run_memory_add(client: &DaemonClient, action: &MemoryAction) -> Result<()> {
         json,
     } = action
     else {
-        return Err(leb::Error::Config(
+        return Err(engram::Error::Config(
             "internal memory command dispatch mismatch".to_owned(),
         ));
     };
@@ -1730,7 +1751,7 @@ fn run_memory_add(client: &DaemonClient, action: &MemoryAction) -> Result<()> {
     print_memory(&memory, *json)
 }
 
-fn print_memory(memory: &leb::memory::MemoryRecord, json: bool) -> Result<()> {
+fn print_memory(memory: &engram::memory::MemoryRecord, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(memory)?);
     } else {
@@ -1757,7 +1778,7 @@ fn run_doctor(overrides: &ConfigOverrides, socket: Option<&Path>, json: bool) ->
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        println!("Local Engineering Brain diagnostics");
+        println!("Engram diagnostics");
         for check in &report.checks {
             println!(
                 "  {:<8} {:<24} {}",
@@ -1827,7 +1848,7 @@ fn run_link(
             ..
         } => {
             let target_project = block_on(client.resolve_project(target))?.resolved.project;
-            let link = block_on(client.link_project(&leb::daemon::ProjectLinkRequest {
+            let link = block_on(client.link_project(&engram::daemon::ProjectLinkRequest {
                 project_id: source,
                 linked_project_id: target_project.id,
                 relation: relation.clone(),
@@ -1844,10 +1865,12 @@ fn run_link(
         }
         LinkAction::Remove { target, json, .. } => {
             let target_project = block_on(client.resolve_project(target))?.resolved.project;
-            let removed = block_on(client.unlink_project(&leb::daemon::ProjectUnlinkRequest {
-                project_id: source,
-                linked_project_id: target_project.id,
-            }))?
+            let removed = block_on(
+                client.unlink_project(&engram::daemon::ProjectUnlinkRequest {
+                    project_id: source,
+                    linked_project_id: target_project.id,
+                }),
+            )?
             .removed;
             if *json {
                 println!("{}", serde_json::json!({ "removed": removed }));
@@ -1858,7 +1881,7 @@ fn run_link(
             }
         }
         LinkAction::Scan { path, apply, json } => {
-            let report = block_on(client.scan_links(&leb::daemon::LinkScanRequest {
+            let report = block_on(client.scan_links(&engram::daemon::LinkScanRequest {
                 path: path.clone(),
                 apply: *apply,
             }))?;
@@ -1890,13 +1913,13 @@ fn run_link(
                         .iter()
                         .any(|candidate| candidate.definitive)
                 {
-                    println!("Run `leb link scan --apply` to create the definitive links.");
+                    println!("Run `engram link scan --apply` to create the definitive links.");
                 }
             }
         }
         LinkAction::List { json, .. } => {
             let links = block_on(
-                client.project_links(&leb::daemon::ProjectLinksRequest { project_id: source }),
+                client.project_links(&engram::daemon::ProjectLinksRequest { project_id: source }),
             )?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&links)?);
@@ -1935,7 +1958,7 @@ fn run_architect(
     apply_socket_override(&mut config, socket)?;
     require_daemon(&config)?;
     let dossier = block_on(client(&config).architect_dossier())?;
-    let prompt = leb::architect::synthesis_prompt(&dossier);
+    let prompt = engram::architect::synthesis_prompt(&dossier);
     if dry_run {
         println!("{prompt}");
         return Ok(true);
@@ -1944,7 +1967,7 @@ fn run_architect(
     let model = if claude {
         let model = model.unwrap_or("claude-opus-4-8").to_owned();
         println!("Synthesizing with `{model}` via the claude CLI …");
-        synthesized = leb::architect::synthesize_with_claude_cli(&model, &prompt)?;
+        synthesized = engram::architect::synthesize_with_claude_cli(&model, &prompt)?;
         model
     } else {
         let model = model
@@ -1953,12 +1976,12 @@ fn run_architect(
                 (!config.architect.model.is_empty()).then(|| config.architect.model.clone())
             })
             .ok_or_else(|| {
-                leb::Error::Config(
+                engram::Error::Config(
                     "no model configured: pass --model, --claude, or set architect.model"
                         .to_owned(),
                 )
             })?;
-        leb::architect::enforce_local_only(
+        engram::architect::enforce_local_only(
             &config.architect.runtime_url,
             config.network.local_only,
         )?;
@@ -1966,7 +1989,7 @@ fn run_architect(
             "Synthesizing with `{model}` via {} …",
             config.architect.runtime_url
         );
-        synthesized = block_on(leb::architect::synthesize(
+        synthesized = block_on(engram::architect::synthesize(
             &config.architect.runtime_url,
             &model,
             &prompt,
@@ -1979,15 +2002,15 @@ fn run_architect(
     );
     if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| leb::Error::Config(format!("architecture output dir: {error}")))?;
+            .map_err(|error| engram::Error::Config(format!("architecture output dir: {error}")))?;
     }
-    let document = leb::architect::guide_document(&model, &dossier, &synthesized);
+    let document = engram::architect::guide_document(&model, &dossier, &synthesized);
     std::fs::write(&destination, &document)
-        .map_err(|error| leb::Error::Config(format!("architecture output: {error}")))?;
+        .map_err(|error| engram::Error::Config(format!("architecture output: {error}")))?;
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&leb::architect::ArchitectReport {
+            serde_json::to_string_pretty(&engram::architect::ArchitectReport {
                 model,
                 output_path: destination.display().to_string(),
                 dossier_bytes: dossier.len(),
@@ -2031,7 +2054,7 @@ fn run_fact(
             json,
             ..
         } => {
-            let fact = block_on(client.set_fact(&leb::daemon::FactSetRequest {
+            let fact = block_on(client.set_fact(&engram::daemon::FactSetRequest {
                 project_id,
                 key: key.clone(),
                 value: value.clone(),
@@ -2044,7 +2067,7 @@ fn run_fact(
             }
         }
         FactAction::Unset { key, json, .. } => {
-            let removed = block_on(client.unset_fact(&leb::daemon::FactUnsetRequest {
+            let removed = block_on(client.unset_fact(&engram::daemon::FactUnsetRequest {
                 project_id,
                 key: key.clone(),
             }))?
@@ -2058,7 +2081,8 @@ fn run_fact(
             }
         }
         FactAction::List { json, .. } => {
-            let facts = block_on(client.list_facts(&leb::daemon::FactListRequest { project_id }))?;
+            let facts =
+                block_on(client.list_facts(&engram::daemon::FactListRequest { project_id }))?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&facts)?);
             } else if facts.is_empty() {
@@ -2081,36 +2105,36 @@ fn dirs_home() -> PathBuf {
     std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
-const AGENT_MD_SNIPPET: &str = r"## Engineering memory (LEB)
+const AGENT_MD_SNIPPET: &str = r"## Engineering memory (Engram)
 
-This repository is tracked by LEB, a local evidence-gated memory system. The
-`leb` MCP server is available; use it so finished work compounds instead of
+This repository is tracked by Engram, a local evidence-gated memory system. The
+`engram` MCP server is available; use it so finished work compounds instead of
 evaporating.
 
 At task start:
-- Call `leb_project_status` once to resolve the project id, then `leb_recall`
+- Call `engram_project_status` once to resolve the project id, then `engram_recall`
   with the task text (pass `task_id` when you have one) - it returns validated
   team knowledge with a why for every item. Treat `- MUST:` review standards
   as hard requirements.
-- For cross-repo work, `leb_workspace` shows who calls whom, hosting, and
-  each repo's technology stack; `leb_symbol_search` finds where a symbol is
+- For cross-repo work, `engram_workspace` shows who calls whom, hosting, and
+  each repo's technology stack; `engram_symbol_search` finds where a symbol is
   defined across every repo.
 
 While working (substantive tasks, not trivial edits):
-1. `leb_task_start` with the user's request.
-2. After each meaningful approach, `leb_record_attempt` (summary phrased as
+1. `engram_task_start` with the user's request.
+2. After each meaningful approach, `engram_record_attempt` (summary phrased as
    the reusable takeaway, outcome success/failure).
-3. When tests/builds/lints run, `leb_record_evidence` with the command and
+3. When tests/builds/lints run, `engram_record_evidence` with the command and
    exit code (kind `test_result`/`lint_result`..., strength `deterministic`).
    Record FAILING runs too - fail-then-pass pairs teach conventions.
-4. On completion, `leb_mark_outcome` (outcome + whether the user accepted).
+4. On completion, `engram_mark_outcome` (outcome + whether the user accepted).
 
 After accepted work that surfaced a durable rule:
-- `leb_learn` with a claim phrased for a future engineer, linking the task
+- `engram_learn` with a claim phrased for a future engineer, linking the task
   and its passing evidence. Candidates never inject until promoted, so err on
   the side of recording.
 - If a failed approach was instructive, it is already captured by the failed
-  attempt; `leb_get_past_failures` replays those to future sessions.
+  attempt; `engram_get_past_failures` replays those to future sessions.
 ";
 
 /// Hook runtime. EVERY failure path prints nothing and returns Ok: a broken
@@ -2131,7 +2155,7 @@ fn run_hook_event(
         if codex || event_name == "PreToolUse" {
             println!(
                 "{}",
-                leb::agenthooks::additional_context_output(event_name, context)
+                engram::agenthooks::additional_context_output(event_name, context)
             );
         } else {
             println!("{context}");
@@ -2171,12 +2195,12 @@ fn run_hook_event(
         "prompt" => {
             // Relay delivery point: every prompt drains this session's inbox,
             // pinned or not — a message queued mid-session still arrives.
-            let relayed = leb::agenthooks::relay_drain(&state_dir, &session_id);
+            let relayed = engram::agenthooks::relay_drain(&state_dir, &session_id);
             let relay_block = if relayed.is_empty() {
                 String::new()
             } else {
                 format!(
-                    "# Messages from other sessions (leb relay)\n{}\n",
+                    "# Messages from other sessions (engram relay)\n{}\n",
                     relayed
                         .iter()
                         .map(|message| format!("- {message}"))
@@ -2184,7 +2208,7 @@ fn run_hook_event(
                         .join("\n")
                 )
             };
-            if leb::agenthooks::load_session(&state_dir, &session_id).is_some() {
+            if engram::agenthooks::load_session(&state_dir, &session_id).is_some() {
                 if !relay_block.is_empty() {
                     emit("UserPromptSubmit", &relay_block);
                 }
@@ -2202,8 +2226,8 @@ fn run_hook_event(
             }
             // Universal-install safety: only engage for repositories already
             // registered in the brain. Resolving would REGISTER (and write
-            // .leb/project.toml into) any repo the user happens to open;
-            // a global hook must never do that silently. `leb index <repo>`
+            // .engram/project.toml into) any repo the user happens to open;
+            // a global hook must never do that silently. `engram index <repo>`
             // remains the explicit opt-in per repository.
             let Ok(lookup) = block_on(client.lookup_project(&cwd)) else {
                 return Ok(true);
@@ -2236,10 +2260,10 @@ fn run_hook_event(
                 return Ok(true);
             };
             if let Some(task) = task {
-                let _ = leb::agenthooks::save_session(
+                let _ = engram::agenthooks::save_session(
                     &state_dir,
                     &session_id,
-                    &leb::agenthooks::HookSession {
+                    &engram::agenthooks::HookSession {
                         task_id: task.id,
                         project_id,
                         last_verification_exit: None,
@@ -2265,8 +2289,8 @@ fn run_hook_event(
                 if cwd.join(".git").exists() {
                     emit(
                         "SessionStart",
-                        "LEB: this repository is not tracked by the engineering brain. \
-                         Run `leb index .` once to enroll it (context injection, evidence \
+                        "Engram: this repository is not tracked by the engineering brain. \
+                         Run `engram index .` once to enroll it (context injection, evidence \
                          capture, and the workspace encyclopedia activate automatically).",
                     );
                 }
@@ -2291,15 +2315,18 @@ fn run_hook_event(
                     .unwrap_or_default(),
             )
             .unwrap_or(i64::MAX);
-            if let Some(text) =
-                leb::agenthooks::render_session_brief(&project.name, &open, last_completed, now_ms)
-            {
+            if let Some(text) = engram::agenthooks::render_session_brief(
+                &project.name,
+                &open,
+                last_completed,
+                now_ms,
+            ) {
                 emit("SessionStart", &text);
             }
         }
         "pretool" => {
             let tool_input = payload.get("tool_input").cloned().unwrap_or_default();
-            let Some(file_path) = leb::agenthooks::extract_file_path(&tool_input) else {
+            let Some(file_path) = engram::agenthooks::extract_file_path(&tool_input) else {
                 return Ok(true);
             };
             let Ok(lookup) = block_on(client.lookup_project(&cwd)) else {
@@ -2326,10 +2353,10 @@ fn run_hook_event(
                 return Ok(true); // outside the repo: nothing to know
             };
             let relative = relative.to_string_lossy().into_owned();
-            if !leb::agenthooks::mark_file_briefed(&state_dir, &session_id, &relative) {
+            if !engram::agenthooks::mark_file_briefed(&state_dir, &session_id, &relative) {
                 return Ok(true); // already briefed this session
             }
-            let Ok(shape) = block_on(client.file_shape(&leb::daemon::FileShapeRequest {
+            let Ok(shape) = block_on(client.file_shape(&engram::daemon::FileShapeRequest {
                 project_id: project.id,
                 file_path: relative.clone(),
             })) else {
@@ -2346,37 +2373,41 @@ fn run_hook_event(
                 .map(|caller| (caller.label.clone(), caller.file_path.clone()))
                 .collect();
             if let Some(text) =
-                leb::agenthooks::render_file_shape(&relative, &symbols, &callers, &shape.imports)
+                engram::agenthooks::render_file_shape(&relative, &symbols, &callers, &shape.imports)
             {
                 emit("PreToolUse", &text);
             }
         }
         "session-end" => {
-            let Some(session) = leb::agenthooks::load_session(&state_dir, &session_id) else {
+            let Some(session) = engram::agenthooks::load_session(&state_dir, &session_id) else {
                 return Ok(true);
             };
             // Conservative auto-close: success only when the last recorded
             // verification passed; acceptance stays unknown, so this counts
             // toward memory ROI but never feeds distillation. If the agent
-            // already closed the task via leb_mark_outcome this finish fails
+            // already closed the task via engram_mark_outcome this finish fails
             // harmlessly (fail-open).
-            let outcome = match leb::agenthooks::auto_close_outcome(session.last_verification_exit)
-            {
-                "success" => leb::experience::TaskOutcome::Success,
-                _ => leb::experience::TaskOutcome::Abandoned,
-            };
+            let outcome =
+                match engram::agenthooks::auto_close_outcome(session.last_verification_exit) {
+                    "success" => engram::experience::TaskOutcome::Success,
+                    _ => engram::experience::TaskOutcome::Abandoned,
+                };
             let _ = block_on(client.finish_task(
                 &session.task_id,
-                &leb::daemon::TaskFinishRequest {
+                &engram::daemon::TaskFinishRequest {
                     outcome,
                     accepted_by_user: None,
                     final_commit: None,
                 },
             ));
-            let _ =
-                std::fs::remove_file(leb::agenthooks::session_state_path(&state_dir, &session_id));
-            let _ =
-                std::fs::remove_file(leb::agenthooks::session_files_path(&state_dir, &session_id));
+            let _ = std::fs::remove_file(engram::agenthooks::session_state_path(
+                &state_dir,
+                &session_id,
+            ));
+            let _ = std::fs::remove_file(engram::agenthooks::session_files_path(
+                &state_dir,
+                &session_id,
+            ));
         }
         "bash" => {
             let command = payload
@@ -2384,10 +2415,10 @@ fn run_hook_event(
                 .and_then(|input| input.get("command"))
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
-            let Some(kind) = leb::agenthooks::detect_verification(command) else {
+            let Some(kind) = engram::agenthooks::detect_verification(command) else {
                 return Ok(true);
             };
-            let Some(session) = leb::agenthooks::load_session(&state_dir, &session_id) else {
+            let Some(session) = engram::agenthooks::load_session(&state_dir, &session_id) else {
                 return Ok(true);
             };
             let empty = serde_json::Value::Null;
@@ -2395,10 +2426,10 @@ fn run_hook_event(
                 .get("tool_result")
                 .or_else(|| payload.get("tool_response"))
                 .unwrap_or(&empty);
-            let Some(exit_code) = leb::agenthooks::extract_exit_code(tool_result) else {
+            let Some(exit_code) = engram::agenthooks::extract_exit_code(tool_result) else {
                 return Ok(true);
             };
-            let fingerprint = leb::agenthooks::evidence_fingerprint(command, exit_code);
+            let fingerprint = engram::agenthooks::evidence_fingerprint(command, exit_code);
             if session.last_evidence_fingerprint.as_deref() == Some(fingerprint.as_str()) {
                 return Ok(true);
             }
@@ -2411,13 +2442,13 @@ fn run_hook_event(
                 commit_hash: None,
                 command: Some(command.chars().take(500).collect()),
                 exit_code: Some(exit_code),
-                artifact_text: leb::agenthooks::extract_artifact(tool_result),
+                artifact_text: engram::agenthooks::extract_artifact(tool_result),
                 metadata: serde_json::json!({"source": "claude-code-hook"}),
             }));
-            let _ = leb::agenthooks::save_session(
+            let _ = engram::agenthooks::save_session(
                 &state_dir,
                 &session_id,
-                &leb::agenthooks::HookSession {
+                &engram::agenthooks::HookSession {
                     last_verification_exit: Some(exit_code),
                     last_evidence_fingerprint: Some(fingerprint),
                     ..session
@@ -2508,7 +2539,7 @@ fn run_ask(
     let mut symbols = Vec::new();
     let mut sections = Vec::new();
     for keyword in &keywords {
-        let Ok(nodes) = block_on(client.search_world(&leb::daemon::WorldSearchRequest {
+        let Ok(nodes) = block_on(client.search_world(&engram::daemon::WorldSearchRequest {
             project_id: project_id.clone(),
             query: keyword.clone(),
             limit: 8,
@@ -2578,14 +2609,14 @@ fn run_ask(
     );
     let answer = if claude {
         let model = model.unwrap_or("claude-opus-4-8");
-        leb::architect::synthesize_with_claude_cli(model, &prompt)?
+        engram::architect::synthesize_with_claude_cli(model, &prompt)?
     } else {
         let model = model.expect("checked above");
-        leb::architect::enforce_local_only(
+        engram::architect::enforce_local_only(
             &config.architect.runtime_url,
             config.network.local_only,
         )?;
-        block_on(leb::architect::synthesize(
+        block_on(engram::architect::synthesize(
             &config.architect.runtime_url,
             model,
             &prompt,
@@ -2607,7 +2638,7 @@ fn run_relay_action(overrides: &ConfigOverrides, action: &RelayAction) -> Result
     match action {
         RelayAction::Send { to, message, from } => {
             let recipients: Vec<String> = if to == "all" {
-                leb::agenthooks::active_sessions(&state_dir)
+                engram::agenthooks::active_sessions(&state_dir)
                     .into_iter()
                     .map(|(id, _, _)| id)
                     .collect()
@@ -2619,7 +2650,7 @@ fn run_relay_action(overrides: &ConfigOverrides, action: &RelayAction) -> Result
                 return Ok(true);
             }
             for recipient in &recipients {
-                leb::agenthooks::relay_send(&state_dir, recipient, from, message)?;
+                engram::agenthooks::relay_send(&state_dir, recipient, from, message)?;
             }
             println!(
                 "Queued for {} session(s); delivery at each recipient's next prompt.",
@@ -2627,7 +2658,7 @@ fn run_relay_action(overrides: &ConfigOverrides, action: &RelayAction) -> Result
             );
         }
         RelayAction::Board => {
-            let sessions = leb::agenthooks::active_sessions(&state_dir);
+            let sessions = engram::agenthooks::active_sessions(&state_dir);
             if sessions.is_empty() {
                 println!("No active sessions.");
             }
@@ -2648,13 +2679,13 @@ fn run_relay_action(overrides: &ConfigOverrides, action: &RelayAction) -> Result
 
 fn run_update(check: bool) -> Result<bool> {
     let manifest_path = dirs_home()
-        .join(".local/share/leb")
+        .join(".local/share/engram")
         .join("install-manifest.json");
     let manifest = std::fs::read_to_string(&manifest_path)
         .ok()
         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
         .ok_or_else(|| {
-            leb::error::Error::Config(format!(
+            engram::error::Error::Config(format!(
                 "no install manifest at {} — run scripts/install.sh once first",
                 manifest_path.display()
             ))
@@ -2665,10 +2696,10 @@ fn run_update(check: bool) -> Result<bool> {
         .map(PathBuf::from)
         .filter(|dir| dir.join("scripts/install.sh").is_file())
     else {
-        return Err(leb::error::Error::Config(
-            "install manifest predates `leb update` (no source_dir) — \
-             re-run scripts/install.sh from the LEB checkout once, then \
-             `leb update` works from anywhere"
+        return Err(engram::error::Error::Config(
+            "install manifest predates `engram update` (no source_dir) — \
+             re-run scripts/install.sh from the Engram checkout once, then \
+             `engram update` works from anywhere"
                 .to_owned(),
         ));
     };
@@ -2678,11 +2709,11 @@ fn run_update(check: bool) -> Result<bool> {
             .arg(&source_dir)
             .args(args)
             .output()
-            .map_err(|error| leb::error::Error::Config(format!("git: {error}")))
+            .map_err(|error| engram::error::Error::Config(format!("git: {error}")))
     };
     let fetch = git(&["fetch", "--quiet"])?;
     if !fetch.status.success() {
-        return Err(leb::error::Error::Config(format!(
+        return Err(engram::error::Error::Config(format!(
             "git fetch in {} failed: {}",
             source_dir.display(),
             String::from_utf8_lossy(&fetch.stderr).trim()
@@ -2697,14 +2728,14 @@ fn run_update(check: bool) -> Result<bool> {
         if behind_count == 0 {
             println!("Up to date (source checkout matches upstream).");
         } else {
-            println!("Update available: {behind_count} commit(s) behind. Run `leb update`.");
+            println!("Update available: {behind_count} commit(s) behind. Run `engram update`.");
         }
         return Ok(true);
     }
     if behind_count > 0 {
         let pull = git(&["pull", "--ff-only", "--quiet"])?;
         if !pull.status.success() {
-            return Err(leb::error::Error::Config(format!(
+            return Err(engram::error::Error::Config(format!(
                 "git pull --ff-only failed (local changes or divergence): {}",
                 String::from_utf8_lossy(&pull.stderr).trim()
             )));
@@ -2716,34 +2747,34 @@ fn run_update(check: bool) -> Result<bool> {
     let status = std::process::Command::new("sh")
         .arg(source_dir.join("scripts/install.sh"))
         .status()
-        .map_err(|error| leb::error::Error::Config(format!("installer: {error}")))?;
+        .map_err(|error| engram::error::Error::Config(format!("installer: {error}")))?;
     if !status.success() {
-        return Err(leb::error::Error::Config(
+        return Err(engram::error::Error::Config(
             "installer failed — the previous release remains active".to_owned(),
         ));
     }
     println!(
-        "Updated. Restart the daemon when convenient (`leb daemon stop`; the next \
+        "Updated. Restart the daemon when convenient (`engram daemon stop`; the next \
          CLI call starts the new binary) — running sessions keep the binary they \
          started with."
     );
     Ok(true)
 }
 
-fn install_pack_everywhere(pack: &leb::skillpacks::SkillPack, home: &Path) -> Result<()> {
-    let targets = leb::skillpacks::detect_targets(home);
+fn install_pack_everywhere(pack: &engram::skillpacks::SkillPack, home: &Path) -> Result<()> {
+    let targets = engram::skillpacks::detect_targets(home);
     if targets.is_empty() {
         println!("No agent installations detected (~/.claude or ~/.codex).");
         return Ok(());
     }
     for target in &targets {
-        let outcomes = leb::skillpacks::install_into(pack, target)?;
+        let outcomes = engram::skillpacks::install_into(pack, target)?;
         for (skill, outcome) in outcomes {
             let verb = match outcome {
-                leb::skillpacks::InstallOutcome::Installed => "installed",
-                leb::skillpacks::InstallOutcome::Updated => "updated",
-                leb::skillpacks::InstallOutcome::SkippedForeign => {
-                    "SKIPPED (a non-LEB skill of this name already exists)"
+                engram::skillpacks::InstallOutcome::Installed => "installed",
+                engram::skillpacks::InstallOutcome::Updated => "updated",
+                engram::skillpacks::InstallOutcome::SkippedForeign => {
+                    "SKIPPED (a non-Engram skill of this name already exists)"
                 }
             };
             println!("  {}: {skill} {verb}", target.label);
@@ -2756,8 +2787,8 @@ fn run_skills_action(action: &SkillsAction) -> Result<bool> {
     let home = dirs_home();
     match action {
         SkillsAction::Add { source, name } => {
-            let pack = leb::skillpacks::add(&home, source, name.as_deref())?;
-            let skills = leb::skillpacks::discover_skills(&pack.path)?;
+            let pack = engram::skillpacks::add(&home, source, name.as_deref())?;
+            let skills = engram::skillpacks::discover_skills(&pack.path)?;
             println!(
                 "Fetched pack '{}' ({} skill{}).",
                 pack.name,
@@ -2765,49 +2796,51 @@ fn run_skills_action(action: &SkillsAction) -> Result<bool> {
                 if skills.len() == 1 { "" } else { "s" }
             );
             install_pack_everywhere(&pack, &home)?;
-            println!("Skills trigger natively when relevant; `leb skills update` refreshes them.");
+            println!(
+                "Skills trigger natively when relevant; `engram skills update` refreshes them."
+            );
         }
         SkillsAction::List => {
-            let packs = leb::skillpacks::list(&home)?;
+            let packs = engram::skillpacks::list(&home)?;
             if packs.is_empty() {
-                println!("No skill packs. `leb skills add <git-url>` fetches one.");
+                println!("No skill packs. `engram skills add <git-url>` fetches one.");
             }
             for pack in packs {
                 let source = pack.source.clone().unwrap_or_else(|| "local".to_owned());
                 println!("{} ({source})", pack.name);
-                for skill in leb::skillpacks::discover_skills(&pack.path)? {
+                for skill in engram::skillpacks::discover_skills(&pack.path)? {
                     let description: String = skill.description.chars().take(96).collect();
                     println!("  {} — {description}", skill.name);
                 }
             }
         }
         SkillsAction::Update => {
-            for pack in leb::skillpacks::list(&home)? {
-                leb::skillpacks::update(&pack)?;
+            for pack in engram::skillpacks::list(&home)? {
+                engram::skillpacks::update(&pack)?;
                 println!("Pulled '{}'.", pack.name);
                 install_pack_everywhere(&pack, &home)?;
             }
         }
         SkillsAction::Install => {
-            for pack in leb::skillpacks::list(&home)? {
+            for pack in engram::skillpacks::list(&home)? {
                 println!("Pack '{}':", pack.name);
                 install_pack_everywhere(&pack, &home)?;
             }
         }
         SkillsAction::Remove { name } => {
-            let packs = leb::skillpacks::list(&home)?;
+            let packs = engram::skillpacks::list(&home)?;
             let Some(pack) = packs.into_iter().find(|pack| &pack.name == name) else {
-                return Err(leb::error::Error::Config(format!(
+                return Err(engram::error::Error::Config(format!(
                     "no skill pack named '{name}'"
                 )));
             };
-            for target in leb::skillpacks::detect_targets(&home) {
-                for skill in leb::skillpacks::uninstall_from(&pack.name, &target)? {
+            for target in engram::skillpacks::detect_targets(&home) {
+                for skill in engram::skillpacks::uninstall_from(&pack.name, &target)? {
                     println!("  {}: {skill} removed", target.label);
                 }
             }
             std::fs::remove_dir_all(&pack.path)
-                .map_err(|error| leb::error::Error::Config(format!("remove pack: {error}")))?;
+                .map_err(|error| engram::error::Error::Config(format!("remove pack: {error}")))?;
             println!("Removed pack '{name}'.");
         }
     }
@@ -2820,7 +2853,7 @@ fn install_codex_hooks() -> Result<()> {
         .ok()
         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
         .unwrap_or_else(|| serde_json::json!({}));
-    let hooks = leb::agenthooks::codex_hooks_json("leb");
+    let hooks = engram::agenthooks::codex_hooks_json("engram");
     if let (Some(object), Some(new_hooks)) = (document.as_object_mut(), hooks.as_object()) {
         for (event, value) in new_hooks {
             object.insert(event.clone(), value.clone());
@@ -2828,10 +2861,10 @@ fn install_codex_hooks() -> Result<()> {
     }
     if let Some(parent) = hooks_path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| leb::error::Error::Config(format!("codex dir: {error}")))?;
+            .map_err(|error| engram::error::Error::Config(format!("codex dir: {error}")))?;
     }
     std::fs::write(&hooks_path, serde_json::to_string_pretty(&document)?)
-        .map_err(|error| leb::error::Error::Config(format!("codex hooks: {error}")))?;
+        .map_err(|error| engram::error::Error::Config(format!("codex hooks: {error}")))?;
     println!(
         "Wrote {} — Codex sessions now get the full automatic loop \
          (session brief, context injection, file shapes, evidence capture, \
@@ -2842,7 +2875,7 @@ fn install_codex_hooks() -> Result<()> {
 }
 
 fn run_hooks_action(action: &HooksAction) -> Result<bool> {
-    let hooks = leb::agenthooks::claude_hooks_json("leb");
+    let hooks = engram::agenthooks::claude_hooks_json("engram");
     match action {
         HooksAction::Show => {
             println!("{}", serde_json::to_string_pretty(&hooks)?);
@@ -2854,7 +2887,7 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
                 repo.join(".claude")
             };
             std::fs::create_dir_all(&settings_dir)
-                .map_err(|error| leb::Error::Config(format!("settings dir: {error}")))?;
+                .map_err(|error| engram::Error::Config(format!("settings dir: {error}")))?;
             let settings_path = settings_dir.join("settings.json");
             let mut settings: serde_json::Value = std::fs::read_to_string(&settings_path)
                 .ok()
@@ -2864,24 +2897,27 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
                 .get("hooks")
                 .map(std::string::ToString::to_string)
                 .unwrap_or_default();
-            let refreshed = existing.contains("leb hook");
+            let refreshed = existing.contains("engram hook") || existing.contains("leb hook");
             {
                 let hooks_slot = settings
                     .as_object_mut()
                     .ok_or_else(|| {
-                        leb::Error::Config("settings.json is not a JSON object".to_owned())
+                        engram::Error::Config("settings.json is not a JSON object".to_owned())
                     })?
                     .entry("hooks")
                     .or_insert_with(|| serde_json::json!({}));
                 let hooks_object = hooks_slot.as_object_mut().ok_or_else(|| {
-                    leb::Error::Config("settings.json hooks is not an object".to_owned())
+                    engram::Error::Config("settings.json hooks is not an object".to_owned())
                 })?;
-                // Refresh in place: drop previously installed leb entries so
+                // Refresh in place: drop previously installed engram entries so
                 // upgrades ship new hook events, then add the current set.
-                // Foreign (non-leb) hook entries are preserved untouched.
+                // Foreign (non-engram) hook entries are preserved untouched.
                 for slot in hooks_object.values_mut() {
                     if let Some(entries) = slot.as_array_mut() {
-                        entries.retain(|entry| !entry.to_string().contains("leb hook"));
+                        entries.retain(|entry| {
+                            let text = entry.to_string();
+                            !text.contains("engram hook") && !text.contains("leb hook")
+                        });
                     }
                 }
                 for (event, entries) in hooks.as_object().into_iter().flatten() {
@@ -2898,9 +2934,9 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
                 std::fs::write(
                     &settings_path,
                     serde_json::to_string_pretty(&settings)
-                        .map_err(|error| leb::Error::Config(error.to_string()))?,
+                        .map_err(|error| engram::Error::Config(error.to_string()))?,
                 )
-                .map_err(|error| leb::Error::Config(format!("settings write: {error}")))?;
+                .map_err(|error| engram::Error::Config(format!("settings write: {error}")))?;
                 println!(
                     "{}: hooks {}",
                     settings_path.display(),
@@ -2911,12 +2947,12 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
                 println!(
                     "Universal: every Claude session in every REGISTERED repo now gets \
                      context injection and automatic evidence capture (unregistered \
-                     repos are untouched). Pair with `leb agent-md --global`."
+                     repos are untouched). Pair with `engram agent-md --global`."
                 );
             } else {
                 println!(
                     "Context injection + automatic evidence capture are active for stock \
-                     `claude` sessions in this repo. Also run `leb agent-md --install {}` \
+                     `claude` sessions in this repo. Also run `engram agent-md --install {}` \
                      so the agent knows the wider tool loop.",
                     repo.display()
                 );
@@ -2928,10 +2964,10 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
             }
             println!(
                 "Codex setup:\n\n1. MCP server (once, in ~/.codex/config.toml):\n\n\
-                 [mcp_servers.leb]\ncommand = \"leb-mcp\"\n\n\
+                 [mcp_servers.engram]\ncommand = \"engram-mcp\"\n\n\
                  2. Per repo, install the agent loop instructions into AGENTS.md:\n\n\
-                 leb agent-md --install <repo> --file AGENTS.md\n\n\
-                 3. Automatic hooks (recommended): leb hooks codex --install\n\n\
+                 engram agent-md --install <repo> --file AGENTS.md\n\n\
+                 3. Automatic hooks (recommended): engram hooks codex --install\n\n\
                  Codex reads AGENTS.md automatically and reaches the brain through MCP\n\
                  (recall, workspace map, symbol search, episode recording)."
             );
@@ -2950,13 +2986,13 @@ fn run_onboard(
     const MAX_REPOS: usize = 50;
     let root = path
         .canonicalize()
-        .map_err(|source| leb::error::io_error_for_cli(path, source))?;
+        .map_err(|source| engram::error::io_error_for_cli(path, source))?;
     let mut repos = Vec::new();
     if root.join(".git").exists() {
         repos.push(root.clone());
     } else {
         let mut entries = std::fs::read_dir(&root)
-            .map_err(|source| leb::error::io_error_for_cli(&root, source))?
+            .map_err(|source| engram::error::io_error_for_cli(&root, source))?
             .filter_map(std::result::Result::ok)
             .map(|entry| entry.path())
             .filter(|candidate| candidate.is_dir() && candidate.join(".git").exists())
@@ -2965,7 +3001,7 @@ fn run_onboard(
         repos.extend(entries.into_iter().take(MAX_REPOS));
     }
     if repos.is_empty() {
-        return Err(leb::Error::Config(format!(
+        return Err(engram::Error::Config(format!(
             "no git repositories found under {}",
             root.display()
         )));
@@ -2993,15 +3029,16 @@ fn run_onboard(
     }
     println!("Building the vault…");
     let report =
-        block_on(patient.build_vault(&leb::daemon::VaultBuildRequest { project_id: None }))?;
+        block_on(patient.build_vault(&engram::daemon::VaultBuildRequest { project_id: None }))?;
     if claude {
         println!("Synthesizing the architecture guide via claude…");
         let dossier = block_on(patient.architect_dossier())?;
-        let prompt = leb::architect::synthesis_prompt(&dossier);
-        let synthesized = leb::architect::synthesize_with_claude_cli("claude-opus-4-8", &prompt)?;
-        let document = leb::architect::guide_document("claude-opus-4-8", &dossier, &synthesized);
+        let prompt = engram::architect::synthesis_prompt(&dossier);
+        let synthesized =
+            engram::architect::synthesize_with_claude_cli("claude-opus-4-8", &prompt)?;
+        let document = engram::architect::guide_document("claude-opus-4-8", &dossier, &synthesized);
         std::fs::write(config.vault.root.join("ARCHITECTURE.md"), document)
-            .map_err(|error| leb::Error::Config(format!("guide write: {error}")))?;
+            .map_err(|error| engram::Error::Config(format!("guide write: {error}")))?;
     }
     let snapshot = block_on(patient.workspace())?;
     if json {
@@ -3042,13 +3079,13 @@ fn run_sync(
         .map(str::to_owned)
         .or_else(|| config.sync.token.clone());
     if central_url.is_empty() {
-        return Err(leb::Error::Config(
+        return Err(engram::Error::Config(
             "no central instance configured: set [sync] central_url or pass --central".to_owned(),
         ));
     }
     require_daemon(&config)?;
     let local = client(&config);
-    let report = block_on(leb::sync::run_sync_cycle(
+    let report = block_on(engram::sync::run_sync_cycle(
         &local,
         &central_url,
         bearer.as_deref(),
@@ -3091,8 +3128,8 @@ fn run_web(
     let mut config = Config::load_for(Some(&config_root), overrides)?;
     apply_socket_override(&mut config, socket)?;
     require_daemon(&config)?;
-    println!("LEB workspace browser: http://127.0.0.1:{port}  (Ctrl-C to stop)");
-    block_on(leb::web::serve(config, port))?;
+    println!("Engram workspace browser: http://127.0.0.1:{port}  (Ctrl-C to stop)");
+    block_on(engram::web::serve(config, port))?;
     Ok(true)
 }
 
@@ -3128,7 +3165,7 @@ fn run_vault(
         &config.daemon.socket_path,
         Duration::from_millis(config.daemon.request_timeout_ms.max(600_000)),
     );
-    let report = block_on(patient.build_vault(&leb::daemon::VaultBuildRequest {
+    let report = block_on(patient.build_vault(&engram::daemon::VaultBuildRequest {
         project_id: resolved,
     }))?;
     if *json {
@@ -3154,9 +3191,9 @@ fn pull_ff_only_if_clean(path: &Path) -> Result<()> {
         .arg(path)
         .args(["status", "--porcelain"])
         .output()
-        .map_err(|error| leb::Error::Config(format!("git status: {error}")))?;
+        .map_err(|error| engram::Error::Config(format!("git status: {error}")))?;
     if !porcelain.status.success() {
-        return Err(leb::Error::Config(
+        return Err(engram::Error::Config(
             "git status failed; is this a repository?".to_owned(),
         ));
     }
@@ -3169,7 +3206,7 @@ fn pull_ff_only_if_clean(path: &Path) -> Result<()> {
         .arg(path)
         .args(["pull", "--ff-only"])
         .output()
-        .map_err(|error| leb::Error::Config(format!("git pull: {error}")))?;
+        .map_err(|error| engram::Error::Config(format!("git pull: {error}")))?;
     if pull.status.success() {
         println!("Pulled (fast-forward only).");
     } else {
@@ -3289,7 +3326,7 @@ fn run_metrics(overrides: &ConfigOverrides, socket: Option<&Path>, json: bool) -
     Ok(true)
 }
 
-fn print_latency_table(metrics: &leb::metrics::MetricsSnapshot) {
+fn print_latency_table(metrics: &engram::metrics::MetricsSnapshot) {
     println!("\nLatency (ms)               count      p50      p90      p95      p99");
     print_latency_row("context_compile", &metrics.context_compile_ms);
     print_latency_row("retrieval", &metrics.retrieval_ms);
@@ -3301,7 +3338,7 @@ fn print_latency_table(metrics: &leb::metrics::MetricsSnapshot) {
     }
 }
 
-fn print_latency_row(name: &str, histogram: &leb::metrics::HistogramSnapshot) {
+fn print_latency_row(name: &str, histogram: &engram::metrics::HistogramSnapshot) {
     println!(
         "  {name:<24} {:>7} {:>8.1} {:>8.1} {:>8.1} {:>8.1}",
         histogram.count, histogram.p50_ms, histogram.p90_ms, histogram.p95_ms, histogram.p99_ms
@@ -3320,7 +3357,7 @@ fn run_dashboard(overrides: &ConfigOverrides, socket: Option<&Path>) -> Result<b
     let response = block_on(client.metrics())?;
     let memory = block_on(client.memory_stats())?;
 
-    println!("Local Engineering Brain dashboard (single snapshot)");
+    println!("Engram dashboard (single snapshot)");
     println!("\n== Daemon ==");
     println!(
         "Status:    {} (v{}, {})",
@@ -3425,7 +3462,7 @@ fn client(config: &Config) -> DaemonClient {
 fn discover_project_root(path: &Path) -> Result<PathBuf> {
     let existing = path
         .canonicalize()
-        .map_err(|source| leb::error::io_error_for_cli(path, source))?;
+        .map_err(|source| engram::error::io_error_for_cli(path, source))?;
     let directory = if existing.is_file() {
         existing
             .parent()
@@ -3474,21 +3511,21 @@ fn apply_socket_override(config: &mut Config, socket: Option<&Path>) -> Result<(
 }
 
 fn require_daemon(config: &Config) -> Result<()> {
-    block_on(leb::autostart::ensure_daemon(config))
+    block_on(engram::autostart::ensure_daemon(config))
 }
 
 fn block_on<T>(future: impl Future<Output = Result<T>>) -> Result<T> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|error| leb::Error::Daemon(format!("failed to start client runtime: {error}")))?
+        .map_err(|error| engram::Error::Daemon(format!("failed to start client runtime: {error}")))?
         .block_on(future)
 }
 
-const fn status_label(status: leb::doctor::CheckStatus) -> &'static str {
+const fn status_label(status: engram::doctor::CheckStatus) -> &'static str {
     match status {
-        leb::doctor::CheckStatus::Pass => "PASS",
-        leb::doctor::CheckStatus::Warning => "WARN",
-        leb::doctor::CheckStatus::Fail => "FAIL",
+        engram::doctor::CheckStatus::Pass => "PASS",
+        engram::doctor::CheckStatus::Warning => "WARN",
+        engram::doctor::CheckStatus::Fail => "FAIL",
     }
 }

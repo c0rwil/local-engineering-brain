@@ -1,11 +1,11 @@
 use std::time::Instant;
 
-use leb::config::Config;
-use leb::context::{ContextCompileRequest, ContextCompiler, ContextMode};
-use leb::daemon::DaemonClient;
-use leb::memory::{EpistemicState, MemoryDraft, MemoryStore};
-use leb::projects::ProjectRegistry;
-use leb::storage::Database;
+use engram::config::Config;
+use engram::context::{ContextCompileRequest, ContextCompiler, ContextMode};
+use engram::daemon::DaemonClient;
+use engram::memory::{EpistemicState, MemoryDraft, MemoryStore};
+use engram::projects::ProjectRegistry;
+use engram::storage::Database;
 use tempfile::TempDir;
 use tokio::sync::oneshot;
 
@@ -93,11 +93,11 @@ async fn medium_daemon_concurrency_stays_within_latency_rss_and_token_bounds() {
     }
     let mut config = Config::default();
     config.storage.db_path = temp.path().join("brain.sqlite");
-    config.daemon.socket_path = temp.path().join("lebd.sock");
+    config.daemon.socket_path = temp.path().join("engramd.sock");
     config.daemon.request_timeout_ms = 5_000;
     let socket = config.daemon.socket_path.clone();
     let (stop_tx, stop_rx) = oneshot::channel::<()>();
-    let server = tokio::spawn(leb::daemon::serve_until(config, async move {
+    let server = tokio::spawn(engram::daemon::serve_until(config, async move {
         let _ = stop_rx.await;
     }));
     let client = DaemonClient::new(&socket, std::time::Duration::from_secs(5));

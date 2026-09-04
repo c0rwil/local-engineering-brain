@@ -151,7 +151,7 @@ impl Database {
         let path = path.as_ref().to_path_buf();
         if path.as_os_str() == ":memory:" {
             return Err(Error::Config(
-                "`:memory:` is unsupported because LEB requires reopenable canonical storage"
+                "`:memory:` is unsupported because Engram requires reopenable canonical storage"
                     .to_owned(),
             ));
         }
@@ -577,7 +577,7 @@ fn validate_applied_migrations_read_only(connection: &Connection) -> Result<()> 
     }
     if applied == 0 {
         return Err(Error::Migration(
-            "backup contains no applied LEB schema migrations".to_owned(),
+            "backup contains no applied Engram schema migrations".to_owned(),
         ));
     }
     Ok(())

@@ -5,7 +5,7 @@
 //! reflect what the TEAM has merged, not whatever branch or dirty state a
 //! local checkout happens to be on. This module fetches the remote default
 //! branch and materializes it as a throwaway detached `git worktree` under
-//! the LEB state directory; the caller indexes that path (identity resolves
+//! the Engram state directory; the caller indexes that path (identity resolves
 //! to the same project via the canonical remote) and the worktree is removed
 //! on drop. The developer's checkout is never written to. Agent-facing
 //! context compilation intentionally keeps using the local tree — that is
@@ -169,8 +169,8 @@ mod tests {
         let seed = temp.path().join("seed");
         std::fs::create_dir_all(&seed).expect("seed");
         run(&seed, &["init", "-q", "-b", "main"]);
-        run(&seed, &["config", "user.email", "leb@example.invalid"]);
-        run(&seed, &["config", "user.name", "LEB Tests"]);
+        run(&seed, &["config", "user.email", "engram@example.invalid"]);
+        run(&seed, &["config", "user.name", "Engram Tests"]);
         std::fs::write(seed.join("lib.rs"), "pub fn one() {}\n").expect("file");
         run(&seed, &["add", "."]);
         run(&seed, &["commit", "-qm", "one"]);
@@ -185,8 +185,8 @@ mod tests {
             temp.path(),
             &["clone", "-q", &origin.to_string_lossy(), "dev"],
         );
-        run(&dev, &["config", "user.email", "leb@example.invalid"]);
-        run(&dev, &["config", "user.name", "LEB Tests"]);
+        run(&dev, &["config", "user.email", "engram@example.invalid"]);
+        run(&dev, &["config", "user.name", "Engram Tests"]);
         std::fs::write(dev.join("lib.rs"), "pub fn local_experiment() {}\n").expect("file");
         run(&dev, &["commit", "-aqm", "local only"]);
 

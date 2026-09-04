@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#fafaf8" media="(prefers-color-scheme: light)">
-<title>LEB Workspace</title>
+<title>Engram Workspace</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -281,7 +281,7 @@
 <body>
 <a class="skip" href="#main">Skip to Content</a>
 <header>
-  <h1>LEB<span class="dot">·</span>Workspace</h1>
+  <h1>Engram<span class="dot">·</span>Workspace</h1>
   <span class="sub" id="summary">Loading…</span>
   <div class="view-toggle" role="group" aria-label="Graph view source">
     <button type="button" id="view-origin" aria-pressed="true">origin/main</button>
@@ -298,10 +298,10 @@
   <div id="onboard">
     <p>This page is generated from the live code graph — it cannot go stale. To work with the brain from a terminal or agent:</p>
     <ol>
-      <li><strong>See what the brain knows about a task</strong>: <code>leb context "&lt;task&gt;" --path &lt;repo&gt;</code> prints the exact context it would inject, with a why for every item.</li>
-      <li><strong>Code with injected memory</strong>: launch <code>claude-mtplx</code> (Claude Code through the LEB proxy) — validated lessons, team standards, and linked-repo knowledge inject automatically. The <code>leb</code> MCP server adds recall, impact, and outcome tools.</li>
-      <li><strong>Teach it</strong>: after finishing real work, <code>leb learn "&lt;lesson&gt;" --task … --evidence …</code>; only evidence-backed lessons ever inject. Record deployment facts with <code>leb fact set</code>.</li>
-      <li><strong>Keep everything fresh</strong>: the refresh buttons below index fetched <code>origin/main</code> (shared truth — your checkout is never touched); tick “from local checkout” or run plain <code>leb index</code> to see your branch instead. Agent context always follows the local tree you are editing.</li>
+      <li><strong>See what the brain knows about a task</strong>: <code>engram context "&lt;task&gt;" --path &lt;repo&gt;</code> prints the exact context it would inject, with a why for every item.</li>
+      <li><strong>Code with injected memory</strong>: launch <code>claude-mtplx</code> (Claude Code through the Engram proxy) — validated lessons, team standards, and linked-repo knowledge inject automatically. The <code>engram</code> MCP server adds recall, impact, and outcome tools.</li>
+      <li><strong>Teach it</strong>: after finishing real work, <code>engram learn "&lt;lesson&gt;" --task … --evidence …</code>; only evidence-backed lessons ever inject. Record deployment facts with <code>engram fact set</code>.</li>
+      <li><strong>Keep everything fresh</strong>: the refresh buttons below index fetched <code>origin/main</code> (shared truth — your checkout is never touched); tick “from local checkout” or run plain <code>engram index</code> to see your branch instead. Agent context always follows the local tree you are editing.</li>
     </ol>
   </div>
 
@@ -341,7 +341,7 @@
   </div>
   <div class="modal-body"></div>
 </dialog>
-<footer>Local Engineering Brain — local-only, evidence-grounded. Regenerate the guide with <code>leb architect</code>.</footer>
+<footer>Engram — local-only, evidence-grounded. Regenerate the guide with <code>engram architect</code>.</footer>
 
 <script>
 "use strict";
@@ -594,9 +594,9 @@ function renderCards() {
       ? `<p class="empty">No projects match this filter.</p>`
       : `<div id="onboard"><p><strong>No repositories registered yet.</strong></p>
          <p>Index your first repo and this page fills itself in:</p>
-         <p><code>leb index ~/code/your-repo</code></p>
-         <p>Then link related repos (<code>leb link scan --apply</code> finds most of them),
-         record where services are hosted (<code>leb fact set hosting.base_url api.example.com</code>),
+         <p><code>engram index ~/code/your-repo</code></p>
+         <p>Then link related repos (<code>engram link scan --apply</code> finds most of them),
+         record where services are hosted (<code>engram fact set hosting.base_url api.example.com</code>),
          and reload.</p></div>`;
   for (const det of el.querySelectorAll("details.modmap-details")) {
     if (openMaps.has(det.dataset.id)) {
@@ -648,8 +648,8 @@ function renderCards() {
 function apiToken() {
   try {
     const fromUrl = new URLSearchParams(location.search).get("token");
-    if (fromUrl) { sessionStorage.setItem("leb-token", fromUrl); }
-    return sessionStorage.getItem("leb-token") || "";
+    if (fromUrl) { sessionStorage.setItem("engram-token", fromUrl); }
+    return sessionStorage.getItem("engram-token") || "";
   } catch { return ""; }
 }
 
@@ -704,7 +704,7 @@ async function onScan(event) {
       `<li><span class="flash">Linked</span> ${esc(l.name)} <span class="rel">${esc(l.relation)}</span></li>`);
     const proposals = report.candidates.filter(c => !c.definitive).map(c =>
       `<li>Proposal: ${esc(c.target_name)} <span class="rel">${esc(c.relation)}</span> — ${esc(c.evidence)}.
-       Confirm with <code>leb link add</code>.</li>`);
+       Confirm with <code>engram link add</code>.</li>`);
     results.innerHTML = applied.length + proposals.length
       ? `<ul>${applied.join("")}${proposals.join("")}</ul>`
       : "No new link candidates in this repo's manifests or sources.";
@@ -1040,14 +1040,14 @@ async function loadArchitecture() {
   try {
     const doc = await api("/api/architecture");
     if (!doc.content) {
-      el.innerHTML = `<p class="empty">No guide yet. Generate one with <code>leb architect --claude</code>.</p>`;
+      el.innerHTML = `<p class="empty">No guide yet. Generate one with <code>engram architect --claude</code>.</p>`;
       return;
     }
     state.guideMd = doc.content;
     const badge = doc.stale === true
       ? (doc.auto !== "off"
         ? `<span class="fresh-badge">Workspace changed — the daemon is regenerating this automatically</span>`
-        : `<span class="stale-badge">Workspace changed since this was written — run <code>leb architect --claude</code></span>`)
+        : `<span class="stale-badge">Workspace changed since this was written — run <code>engram architect --claude</code></span>`)
       : doc.stale === false
         ? `<span class="fresh-badge">Current with the workspace</span>`
         : "";
@@ -1113,7 +1113,7 @@ refresh().then(() => {
   if (state.selected) openServiceModal(state.selected);
 }).catch(error => {
   document.getElementById("cards").innerHTML =
-    `<p class="error">Could not reach the LEB daemon: ${esc(error.message)}. Start it with any <code>leb</code> command, then reload.</p>`;
+    `<p class="error">Could not reach the Engram daemon: ${esc(error.message)}. Start it with any <code>engram</code> command, then reload.</p>`;
 });
 loadArchitecture();
 loadActivity();

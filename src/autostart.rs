@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::daemon::DaemonClient;
 use crate::error::{Error, Result, io_error_for_cli};
 
-/// Ensure the sibling `lebd` is healthy, starting it detached when absent.
+/// Ensure the sibling `engramd` is healthy, starting it detached when absent.
 ///
 /// # Errors
 ///
@@ -24,8 +24,8 @@ pub async fn ensure_daemon(config: &Config) -> Result<()> {
         std::env::current_exe().map_err(|source| io_error_for_cli("current executable", source))?;
     let daemon = current
         .parent()
-        .map(|parent| parent.join("lebd"))
-        .ok_or_else(|| Error::Daemon("could not locate sibling lebd".to_owned()))?;
+        .map(|parent| parent.join("engramd"))
+        .ok_or_else(|| Error::Daemon("could not locate sibling engramd".to_owned()))?;
     if !daemon.is_file() {
         return Err(Error::Daemon(format!(
             "cannot auto-start: sibling daemon is missing at {}",
@@ -44,7 +44,7 @@ pub async fn ensure_daemon(config: &Config) -> Result<()> {
         .spawn()
         .map_err(|source| io_error_for_cli(&daemon, source))?;
     std::thread::Builder::new()
-        .name("lebd-child-reaper".to_owned())
+        .name("engramd-child-reaper".to_owned())
         .stack_size(128 * 1_024)
         .spawn(move || {
             let _ = child.wait();
@@ -57,7 +57,7 @@ pub async fn ensure_daemon(config: &Config) -> Result<()> {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     Err(Error::Daemon(format!(
-        "auto-started lebd did not become ready at {}",
+        "auto-started engramd did not become ready at {}",
         config.daemon.socket_path.display()
     )))
 }

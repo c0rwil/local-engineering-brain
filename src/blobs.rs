@@ -14,7 +14,7 @@
 //! that persists the referencing row, and released inside the transaction that
 //! removes it. Files are only unlinked *after* that transaction commits, so a
 //! rollback can never orphan a metadata row whose bytes are already gone. The
-//! reverse (a file with no row) is tolerated, reported by `leb doctor`, and
+//! reverse (a file with no row) is tolerated, reported by `engram doctor`, and
 //! cleaned up by any later release of the same digest.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -56,7 +56,7 @@ impl BlobRelease {
     }
 }
 
-/// Read-only blob-store health used by `leb doctor`.
+/// Read-only blob-store health used by `engram doctor`.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BlobHealth {
     pub root: PathBuf,
@@ -139,7 +139,7 @@ impl BlobStore {
             .parent()
             .ok_or_else(|| Error::Config("blob path has no shard directory".to_owned()))?
             .to_path_buf();
-        // The blob root and its shards belong exclusively to LEB, so they are
+        // The blob root and its shards belong exclusively to Engram, so they are
         // always restricted; only caller-owned parents are left alone.
         fs::create_dir_all(&self.root).map_err(|source| io_error(&self.root, source))?;
         restrict_directory(&self.root)?;
@@ -331,7 +331,7 @@ impl BlobStore {
     }
 
     /// Digests of files present on disk with no metadata row, bounded to
-    /// `limit`. This is the same discovery `leb doctor` reports as
+    /// `limit`. This is the same discovery `engram doctor` reports as
     /// `orphan_files`; callers such as the `consolidation_gc` job may delete
     /// these files because nothing canonical references them. Names that are
     /// not valid digests (for example abandoned temporary files) are skipped.

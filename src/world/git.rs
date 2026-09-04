@@ -285,9 +285,9 @@ mod tests {
             .arg(root)
             .args([
                 "-c",
-                "user.name=LEB Test",
+                "user.name=Engram Test",
                 "-c",
-                "user.email=leb@example.invalid",
+                "user.email=engram@example.invalid",
             ])
             .args(args)
             .status()

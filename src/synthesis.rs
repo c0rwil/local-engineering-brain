@@ -4,7 +4,7 @@
 //! normalized strategy shared by several successful, evidence-backed episodes.
 //! Procedures live purely as typed memories (no dedicated skills table exists in
 //! the schema): they flow through the same evidence-gated promotion state
-//! machine as every other memory, and `leb_get_skill` already reads them by
+//! machine as every other memory, and `engram_get_skill` already reads them by
 //! kind. Promotion to the `skill` kind additionally requires recorded
 //! successful uses.
 //!

@@ -1,7 +1,7 @@
-# LEB benchmark results
+# Engram benchmark results
 
 Every axis of the spec is measured against a true control: the identical
-agent with LEB fully disabled, in isolated repository copies with per-arm
+agent with Engram fully disabled, in isolated repository copies with per-arm
 databases and sockets. The brain-off arm is semantically untouched (spec
 P10). Raw evidence lives in [perf-evidence/](perf-evidence/) with
 date-and-commit filenames; the synthetic `conveyor` fixture and its
@@ -9,7 +9,7 @@ fairness audit live in the benchmark target repo.
 
 ## Headline results
 
-| Axis | Control | With LEB | Evidence |
+| Axis | Control | With Engram | Evidence |
 |---|---:|---:|---|
 | Tribal-knowledge fidelity (Opus, 12 probes × 2 seeds) | 5/12 | **24/24** | 2026-08-31 flagship + multiseed |
 | Local-model task success (wall-calibrated, Q4 on-device) | 7/10 | **10/10**, −33% wall | 2026-09-01 |
@@ -35,13 +35,13 @@ both).
 The flagship reading: probes that went **0-for-10** across memoryless Opus
 arms pass **12-for-12** with injection — unwritten team standards are the
 part of engineering that frontier models cannot induce reliably, and
-exactly the part LEB captures.
+exactly the part Engram captures.
 
 ## Method discipline (the short version)
 
 - Paired off/brain trials, same prompts, same wall limits, same validators.
 - Per-arm brains restored from a frozen snapshot; project identity pinned
-  via `.leb/project.toml` (clone-identity fracture silently blanked early
+  via `.engram/project.toml` (clone-identity fracture silently blanked early
   matrices — documented, regression-tested).
 - Injected-bytes telemetry archived per run; a brain arm that injects
   nothing is a broken arm, not a data point.
@@ -51,7 +51,7 @@ exactly the part LEB captures.
 ## Comparison context
 
 basemode (christopherkahler/base), the closest comparable tool, publishes
-no measurements. LEB's differentiators — the evidence gate, automatic
+no measurements. Engram's differentiators — the evidence gate, automatic
 capture, drift quarantine, team sync — are precisely the parts that
 benchmarks like these exist to justify: knowledge only helps if it is
 true, current, and actually delivered.

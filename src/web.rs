@@ -588,7 +588,7 @@ mod tests {
             .await
             .expect("body");
         let text = String::from_utf8_lossy(&body);
-        assert!(text.contains("<title>LEB Workspace</title>"));
+        assert!(text.contains("<title>Engram Workspace</title>"));
         assert!(text.contains("Skip to Content"));
         assert!(
             !text.contains("http://") && !text.contains("https://cdn"),

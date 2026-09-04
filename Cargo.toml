@@ -1,5 +1,5 @@
 [package]
-name = "local-engineering-brain"
+name = "engram"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
@@ -7,24 +7,24 @@ description = "A local-first engineering world model and durable memory"
 license = "MIT OR Apache-2.0"
 
 [lib]
-name = "leb"
+name = "engram"
 path = "src/lib.rs"
 
 [[bin]]
-name = "leb"
+name = "engram"
 path = "src/main.rs"
 
 [[bin]]
-name = "lebd"
-path = "src/bin/lebd.rs"
+name = "engramd"
+path = "src/bin/engramd.rs"
 
 [[bin]]
-name = "leb-proxy"
-path = "src/bin/leb-proxy.rs"
+name = "engram-proxy"
+path = "src/bin/engram-proxy.rs"
 
 [[bin]]
-name = "leb-mcp"
-path = "src/bin/leb-mcp.rs"
+name = "engram-mcp"
+path = "src/bin/engram-mcp.rs"
 
 [dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }

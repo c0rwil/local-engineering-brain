@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "leb hook bash",
+            "command": "engram hook bash",
             "timeout": 15,
             "type": "command"
           }
@@ -16,7 +16,7 @@
       {
         "hooks": [
           {
-            "command": "leb hook pretool",
+            "command": "engram hook pretool",
             "timeout": 10,
             "type": "command"
           }
@@ -28,7 +28,7 @@
       {
         "hooks": [
           {
-            "command": "leb hook session-end",
+            "command": "engram hook session-end",
             "timeout": 15,
             "type": "command"
           }
@@ -39,7 +39,7 @@
       {
         "hooks": [
           {
-            "command": "leb hook session-start",
+            "command": "engram hook session-start",
             "timeout": 15,
             "type": "command"
           }
@@ -50,7 +50,7 @@
       {
         "hooks": [
           {
-            "command": "leb hook prompt",
+            "command": "engram hook prompt",
             "timeout": 30,
             "type": "command"
           }

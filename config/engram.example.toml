@@ -25,7 +25,7 @@ review_standards_section = true
 compact_injection = false
 
 [daemon]
-socket_path = "~/.leb/lebd.sock"
+socket_path = "~/.engram/engramd.sock"
 max_connections = 128
 max_request_bytes = 1048576
 request_timeout_ms = 30000
@@ -42,7 +42,7 @@ rss_hard_limit_mb = 900
 # runs at most `daemon.background_concurrency` jobs at once, and starts no new
 # job under hard RSS pressure. `consolidation_gc` and `fts_integrity`
 # self-enqueue daily (dedupe-keyed by day); `semantic_rebuild` and
-# `evidence_reverify` are enqueued on demand (`leb jobs enqueue ...`).
+# `evidence_reverify` are enqueued on demand (`engram jobs enqueue ...`).
 # Note: `evidence_reverify` never re-executes stored commands - repository-
 # supplied commands are untrusted (spec 26.4); it only marks stale evidence.
 enabled = true
@@ -56,12 +56,12 @@ context_run_retention_days = 90
 
 [semantic]
 # Bounds for the derived vector sidecar; the embedding dimension is a
-# compile-time constant. The sidecar is rebuildable: `leb semantic rebuild .`
+# compile-time constant. The sidecar is rebuildable: `engram semantic rebuild .`
 max_candidates = 50
 max_scanned = 50000
 
 [storage]
-db_path = "~/.leb/brain.sqlite"
+db_path = "~/.engram/brain.sqlite"
 blob_budget_gb = 0
 # Redacted evidence artifacts larger than this move out of the canonical row
 # into `blobs/` beside the database; the row keeps a digest and a head excerpt.
@@ -135,7 +135,7 @@ cross_project_hypotheses = false
 # Derived Obsidian vault: per-repo notes, mermaid module maps, memory notes,
 # and the workspace overview. Point Obsidian at `root`.
 enabled = false
-root = "~/.leb/vault"
+root = "~/.engram/vault"
 # Re-export automatically (durable background job) after every structural
 # scan, so notes and diagrams track the code.
 auto_refresh = true
@@ -144,13 +144,13 @@ auto_refresh = true
 # After each index, scan the repo's own manifests (Cargo path deps, npm
 # file: deps, pip editable installs, git submodules) and auto-link
 # DEFINITIVE matches. Name-only and route-overlap matches stay proposals
-# surfaced by `leb link scan`.
+# surfaced by `engram link scan`.
 auto_scan = true
 
 [architect]
-# `leb architect` synthesizes the workspace architecture guide.
+# `engram architect` synthesizes the workspace architecture guide.
 # runtime_url is an OpenAI-compatible endpoint (loopback unless
-# network.local_only = false); `leb architect --claude` uses the claude CLI.
+# network.local_only = false); `engram architect --claude` uses the claude CLI.
 runtime_url = "http://127.0.0.1:8010/v1/chat/completions"
 model = ""
 # Automatic regeneration when the guide's STABLE projection drifts

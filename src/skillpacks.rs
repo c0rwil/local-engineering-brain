@@ -1,13 +1,13 @@
 //! Skill packs: distribute agent-native skills (`<skill>/SKILL.md`
 //! directories, the format Claude Code and Codex both auto-trigger by
-//! description relevance) through LEB. A pack is a git repository or local
-//! directory carrying one or more skills; `leb skills add` fetches it once
-//! into `~/.leb/skillpacks/` and installs every skill into each detected
+//! description relevance) through Engram. A pack is a git repository or local
+//! directory carrying one or more skills; `engram skills add` fetches it once
+//! into `~/.engram/skillpacks/` and installs every skill into each detected
 //! agent's user-level skills directory, so any provider on the machine uses
 //! them natively when relevant — no per-repo setup, no injection cost.
 //!
-//! Installed skill directories carry a `.leb-skillpack` marker naming their
-//! pack. LEB only ever overwrites or removes directories carrying a marker:
+//! Installed skill directories carry a `.engram-skillpack` marker naming their
+//! pack. Engram only ever overwrites or removes directories carrying a marker:
 //! a hand-written skill with the same name is never clobbered.
 
 use std::fs;
@@ -19,9 +19,12 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 
 /// Marker file naming the owning pack inside every installed skill dir.
-const MARKER_FILE: &str = ".leb-skillpack";
+const MARKER_FILE: &str = ".engram-skillpack";
+/// Marker written by pre-rename installs; still recognized as ours.
+const LEGACY_MARKER_FILE: &str = ".leb-skillpack";
 /// Pack metadata file written into the pack root after `add`.
-const PACK_META_FILE: &str = ".leb-pack.toml";
+const PACK_META_FILE: &str = ".engram-pack.toml";
+const LEGACY_PACK_META_FILE: &str = ".leb-pack.toml";
 /// Bounded copy: a skill directory larger than this is refused.
 const MAX_SKILL_ENTRIES: usize = 400;
 const MAX_SKILL_BYTES: u64 = 8 * 1024 * 1024;
@@ -55,12 +58,12 @@ pub struct AgentTarget {
 /// Where packs live.
 #[must_use]
 pub fn packs_dir(home: &Path) -> PathBuf {
-    home.join(".leb").join("skillpacks")
+    home.join(".engram").join("skillpacks")
 }
 
 /// Detect agent targets: any of `~/.claude` / `~/.codex` that exist get a
 /// `skills` directory (created on demand). Detection is by the agent's own
-/// config directory so LEB never invents an agent installation.
+/// config directory so Engram never invents an agent installation.
 #[must_use]
 pub fn detect_targets(home: &Path) -> Vec<AgentTarget> {
     let mut targets = Vec::new();
@@ -108,8 +111,8 @@ pub fn add(home: &Path, source: &str, name: Option<&str>) -> Result<SkillPack> {
     let destination = packs_dir(home).join(&name);
     if destination.exists() {
         return Err(Error::Config(format!(
-            "skill pack '{name}' already exists; `leb skills update` refreshes it, \
-             `leb skills remove {name}` deletes it"
+            "skill pack '{name}' already exists; `engram skills update` refreshes it, \
+             `engram skills remove {name}` deletes it"
         )));
     }
     if let Some(parent) = destination.parent() {
@@ -167,6 +170,7 @@ pub fn list(home: &Path) -> Result<Vec<SkillPack>> {
             continue;
         }
         let source = fs::read_to_string(path.join(PACK_META_FILE))
+            .or_else(|_| fs::read_to_string(path.join(LEGACY_PACK_META_FILE)))
             .ok()
             .and_then(|content| toml::from_str::<PackMeta>(&content).ok())
             .map(|meta| meta.source);
@@ -310,12 +314,12 @@ fn parse_frontmatter(content: &str) -> (Option<String>, Option<String>) {
 pub enum InstallOutcome {
     Installed,
     Updated,
-    /// A directory of the same name exists WITHOUT a LEB marker: it belongs
+    /// A directory of the same name exists WITHOUT a Engram marker: it belongs
     /// to the user (or another tool) and is left untouched.
     SkippedForeign,
 }
 
-/// Install every skill of a pack into one agent target. Existing LEB-managed
+/// Install every skill of a pack into one agent target. Existing Engram-managed
 /// directories are replaced; foreign directories are skipped.
 ///
 /// # Errors
@@ -332,7 +336,9 @@ pub fn install_into(
     for skill in skills {
         let destination = target.skills_dir.join(&skill.name);
         let outcome = if destination.exists() {
-            if destination.join(MARKER_FILE).is_file() {
+            if destination.join(MARKER_FILE).is_file()
+                || destination.join(LEGACY_MARKER_FILE).is_file()
+            {
                 fs::remove_dir_all(&destination)
                     .map_err(|error| Error::Config(format!("replace skill: {error}")))?;
                 copy_skill_dir(&skill.path, &destination)?;
@@ -365,8 +371,9 @@ pub fn uninstall_from(pack_name: &str, target: &AgentTarget) -> Result<Vec<Strin
     };
     for entry in entries.flatten() {
         let dir = entry.path();
-        let marker = dir.join(MARKER_FILE);
-        let owner = fs::read_to_string(&marker).unwrap_or_default();
+        let owner = fs::read_to_string(dir.join(MARKER_FILE))
+            .or_else(|_| fs::read_to_string(dir.join(LEGACY_MARKER_FILE)))
+            .unwrap_or_default();
         if owner.trim() == pack_name {
             fs::remove_dir_all(&dir)
                 .map_err(|error| Error::Config(format!("remove skill: {error}")))?;

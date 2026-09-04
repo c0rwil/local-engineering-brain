@@ -741,7 +741,7 @@ impl JobExecutor {
 
     /// Bounded consolidation GC (spec section 16): delete `context_runs`
     /// (their `context_items` cascade) older than the configured retention in
-    /// bounded batches, then unlink orphaned blob files that `leb doctor`
+    /// bounded batches, then unlink orphaned blob files that `engram doctor`
     /// would report. Each batch is its own scheduler mutation so interactive
     /// writes interleave freely.
     /// Hook hygiene folded into the daily GC: session files older than a
@@ -985,7 +985,7 @@ pub fn delete_context_run_batch(database: &Database, cutoff_ms: i64, limit: usiz
 }
 
 /// Unlink blob files that have no metadata row (the `orphan_files` that
-/// `leb doctor` reports). For every candidate, the row's absence is
+/// `engram doctor` reports). For every candidate, the row's absence is
 /// re-confirmed and the unlink performed inside one canonical writer
 /// transaction, and the mtime grace window is re-checked at unlink time —
 /// an unreadable or future mtime counts as recent, because deletion is the

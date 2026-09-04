@@ -13,20 +13,20 @@ use proptest::test_runner::TestCaseError;
 use tempfile::TempDir;
 use uuid::Uuid;
 
-use leb::cache::{CacheAdmission, PartitionedCache};
-use leb::context::{ContextCompileRequest, ContextCompiler, ContextMode};
-use leb::events::{
+use engram::cache::{CacheAdmission, PartitionedCache};
+use engram::context::{ContextCompileRequest, ContextCompiler, ContextMode};
+use engram::events::{
     AppendOutcome, DomainEvent, EventStore, ProjectProjection, ProjectProjectionEntry,
 };
-use leb::ids::{
+use engram::ids::{
     AttemptId, ContextRunId, EdgeId, EvaluationRunId, EvidenceId, MemoryId, NodeId, ProjectId,
     TaskId,
 };
-use leb::memory::{EpistemicState, MemoryDraft, MemoryStatus, MemoryStore};
-use leb::projects::{parse_changed_paths_for_tests, parse_name_status_paths_for_tests};
-use leb::retrieval::{RetrievalRequest, Retriever};
-use leb::security::redact_text;
-use leb::storage::Database;
+use engram::memory::{EpistemicState, MemoryDraft, MemoryStatus, MemoryStore};
+use engram::projects::{parse_changed_paths_for_tests, parse_name_status_paths_for_tests};
+use engram::retrieval::{RetrievalRequest, Retriever};
+use engram::security::redact_text;
+use engram::storage::Database;
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -476,7 +476,7 @@ proptest! {
 // ---------------------------------------------------------------------------
 
 /// A parsed path is safe when it is non-empty, relative, contains no parent or
-/// root components, and does not resolve into `.git` or `.leb` even behind a
+/// root components, and does not resolve into `.git` or `.engram` even behind a
 /// leading `./` component.
 fn assert_paths_safe(paths: &[PathBuf]) -> Result<(), TestCaseError> {
     for path in paths {
@@ -494,7 +494,7 @@ fn assert_paths_safe(paths: &[PathBuf]) -> Result<(), TestCaseError> {
             .find(|component| !matches!(component, Component::CurDir));
         if let Some(Component::Normal(name)) = first {
             prop_assert!(
-                name != ".git" && name != ".leb",
+                name != ".git" && name != ".engram",
                 "path resolves into a reserved directory: {path:?}"
             );
         }
@@ -522,8 +522,8 @@ fn planted_porcelain() -> impl Strategy<Value = Vec<u8>> {
         Just("a/../../b".to_owned()),
         Just(".git/config".to_owned()),
         Just("./.git/config".to_owned()),
-        Just(".leb/project.toml".to_owned()),
-        Just("./.leb/project.toml".to_owned()),
+        Just(".engram/project.toml".to_owned()),
+        Just("./.engram/project.toml".to_owned()),
         Just(".gitignore".to_owned()),
     ];
     let status = prop::sample::select(&["M ", "A ", "??", " D"][..]);
@@ -561,7 +561,7 @@ proptest! {
     }
 
     /// Well-formed records around planted hostile paths (absolute, `..`,
-    /// `.git`, `.leb`, `./`-prefixed) never yield an unsafe path.
+    /// `.git`, `.engram`, `./`-prefixed) never yield an unsafe path.
     #[test]
     fn porcelain_status_parser_rejects_planted_hostile_paths(bytes in planted_porcelain()) {
         if let Ok(paths) = parse_changed_paths_for_tests(&bytes) {

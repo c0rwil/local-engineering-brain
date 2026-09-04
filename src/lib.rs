@@ -1,4 +1,4 @@
-//! Local Engineering Brain (LEB) core library.
+//! Engram core library.
 //!
 //! Milestone 0 intentionally keeps domain behavior behind small typed modules:
 //! configuration, canonical `SQLite` storage, immutable events, and project identity.
@@ -45,7 +45,7 @@ pub use error::{Error, Result};
 
 /// Build identity stamped by the release installer. Development builds share
 /// a fixed identity so sibling binaries produced by one Cargo invocation match.
-pub const BUILD_ID: &str = match option_env!("LEB_BUILD_ID") {
+pub const BUILD_ID: &str = match option_env!("ENGRAM_BUILD_ID") {
     Some(value) => value,
     None => "development",
 };

@@ -385,9 +385,9 @@ mod tests {
     /// Register the SAME project identity on two instances via pinned
     /// metadata — exactly how real clones share identity.
     fn register_pinned(database: &Database, root: &std::path::Path, id: &str) -> ProjectId {
-        std::fs::create_dir_all(root.join(".leb")).expect("dirs");
+        std::fs::create_dir_all(root.join(".engram")).expect("dirs");
         std::fs::write(
-            root.join(".leb/project.toml"),
+            root.join(".engram/project.toml"),
             format!("project_id = \"{id}\"\nname = \"svc\"\n"),
         )
         .expect("metadata");

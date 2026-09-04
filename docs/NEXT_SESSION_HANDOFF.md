@@ -1,11 +1,11 @@
-# LEB — next-session handoff
+# Engram — next-session handoff
 
 Refreshed 2026-09-02. Read `CLAUDE.md` first (verified gotchas), then the
-memory file's `leb-project-state` entries for the full chronology.
+memory file's `engram-project-state` entries for the full chronology.
 
 ## Where the product stands
 
-LEB is prod-shaped: 210 tests, CI green on macOS + Linux, all gates
+Engram is prod-shaped: 210 tests, CI green on macOS + Linux, all gates
 (`fmt`/`clippy -D warnings`/`test`) enforced. Schema at migration 11.
 
 - **Proven core**: evidence-gated memory + budgeted injection. Flagship
@@ -16,7 +16,7 @@ LEB is prod-shaped: 210 tests, CI green on macOS + Linux, all gates
   127.0.0.1:11436 — service map, clickable service modals (guide section,
   facts, links, memories, module diagrams), activity feed, filterable
   memories, architecture guide with dossier-digest staleness badge.
-  Obsidian vault mirrors it at ~/.leb/vault.
+  Obsidian vault mirrors it at ~/.engram/vault.
 - **Freshness machinery**: daemon watcher re-indexes on committed HEAD
   changes (30 s poll; never on dirty edits) and refreshes shared-truth
   views on origin advance (900 s). Origin/main views are SHADOW projects
@@ -27,7 +27,7 @@ LEB is prod-shaped: 210 tests, CI green on macOS + Linux, all gates
   deps, submodules, hostname references against `hosting.*` facts);
   linked-repo memories inject relevance-gated with source labels, validated
   against the linked repo's own HEAD.
-- **Synthesis**: `leb architect --claude` (opus via claude CLI) or
+- **Synthesis**: `engram architect --claude` (opus via claude CLI) or
   `--model` (local runtime) writes the vault ARCHITECTURE.md with an
   embedded dossier digest.
 

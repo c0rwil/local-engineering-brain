@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-/// Errors produced by the LEB core.
+/// Errors produced by the Engram core.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("configuration error: {0}")]

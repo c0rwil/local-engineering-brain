@@ -11,8 +11,8 @@ use tempfile::TempDir;
 fn mcp_binary_autostarts_daemon_and_serves_json_rpc() {
     let temp = TempDir::new().expect("temp");
     let database = temp.path().join("brain.sqlite");
-    let socket = temp.path().join("lebd.sock");
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("leb-mcp"))
+    let socket = temp.path().join("engramd.sock");
+    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("engram-mcp"))
         .args([
             "--db",
             database.to_str().expect("db path"),
@@ -39,7 +39,7 @@ fn mcp_binary_autostarts_daemon_and_serves_json_rpc() {
     );
     let initialized = read_response(&mut stdout);
     assert_eq!(initialized["id"], 1);
-    assert_eq!(initialized["result"]["serverInfo"]["name"], "leb-mcp");
+    assert_eq!(initialized["result"]["serverInfo"]["name"], "engram-mcp");
 
     write_request(
         &mut stdin,
@@ -58,7 +58,7 @@ fn mcp_binary_autostarts_daemon_and_serves_json_rpc() {
 
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let stopped = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+        let stopped = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
             .args([
                 "--db",
                 database.to_str().expect("db path"),

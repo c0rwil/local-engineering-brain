@@ -14,7 +14,7 @@
 //!
 //! The vector sidecar (`memory_vectors`) is **rebuildable derived state**,
 //! never canonical truth. It is safe to drop at any time and rebuild from the
-//! canonical `memories` table (`leb semantic rebuild <path>`); losing it
+//! canonical `memories` table (`engram semantic rebuild <path>`); losing it
 //! degrades retrieval to lexical + structural, exactly as spec §27.2 demands.
 
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -29,7 +29,7 @@ const EMBEDDING_DIMENSION_U64: u64 = 256;
 
 /// Stable identity of the built-in embedder; stored per row so a future model
 /// swap can detect and rebuild incompatible vectors.
-pub const EMBEDDER_ID: &str = "leb-hashed-ngram-v1-d256";
+pub const EMBEDDER_ID: &str = "engram-hashed-ngram-v1-d256";
 
 /// Stable, wall-clock-free seed for feature hashing.
 const FEATURE_SEED: u64 = 0x1eb5_ed00_c0de_0001;

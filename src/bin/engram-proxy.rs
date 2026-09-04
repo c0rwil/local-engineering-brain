@@ -2,10 +2,14 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use leb::config::{Config, ConfigOverrides};
+use engram::config::{Config, ConfigOverrides};
 
 #[derive(Debug, Parser)]
-#[command(name = "leb-proxy", version, about = "LEB-compatible inference proxy")]
+#[command(
+    name = "engram-proxy",
+    version,
+    about = "Engram-compatible inference proxy"
+)]
 struct Cli {
     /// Override the runtime base URL.
     #[arg(long)]
@@ -39,13 +43,13 @@ fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("leb-proxy: {error}");
+            eprintln!("engram-proxy: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn run(cli: Cli) -> leb::Result<()> {
+fn run(cli: Cli) -> engram::Result<()> {
     let overrides = ConfigOverrides {
         db_path: cli.db.clone(),
         ..ConfigOverrides::default()
@@ -54,19 +58,19 @@ fn run(cli: Cli) -> leb::Result<()> {
     let config = apply_cli(config, cli)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .thread_name("leb-proxy-runtime")
+        .thread_name("engram-proxy-runtime")
         .build()
-        .map_err(|error| leb::Error::Daemon(format!("failed to start runtime: {error}")))?;
+        .map_err(|error| engram::Error::Daemon(format!("failed to start runtime: {error}")))?;
     runtime.block_on(async {
-        leb::autostart::ensure_daemon(&config).await?;
-        leb::proxy::serve_until(config, async {
+        engram::autostart::ensure_daemon(&config).await?;
+        engram::proxy::serve_until(config, async {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await
     })
 }
 
-fn apply_cli(mut config: Config, cli: Cli) -> leb::Result<Config> {
+fn apply_cli(mut config: Config, cli: Cli) -> engram::Result<Config> {
     if let Some(runtime) = cli.runtime {
         config.proxy.runtime_url = runtime;
     }
@@ -94,20 +98,25 @@ mod tests {
     fn remote_cli_requires_both_independent_opt_ins() {
         let remote = "https://runtime.example.com";
 
-        let cli = Cli::try_parse_from(["leb-proxy", "--runtime", remote, "--no-local-only"])
+        let cli = Cli::try_parse_from(["engram-proxy", "--runtime", remote, "--no-local-only"])
             .expect("CLI");
         let error = apply_cli(Config::default(), cli)
             .expect_err("broad network opt-in alone must not allow remote runtime");
         assert!(error.to_string().contains("allow_remote_runtime"));
 
-        let cli = Cli::try_parse_from(["leb-proxy", "--runtime", remote, "--allow-remote-runtime"])
-            .expect("CLI");
+        let cli = Cli::try_parse_from([
+            "engram-proxy",
+            "--runtime",
+            remote,
+            "--allow-remote-runtime",
+        ])
+        .expect("CLI");
         let error = apply_cli(Config::default(), cli)
             .expect_err("proxy opt-in alone must not disable local-only mode");
         assert!(error.to_string().contains("network.local_only = false"));
 
         let cli = Cli::try_parse_from([
-            "leb-proxy",
+            "engram-proxy",
             "--runtime",
             remote,
             "--allow-remote-runtime",

@@ -1,4 +1,4 @@
-//! Local diagnostics used by `leb doctor`.
+//! Local diagnostics used by `engram doctor`.
 
 use serde::{Deserialize, Serialize};
 
@@ -127,7 +127,7 @@ impl DoctorReport {
                     config.web.port
                 )
             } else {
-                "disabled ([web] enabled = false); `leb web` still works manually".to_owned()
+                "disabled ([web] enabled = false); `engram web` still works manually".to_owned()
             },
         });
 

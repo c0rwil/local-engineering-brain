@@ -10,15 +10,15 @@ readonly MTPLX_CLAUDE_MODEL_ID="${MTPLX_CLAUDE_MODEL_ID:-mtplx-qwen38-27b-optimi
 readonly MTPLX_CLAUDE_BASE_URL="http://${MTPLX_CLAUDE_HOST}:${MTPLX_CLAUDE_PORT}"
 readonly MTPLX_CLAUDE_LOG_DIR="${MTPLX_LOG_DIR:-${HOME}/.mtplx/logs}"
 readonly MTPLX_CLAUDE_LOG="${MTPLX_CLAUDE_LOG_DIR}/claude-code-${MTPLX_CLAUDE_MODEL_ID}.log"
-readonly LEB_BIN_DIR="${LEB_BIN_DIR:-${HOME}/.local/bin}"
-readonly LEB_STATE_DIR="${LEB_STATE_DIR:-${HOME}/.leb}"
-readonly LEB_PROXY_HOST="${LEB_PROXY_HOST:-127.0.0.1}"
-readonly LEB_PROXY_PORT="${LEB_PROXY_PORT:-11435}"
-readonly LEB_PROXY_BASE_URL="http://${LEB_PROXY_HOST}:${LEB_PROXY_PORT}"
-readonly LEB_LOG_DIR="${LEB_STATE_DIR}/logs"
-readonly LEB_PROXY_LOG="${LEB_LOG_DIR}/claude-code-proxy.log"
-readonly LEB_PROXY_PID_FILE="${LEB_STATE_DIR}/claude-code-proxy.pid"
-readonly LEB_PROXY_LOCK="${LEB_STATE_DIR}/claude-code-proxy.lock"
+readonly ENGRAM_BIN_DIR="${ENGRAM_BIN_DIR:-${HOME}/.local/bin}"
+readonly ENGRAM_STATE_DIR="${ENGRAM_STATE_DIR:-${HOME}/.engram}"
+readonly ENGRAM_PROXY_HOST="${ENGRAM_PROXY_HOST:-127.0.0.1}"
+readonly ENGRAM_PROXY_PORT="${ENGRAM_PROXY_PORT:-11435}"
+readonly ENGRAM_PROXY_BASE_URL="http://${ENGRAM_PROXY_HOST}:${ENGRAM_PROXY_PORT}"
+readonly ENGRAM_LOG_DIR="${ENGRAM_STATE_DIR}/logs"
+readonly ENGRAM_PROXY_LOG="${ENGRAM_LOG_DIR}/claude-code-proxy.log"
+readonly ENGRAM_PROXY_PID_FILE="${ENGRAM_STATE_DIR}/claude-code-proxy.pid"
+readonly ENGRAM_PROXY_LOCK="${ENGRAM_STATE_DIR}/claude-code-proxy.lock"
 readonly MTPLX_LOCK="${MTPLX_CLAUDE_LOG_DIR}/claude-code-start.lock"
 
 usage() {
@@ -27,13 +27,13 @@ usage() {
   print "Wrapper options (do not start the model):"
   print "  --help             Show this help"
   print "  --version          Show Claude Code version"
-  print "  --server-status    Show MTPLX and LEB proxy status"
-  print "  --stop-brain       Stop only this launcher's LEB proxy/daemon"
-  print "  --stop-server      Stop this launcher's LEB proxy/daemon and MTPLX"
+  print "  --server-status    Show MTPLX and Engram proxy status"
+  print "  --stop-brain       Stop only this launcher's Engram proxy/daemon"
+  print "  --stop-server      Stop this launcher's Engram proxy/daemon and MTPLX"
   print ""
-  print "Environment: LEB_MODE=brain|off, optional LEB_TOKEN_BUDGET,"
-  print "MTPLX_BIN, CLAUDE_BIN, LEB_BIN_DIR, LEB_STATE_DIR, LEB_DB_PATH,"
-  print "LEB_SOCKET_PATH, LEB_PROXY_PORT, and MTPLX_CLAUDE_PORT."
+  print "Environment: ENGRAM_MODE=brain|off, optional ENGRAM_TOKEN_BUDGET,"
+  print "MTPLX_BIN, CLAUDE_BIN, ENGRAM_BIN_DIR, ENGRAM_STATE_DIR, ENGRAM_DB_PATH,"
+  print "ENGRAM_SOCKET_PATH, ENGRAM_PROXY_PORT, and MTPLX_CLAUDE_PORT."
 }
 
 resolve_command() {
@@ -90,27 +90,27 @@ mtplx_status() {
   return 1
 }
 
-leb_proxy_ready() {
+engram_proxy_ready() {
   "${CURL_CMD}" --fail --silent --show-error --max-time 2 \
-    "${LEB_PROXY_BASE_URL}/health" 2>/dev/null \
+    "${ENGRAM_PROXY_BASE_URL}/health" 2>/dev/null \
     | "${JQ_CMD}" -e '.status == "ok"' >/dev/null 2>&1
 }
 
-leb_proxy_status() {
-  if leb_proxy_ready; then
-    print "LEB proxy is ready on ${LEB_PROXY_BASE_URL}."
+engram_proxy_status() {
+  if engram_proxy_ready; then
+    print "Engram proxy is ready on ${ENGRAM_PROXY_BASE_URL}."
     return 0
   fi
-  print "LEB proxy is not running on ${LEB_PROXY_BASE_URL}."
+  print "Engram proxy is not running on ${ENGRAM_PROXY_BASE_URL}."
   return 1
 }
 
 stop_leb_proxy() {
-  if [[ -f "${LEB_PROXY_PID_FILE}" ]]; then
-    local proxy_pid="$(<"${LEB_PROXY_PID_FILE}")"
+  if [[ -f "${ENGRAM_PROXY_PID_FILE}" ]]; then
+    local proxy_pid="$(<"${ENGRAM_PROXY_PID_FILE}")"
     if [[ "${proxy_pid}" == <-> ]]; then
       local command="$(ps -p "${proxy_pid}" -o command= 2>/dev/null || true)"
-      if [[ -n "${command}" && "${command}" == *"leb-proxy"* ]]; then
+      if [[ -n "${command}" && "${command}" == *"engram-proxy"* ]]; then
         kill "${proxy_pid}"
         for _ in {1..50}; do
           kill -0 "${proxy_pid}" 2>/dev/null || break
@@ -118,16 +118,16 @@ stop_leb_proxy() {
         done
       fi
     else
-      print -u2 "Ignoring invalid LEB proxy PID file."
+      print -u2 "Ignoring invalid Engram proxy PID file."
     fi
-    rm -f -- "${LEB_PROXY_PID_FILE}"
+    rm -f -- "${ENGRAM_PROXY_PID_FILE}"
   fi
-  if [[ -S "${LEB_SOCKET_PATH:-${LEB_STATE_DIR}/lebd.sock}" && -x "${LEB_BIN_DIR}/leb" ]]; then
+  if [[ -S "${ENGRAM_SOCKET_PATH:-${ENGRAM_STATE_DIR}/engramd.sock}" && -x "${ENGRAM_BIN_DIR}/engram" ]]; then
     local db_args=()
-    [[ -n "${LEB_DB_PATH:-}" ]] && db_args=(--db "${LEB_DB_PATH}")
-    "${LEB_BIN_DIR}/leb" \
+    [[ -n "${ENGRAM_DB_PATH:-}" ]] && db_args=(--db "${ENGRAM_DB_PATH}")
+    "${ENGRAM_BIN_DIR}/engram" \
       "${db_args[@]}" \
-      --socket "${LEB_SOCKET_PATH:-${LEB_STATE_DIR}/lebd.sock}" daemon stop >/dev/null 2>&1 || true
+      --socket "${ENGRAM_SOCKET_PATH:-${ENGRAM_STATE_DIR}/engramd.sock}" daemon stop >/dev/null 2>&1 || true
   fi
 }
 
@@ -135,7 +135,7 @@ case "${1:-}" in
   --server-status)
     status_rc=0
     mtplx_status || status_rc=1
-    leb_proxy_status || status_rc=1
+    engram_proxy_status || status_rc=1
     exit "${status_rc}"
     ;;
   --stop-brain)
@@ -200,53 +200,53 @@ start_server_if_needed() {
 
 wait_for_leb_proxy() {
   for _ in {1..100}; do
-    leb_proxy_ready && return 0
+    engram_proxy_ready && return 0
     sleep 0.1
   done
-  print -u2 "LEB proxy did not become ready. See ${LEB_PROXY_LOG}"
+  print -u2 "Engram proxy did not become ready. See ${ENGRAM_PROXY_LOG}"
   return 1
 }
 
 start_leb_proxy_if_needed() {
-  leb_proxy_ready && return 0
-  [[ -x "${LEB_BIN_DIR}/leb-proxy" ]] || {
-    print -u2 "Missing ${LEB_BIN_DIR}/leb-proxy; reinstall LEB first."
+  engram_proxy_ready && return 0
+  [[ -x "${ENGRAM_BIN_DIR}/engram-proxy" ]] || {
+    print -u2 "Missing ${ENGRAM_BIN_DIR}/engram-proxy; reinstall Engram first."
     return 1
   }
-  mkdir -p "${LEB_LOG_DIR}"
-  if ! mkdir "${LEB_PROXY_LOCK}" 2>/dev/null; then
+  mkdir -p "${ENGRAM_LOG_DIR}"
+  if ! mkdir "${ENGRAM_PROXY_LOCK}" 2>/dev/null; then
     for _ in {1..100}; do
-      leb_proxy_ready && return 0
+      engram_proxy_ready && return 0
       sleep 0.1
     done
-    print -u2 "Timed out waiting for another LEB proxy launcher."
+    print -u2 "Timed out waiting for another Engram proxy launcher."
     return 1
   fi
-  trap 'rmdir -- "${LEB_PROXY_LOCK}" 2>/dev/null || true' EXIT INT TERM
-  if "${LSOF_CMD}" -nP -iTCP:"${LEB_PROXY_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-    print -u2 "Port ${LEB_PROXY_PORT} is already used by another process."
+  trap 'rmdir -- "${ENGRAM_PROXY_LOCK}" 2>/dev/null || true' EXIT INT TERM
+  if "${LSOF_CMD}" -nP -iTCP:"${ENGRAM_PROXY_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+    print -u2 "Port ${ENGRAM_PROXY_PORT} is already used by another process."
     return 1
   fi
   local socket_args=()
-  [[ -n "${LEB_SOCKET_PATH:-}" ]] && socket_args=(--socket "${LEB_SOCKET_PATH}")
-  nohup "${LEB_BIN_DIR}/leb-proxy" \
+  [[ -n "${ENGRAM_SOCKET_PATH:-}" ]] && socket_args=(--socket "${ENGRAM_SOCKET_PATH}")
+  nohup "${ENGRAM_BIN_DIR}/engram-proxy" \
     --runtime "${MTPLX_CLAUDE_BASE_URL}" \
-    --bind "${LEB_PROXY_HOST}:${LEB_PROXY_PORT}" \
-    "${socket_args[@]}" >"${LEB_PROXY_LOG}" 2>&1 &
-  print -r -- "$!" >"${LEB_PROXY_PID_FILE}"
+    --bind "${ENGRAM_PROXY_HOST}:${ENGRAM_PROXY_PORT}" \
+    "${socket_args[@]}" >"${ENGRAM_PROXY_LOG}" 2>&1 &
+  print -r -- "$!" >"${ENGRAM_PROXY_PID_FILE}"
   wait_for_leb_proxy
-  rmdir -- "${LEB_PROXY_LOCK}" 2>/dev/null || true
+  rmdir -- "${ENGRAM_PROXY_LOCK}" 2>/dev/null || true
   trap - EXIT INT TERM
 }
 
-readonly LEB_REQUEST_MODE="${LEB_MODE:-brain}"
-if [[ "${LEB_REQUEST_MODE}" != "brain" && "${LEB_REQUEST_MODE}" != "off" ]]; then
-  print -u2 "LEB_MODE must be 'brain' or 'off'."
+readonly ENGRAM_REQUEST_MODE="${ENGRAM_MODE:-brain}"
+if [[ "${ENGRAM_REQUEST_MODE}" != "brain" && "${ENGRAM_REQUEST_MODE}" != "off" ]]; then
+  print -u2 "ENGRAM_MODE must be 'brain' or 'off'."
   exit 2
 fi
-if [[ -n "${LEB_TOKEN_BUDGET:-}" ]] && \
-  { [[ "${LEB_TOKEN_BUDGET}" != <-> ]] || [[ "${LEB_TOKEN_BUDGET}" -eq 0 ]]; }; then
-  print -u2 "LEB_TOKEN_BUDGET must be a positive integer when set."
+if [[ -n "${ENGRAM_TOKEN_BUDGET:-}" ]] && \
+  { [[ "${ENGRAM_TOKEN_BUDGET}" != <-> ]] || [[ "${ENGRAM_TOKEN_BUDGET}" -eq 0 ]]; }; then
+  print -u2 "ENGRAM_TOKEN_BUDGET must be a positive integer when set."
   exit 2
 fi
 if [[ "${PWD}" == *$'\n'* || "${PWD}" == *$'\r'* ]]; then
@@ -257,22 +257,22 @@ fi
 start_server_if_needed
 start_leb_proxy_if_needed
 
-local_headers="x-leb-project-path: ${PWD}
-x-leb-mode: ${LEB_REQUEST_MODE}"
-if [[ -n "${LEB_INJECTION_FRAMING:-}" ]]; then
-  case "${LEB_INJECTION_FRAMING}" in
+local_headers="x-engram-project-path: ${PWD}
+x-engram-mode: ${ENGRAM_REQUEST_MODE}"
+if [[ -n "${ENGRAM_INJECTION_FRAMING:-}" ]]; then
+  case "${ENGRAM_INJECTION_FRAMING}" in
     reference|directive) local_headers="${local_headers}
-x-leb-injection-framing: ${LEB_INJECTION_FRAMING}" ;;
-    *) print -u2 "invalid LEB_INJECTION_FRAMING (reference|directive)"; exit 64 ;;
+x-engram-injection-framing: ${ENGRAM_INJECTION_FRAMING}" ;;
+    *) print -u2 "invalid ENGRAM_INJECTION_FRAMING (reference|directive)"; exit 64 ;;
   esac
 fi
-if [[ -n "${LEB_TOKEN_BUDGET:-}" ]]; then
+if [[ -n "${ENGRAM_TOKEN_BUDGET:-}" ]]; then
   local_headers="${local_headers}
-x-leb-token-budget: ${LEB_TOKEN_BUDGET}"
+x-engram-token-budget: ${ENGRAM_TOKEN_BUDGET}"
 fi
 export ANTHROPIC_API_KEY=""
 export ANTHROPIC_AUTH_TOKEN="${MTPLX_API_KEY:-local-mtplx}"
-export ANTHROPIC_BASE_URL="${LEB_PROXY_BASE_URL}"
+export ANTHROPIC_BASE_URL="${ENGRAM_PROXY_BASE_URL}"
 export ANTHROPIC_CUSTOM_HEADERS="${local_headers}"
 export ANTHROPIC_MODEL="${MTPLX_CLAUDE_MODEL_ID}"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="${MTPLX_CLAUDE_MODEL_ID}"

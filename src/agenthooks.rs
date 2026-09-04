@@ -1,13 +1,13 @@
 //! Stock-agent integration via Claude Code hooks: context injection and
 //! automatic evidence capture with NO proxy and NO agent cooperation.
 //!
-//! `leb hook prompt` runs on `UserPromptSubmit`: the first prompt of a
+//! `engram hook prompt` runs on `UserPromptSubmit`: the first prompt of a
 //! session opens a task episode, compiles brain context for that exact text
 //! (declaring the task for truthful usage provenance), and prints it —
 //! Claude Code adds hook stdout to the model's context. Later prompts print
 //! nothing, mirroring the proxy's session-pinned semantics.
 //!
-//! `leb hook bash` runs on `PostToolUse` for Bash: when the executed command
+//! `engram hook bash` runs on `PostToolUse` for Bash: when the executed command
 //! is a recognizable verification (test/build/lint/typecheck), its exit code
 //! is recorded as deterministic evidence on the session's task — including
 //! FAILURES, which is exactly what fail-then-pass preference distillation
@@ -207,7 +207,7 @@ pub fn render_session_brief(
     if open.is_empty() && last_completed.is_none() {
         return None;
     }
-    let mut brief = format!("# LEB session brief — {project_name}\n");
+    let mut brief = format!("# Engram session brief — {project_name}\n");
     if !open.is_empty() {
         brief.push_str("Open episodes from earlier sessions (resume or close them):\n");
         for (id, prompt, started_at_ms) in open.iter().take(3) {
@@ -434,19 +434,19 @@ pub fn auto_close_outcome(last_verification_exit: Option<i32>) -> &'static str {
 
 /// The hooks block written into a repo's `.claude/settings.json`.
 #[must_use]
-pub fn claude_hooks_json(leb_binary: &str) -> serde_json::Value {
+pub fn claude_hooks_json(engram_binary: &str) -> serde_json::Value {
     serde_json::json!({
         "SessionStart": [{
             "hooks": [{
                 "type": "command",
-                "command": format!("{leb_binary} hook session-start"),
+                "command": format!("{engram_binary} hook session-start"),
                 "timeout": 15
             }]
         }],
         "UserPromptSubmit": [{
             "hooks": [{
                 "type": "command",
-                "command": format!("{leb_binary} hook prompt"),
+                "command": format!("{engram_binary} hook prompt"),
                 "timeout": 30
             }]
         }],
@@ -454,7 +454,7 @@ pub fn claude_hooks_json(leb_binary: &str) -> serde_json::Value {
             "matcher": "Read|Edit|Write|MultiEdit",
             "hooks": [{
                 "type": "command",
-                "command": format!("{leb_binary} hook pretool"),
+                "command": format!("{engram_binary} hook pretool"),
                 "timeout": 10
             }]
         }],
@@ -462,14 +462,14 @@ pub fn claude_hooks_json(leb_binary: &str) -> serde_json::Value {
             "matcher": "Bash",
             "hooks": [{
                 "type": "command",
-                "command": format!("{leb_binary} hook bash"),
+                "command": format!("{engram_binary} hook bash"),
                 "timeout": 15
             }]
         }],
         "SessionEnd": [{
             "hooks": [{
                 "type": "command",
-                "command": format!("{leb_binary} hook session-end"),
+                "command": format!("{engram_binary} hook session-end"),
                 "timeout": 15
             }]
         }]
@@ -481,19 +481,19 @@ pub fn claude_hooks_json(leb_binary: &str) -> serde_json::Value {
 /// — the `--codex` flag switches the emitter. Evidence capture and session
 /// close are format-agnostic.
 #[must_use]
-pub fn codex_hooks_json(leb_binary: &str) -> serde_json::Value {
+pub fn codex_hooks_json(engram_binary: &str) -> serde_json::Value {
     serde_json::json!({
         "SessionStart": [{
             "hooks": [{
                 "type": "command",
-                "command": format!("{leb_binary} hook session-start --codex"),
+                "command": format!("{engram_binary} hook session-start --codex"),
                 "timeout": 15
             }]
         }],
         "UserPromptSubmit": [{
             "hooks": [{
                 "type": "command",
-                "command": format!("{leb_binary} hook prompt --codex"),
+                "command": format!("{engram_binary} hook prompt --codex"),
                 "timeout": 30
             }]
         }],
@@ -501,7 +501,7 @@ pub fn codex_hooks_json(leb_binary: &str) -> serde_json::Value {
             "matcher": "Read|Edit|Write",
             "hooks": [{
                 "type": "command",
-                "command": format!("{leb_binary} hook pretool --codex"),
+                "command": format!("{engram_binary} hook pretool --codex"),
                 "timeout": 10
             }]
         }],
@@ -509,14 +509,14 @@ pub fn codex_hooks_json(leb_binary: &str) -> serde_json::Value {
             "matcher": "Bash|shell",
             "hooks": [{
                 "type": "command",
-                "command": format!("{leb_binary} hook bash"),
+                "command": format!("{engram_binary} hook bash"),
                 "timeout": 15
             }]
         }],
         "SessionEnd": [{
             "hooks": [{
                 "type": "command",
-                "command": format!("{leb_binary} hook session-end"),
+                "command": format!("{engram_binary} hook session-end"),
                 "timeout": 15
             }]
         }]

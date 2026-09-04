@@ -1,6 +1,6 @@
 # From one machine to a company-wide brain
 
-The path from today's single-workstation LEB to a team deployment where
+The path from today's single-workstation Engram to a team deployment where
 nobody ever pays for a rediscovery someone else already made. Server
 mechanics live in [CENTRAL_SERVER.md](CENTRAL_SERVER.md); this document is
 the rollout sequence and the operating model.
@@ -12,7 +12,7 @@ the rollout sequence and the operating model.
         CI webhook ────────────────────────────────┐
                                                    ▼
                                         ┌─────────────────────┐
-   engineer laptops                     │   CENTRAL LEB        │
+   engineer laptops                     │   CENTRAL Engram        │
   ┌──────────────┐   pull validated     │  · origin/main views │
   │ local brain  │◄─────────────────────│  · validated KB      │
   │ (per person) │   offer candidates   │  · per-repo facts,   │
@@ -42,13 +42,13 @@ best brain we have:
 
 ```bash
 # on the workstation that has the knowledge today
-leb backup create                      # transactional snapshot
+engram backup create                      # transactional snapshot
 
 # on the central host
 ./scripts/install.sh
-cp <backup>.sqlite ~/.leb/brain.sqlite # BEFORE first daemon start
+cp <backup>.sqlite ~/.engram/brain.sqlite # BEFORE first daemon start
 # clone every tracked repo (read-only checkouts), then:
-leb index <each-repo> --origin         # seed the shared origin/main views
+engram index <each-repo> --origin         # seed the shared origin/main views
 ```
 
 Bind the browser/API beyond loopback **only** with a bearer token
@@ -66,7 +66,7 @@ safety net. Result: central is never more than one merge behind reality,
 and no human ever refreshes anything.
 
 Adding a repo to the company KB later is the same two steps: clone +
-`leb index` on central, add the workflow. Its knowledge base starts from
+`engram index` on central, add the workflow. Its knowledge base starts from
 structure (graph, tech stack, auto-links) and grows as people work in it.
 
 ## Phase 3 — roll out to engineers
@@ -75,15 +75,15 @@ Each engineer, once:
 
 ```bash
 ./scripts/install.sh
-leb hooks install --global && leb agent-md --global   # every agent, every repo
-leb index <the repos they work in>                    # opt-in per repo
+engram hooks install --global && engram agent-md --global   # every agent, every repo
+engram index <the repos they work in>                    # opt-in per repo
 ```
 
-and in `~/.config/leb/config.toml`:
+and in `~/.config/engram/config.toml`:
 
 ```toml
 [sync]
-central_url = "https://leb.internal.example.com"
+central_url = "https://engram.internal.example.com"
 token = "…"          # per-user or shared bearer
 ```
 
@@ -124,7 +124,7 @@ The reason engineers never fall back to "huge rediscovery":
 - One curator (or a rotation) reviews the offered-candidates queue in the
   central browser; cadence of minutes per week, not hours.
 - Central's daily transactional backups (7 kept) are the disaster story;
-  `leb backup verify` in a cron proves them restorable.
+  `engram backup verify` in a cron proves them restorable.
 - Private repos stay private: sync moves *knowledge* (memories, facts,
   links), never source code. Engineers without access to a repo simply
   have nothing local for its knowledge to attach to.

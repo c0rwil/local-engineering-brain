@@ -1,3 +1,15 @@
+## Engram rename (2026-09-04)
+
+The product is now **Engram** (an engram is the physical trace a memory
+leaves in a brain). Binaries: `engram`, `engramd`, `engram-proxy`,
+`engram-mcp`; state `~/.engram`; config `~/.config/engram/config.toml`;
+env vars `ENGRAM_*`; proxy headers `x-engram-*`; MCP tools `engram_*`.
+Compatibility: the installer keeps `leb`/`lebd`/`leb-proxy`/`leb-mcp`
+symlinks, `~/.leb` and `~/.config/leb` migrate automatically on first
+run, repositories carrying a legacy `.leb/` metadata dir keep it (identity
+never fractures), and `hooks install` / `agent-md` refresh pre-rename
+entries in place.
+
 # Changelog
 
 All notable changes to this project are documented in this file.

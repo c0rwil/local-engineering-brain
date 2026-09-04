@@ -144,7 +144,7 @@ impl ProjectRegistry {
     /// `requested_path`. Never registers, never persists metadata, never
     /// records an alias — this is what universal (user-level) agent hooks
     /// use, so a global install cannot silently enroll repositories;
-    /// `leb index <repo>` stays the explicit opt-in.
+    /// `engram index <repo>` stays the explicit opt-in.
     ///
     /// # Errors
     ///
@@ -313,7 +313,7 @@ impl ProjectRegistry {
         if metadata_was_persisted {
             persist_project_metadata(&root, &project)?;
         }
-        // Persisting `.leb/project.toml` changes the working tree, so the
+        // Persisting `.engram/project.toml` changes the working tree, so the
         // pre-write observation is stale for brand-new projects. Recompute so
         // callers never record a fingerprint the next observation contradicts.
         let git = if metadata_was_persisted && git.is_some() {
@@ -759,8 +759,21 @@ fn project_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectRecord> 
     })
 }
 
+/// Metadata directory for a repository root: `.engram/`, or the legacy
+/// `.leb/` when a checkout still carries one (identity must never fracture
+/// across a rename — the pinned project id travels in whichever exists).
+#[must_use]
+pub fn metadata_dir(root: &Path) -> PathBuf {
+    let current = root.join(".engram");
+    if current.exists() {
+        return current;
+    }
+    let legacy = root.join(".leb");
+    if legacy.exists() { legacy } else { current }
+}
+
 fn read_project_metadata(root: &Path) -> Result<Option<ProjectMetadataFile>> {
-    let path = root.join(".leb/project.toml");
+    let path = metadata_dir(root).join("project.toml");
     if !path.exists() {
         return Ok(None);
     }
@@ -774,7 +787,7 @@ fn read_project_metadata(root: &Path) -> Result<Option<ProjectMetadataFile>> {
 }
 
 fn persist_project_metadata(root: &Path, project: &ProjectRecord) -> Result<()> {
-    let directory = root.join(".leb");
+    let directory = metadata_dir(root);
     let path = directory.join("project.toml");
     if path.exists() {
         return Ok(());
@@ -798,7 +811,7 @@ fn discover_component(requested_path: &Path, project_root: &Path) -> Result<Opti
         if directory == project_root {
             break;
         }
-        let marker = directory.join(".leb/component.toml");
+        let marker = directory.join(".engram/component.toml");
         if marker.exists() {
             let contents =
                 fs::read_to_string(&marker).map_err(|source| io_error(&marker, source))?;
@@ -988,7 +1001,7 @@ fn push_changed_path(paths: &mut Vec<PathBuf>, raw: &[u8]) -> Result<()> {
     let path = path_from_git_bytes(raw);
     // Every component must be a normal segment: this rejects absolute paths,
     // `..` traversal, and `./`-prefixed paths. A leading `./` (which Git never
-    // emits) would otherwise defeat the `.git`/`.leb` prefix filter below,
+    // emits) would otherwise defeat the `.git`/`.engram` prefix filter below,
     // because `Path::starts_with(".git")` does not match `./.git/...`.
     if path.as_os_str().is_empty()
         || path.is_absolute()
@@ -998,7 +1011,7 @@ fn push_changed_path(paths: &mut Vec<PathBuf>, raw: &[u8]) -> Result<()> {
     {
         return Err(Error::Git("unsafe path in Git status output".to_owned()));
     }
-    if path.starts_with(".git") || path.starts_with(".leb") {
+    if path.starts_with(".git") || path.starts_with(".engram") || path.starts_with(".leb") {
         return Ok(());
     }
     paths.push(path);
@@ -1257,6 +1270,41 @@ mod tests {
     }
 
     #[test]
+    fn legacy_leb_metadata_dir_keeps_identity_and_stays_the_write_target() {
+        let temp = TempDir::new().expect("temp");
+        let registry = registry(&temp);
+        let repo = temp.path().join("legacy");
+        fs::create_dir_all(repo.join(".leb")).expect("legacy dir");
+        fs::write(
+            repo.join(".leb/project.toml"),
+            "project_id = \"prj_a11ce000-b31c-4f2e-9e01-000000000042\"\nname = \"legacy\"\n",
+        )
+        .expect("legacy metadata");
+
+        let resolved = registry.resolve_or_register(&repo).expect("resolve");
+        assert_eq!(
+            resolved.project.id.as_str(),
+            "prj_a11ce000-b31c-4f2e-9e01-000000000042",
+            "pinned identity survives the rename"
+        );
+        assert!(
+            !repo.join(".engram").exists(),
+            "an existing legacy dir stays the metadata home; no parallel .engram"
+        );
+        assert_eq!(metadata_dir(&repo), repo.join(".leb"));
+
+        let fresh = temp.path().join("fresh");
+        fs::create_dir_all(&fresh).expect("fresh");
+        registry
+            .resolve_or_register(&fresh)
+            .expect("register fresh");
+        assert!(
+            fresh.join(".engram/project.toml").exists(),
+            "new repos use .engram"
+        );
+    }
+
+    #[test]
     fn lookup_is_read_only_and_finds_registered_projects() {
         let temp = TempDir::new().expect("temp");
         let registry = registry(&temp);
@@ -1266,7 +1314,7 @@ mod tests {
         let unknown = registry.lookup(&repo).expect("lookup unknown");
         assert!(unknown.is_none(), "unregistered path must resolve to None");
         assert!(
-            !repo.join(".leb").exists(),
+            !repo.join(".engram").exists(),
             "lookup must never persist metadata"
         );
 
@@ -1296,8 +1344,8 @@ mod tests {
     fn init_repo(path: &Path) {
         fs::create_dir_all(path).expect("repo dir");
         run_git(path, &["init", "-q"]);
-        run_git(path, &["config", "user.email", "leb@example.invalid"]);
-        run_git(path, &["config", "user.name", "LEB Tests"]);
+        run_git(path, &["config", "user.email", "engram@example.invalid"]);
+        run_git(path, &["config", "user.name", "Engram Tests"]);
         fs::write(path.join("README.md"), "initial\n").expect("fixture file");
         run_git(path, &["add", "README.md"]);
         run_git(path, &["commit", "-qm", "initial"]);
@@ -1307,10 +1355,10 @@ mod tests {
     fn test_explicit_project_uuid_wins_over_path() {
         let temp = TempDir::new().expect("temp dir");
         let repo = temp.path().join("repo");
-        fs::create_dir_all(repo.join(".leb")).expect("metadata dir");
+        fs::create_dir_all(repo.join(".engram")).expect("metadata dir");
         let explicit = "prj_11111111-1111-4111-8111-111111111111";
         fs::write(
-            repo.join(".leb/project.toml"),
+            repo.join(".engram/project.toml"),
             format!("project_id = '{explicit}'\n"),
         )
         .expect("metadata");
@@ -1341,7 +1389,12 @@ mod tests {
         init_repo(&main);
         run_git(
             &main,
-            &["remote", "add", "origin", "git@github.com:example/leb.git"],
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:example/engram.git",
+            ],
         );
         run_git(
             &main,
@@ -1420,9 +1473,9 @@ mod tests {
         let repo = temp.path().join("repo");
         init_repo(&repo);
         let component = repo.join("services/api");
-        fs::create_dir_all(component.join(".leb")).expect("component dir");
+        fs::create_dir_all(component.join(".engram")).expect("component dir");
         fs::write(
-            component.join(".leb/component.toml"),
+            component.join(".engram/component.toml"),
             "component_id = 'cmp_api'\nname = 'API'\n",
         )
         .expect("component marker");
@@ -1440,7 +1493,7 @@ mod tests {
         let resolved = registry(&temp)
             .resolve_or_register(&project)
             .expect("resolved");
-        let metadata = fs::read_to_string(project.join(".leb/project.toml")).expect("metadata");
+        let metadata = fs::read_to_string(project.join(".engram/project.toml")).expect("metadata");
         assert!(metadata.contains(resolved.project.id.as_str()));
     }
 
@@ -1550,7 +1603,7 @@ mod tests {
 
     #[test]
     fn copies_carrying_project_metadata_share_identity_across_remotes() {
-        // Benchmark-integrity contract: a `.leb/project.toml` traveling with
+        // Benchmark-integrity contract: a `.engram/project.toml` traveling with
         // a checkout pins identity even when clones carry different
         // local-path remotes. Copies WITHOUT metadata and without a hosted
         // remote deliberately mint new identities (an independent repo with
@@ -1571,10 +1624,10 @@ mod tests {
             .resolve_or_register(&temp.path().join("first"))
             .expect("first clone");
         // Carry the metadata the way the benchmark fixture does.
-        fs::create_dir_all(second.join(".leb")).expect("metadata dir");
+        fs::create_dir_all(second.join(".engram")).expect("metadata dir");
         fs::copy(
-            temp.path().join("first/.leb/project.toml"),
-            second.join(".leb/project.toml"),
+            temp.path().join("first/.engram/project.toml"),
+            second.join(".engram/project.toml"),
         )
         .expect("carry metadata");
         let arm = registry.resolve_or_register(&second).expect("second clone");

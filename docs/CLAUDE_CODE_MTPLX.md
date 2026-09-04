@@ -1,34 +1,34 @@
-# Claude Code + MTPLX + LEB
+# Claude Code + MTPLX + Engram
 
 ## Installed topology
 
 ```text
 Claude Code
-  ├─ stdio MCP → leb-mcp → lebd
-  └─ Anthropic /v1/messages → leb-proxy :11435 → MTPLX :8010
+  ├─ stdio MCP → engram-mcp → engramd
+  └─ Anthropic /v1/messages → engram-proxy :11435 → MTPLX :8010
 ```
 
-`leb-mcp` and `leb-proxy` auto-start `lebd`. MTPLX remains runtime-owned and can be stopped without
+`engram-mcp` and `engram-proxy` auto-start `engramd`. MTPLX remains runtime-owned and can be stopped without
 touching the durable brain.
 
 ## Claude MCP option
 
 ```bash
-claude mcp add --scope user leb -- "$HOME/.local/bin/leb-mcp"
-claude mcp get leb
+claude mcp add --scope user engram -- "$HOME/.local/bin/engram-mcp"
+claude mcp get engram
 ```
 
-Remove it with `claude mcp remove --scope user leb`.
+Remove it with `claude mcp remove --scope user engram`.
 
 ## Optimized Speed launcher
 
 The local launcher `~/.local/bin/claude-mtplx` starts
-`Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed`, then starts the LEB proxy with MTPLX as its runtime,
+`Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed`, then starts the Engram proxy with MTPLX as its runtime,
 and launches Claude Code with:
 
 ```text
 ANTHROPIC_BASE_URL=http://127.0.0.1:11435
-ANTHROPIC_CUSTOM_HEADERS=x-leb-project-path: <launch working directory>
+ANTHROPIC_CUSTOM_HEADERS=x-engram-project-path: <launch working directory>
 ```
 
 Run it from the repository whose brain should be active:
@@ -51,16 +51,16 @@ Useful controls:
 claude-mtplx --server-status
 claude-mtplx --stop-brain
 claude-mtplx --stop-server
-leb daemon status
-leb daemon stop
+engram daemon status
+engram daemon stop
 ```
 
 `--help` and `--version` never start MTPLX. The launcher resolves its dependencies instead of
-assuming Homebrew paths; overrides include `MTPLX_BIN`, `CLAUDE_BIN`, `LEB_BIN_DIR`, and
-`LEB_STATE_DIR`. Runtime startup uses filesystem locks and exact validated PID files.
+assuming Homebrew paths; overrides include `MTPLX_BIN`, `CLAUDE_BIN`, `ENGRAM_BIN_DIR`, and
+`ENGRAM_STATE_DIR`. Runtime startup uses filesystem locks and exact validated PID files.
 
-Set `LEB_MODE=off` before either launcher to route the same Claude Code/MTPLX configuration through
-LEB's zero-injection control path. `LEB_TOKEN_BUDGET` is optional; when omitted, the live
+Set `ENGRAM_MODE=off` before either launcher to route the same Claude Code/MTPLX configuration through
+Engram's zero-injection control path. `ENGRAM_TOKEN_BUDGET` is optional; when omitted, the live
 project/user configuration supplies the budget. The wrapper converts explicit values into request
 headers.
 
@@ -80,7 +80,7 @@ whose hardware does not run BF16 well; despite the repository suffix, its weight
 
 ## Privacy boundary
 
-LEB and MTPLX bind only to loopback/Unix sockets. Claude Code nonessential traffic is disabled by
+Engram and MTPLX bind only to loopback/Unix sockets. Claude Code nonessential traffic is disabled by
 the launcher. Do not change `proxy.bind` to a non-loopback address; configuration validation rejects
 it. Project source is sent to the selected local inference runtime, not stored as raw transcripts by
-LEB.
+Engram.

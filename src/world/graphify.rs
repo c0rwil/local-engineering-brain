@@ -18,7 +18,7 @@ use super::structural::{
 const PROVIDER_VERSION: &str = "graphify-json-v1";
 const GLOBAL_PATH: &str = ".graphify/global";
 
-/// Imports an explicit, offline Graphify JSON export into LEB's canonical graph.
+/// Imports an explicit, offline Graphify JSON export into Engram's canonical graph.
 ///
 /// Graphify remains an optional producer. The imported representation is
 /// validated and bounded before it reaches the canonical write transaction.

@@ -124,7 +124,7 @@ impl McpServer {
             .cloned()
             .unwrap_or_else(|| json!({}));
         let output = match name {
-            "leb_project_status" => {
+            "engram_project_status" => {
                 let path = required_string(&arguments, "path")?;
                 serde_json::to_value(
                     self.client
@@ -132,7 +132,7 @@ impl McpServer {
                         .await?,
                 )?
             }
-            "leb_query_world" => {
+            "engram_query_world" => {
                 let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
                 let query = required_string(&arguments, "query")?.to_owned();
                 let limit = optional_u64(&arguments, "limit").unwrap_or(20);
@@ -148,12 +148,12 @@ impl McpServer {
                         .await?,
                 )?
             }
-            "leb_recall" => serde_json::to_value(
+            "engram_recall" => serde_json::to_value(
                 self.client
                     .compile_context(&recall_request(&arguments)?)
                     .await?,
             )?,
-            "leb_explain_context" => {
+            "engram_explain_context" => {
                 let run_id = ContextRunId::parse(required_string(&arguments, "context_run_id")?)?;
                 let ordinal = u32::try_from(optional_u64(&arguments, "ordinal").unwrap_or(1))
                     .map_err(|_| Error::Config("ordinal is too large".to_owned()))?;
@@ -163,7 +163,7 @@ impl McpServer {
                         .await?,
                 )?
             }
-            "leb_get_past_failures" => {
+            "engram_get_past_failures" => {
                 let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
                 let limit = usize::try_from(optional_u64(&arguments, "limit").unwrap_or(20))
                     .map_err(|_| Error::Config("limit is too large".to_owned()))?;
@@ -180,16 +180,16 @@ impl McpServer {
                         .await?,
                 )?
             }
-            "leb_get_memory" => {
+            "engram_get_memory" => {
                 let id = MemoryId::parse(required_string(&arguments, "memory_id")?)?;
                 serde_json::to_value(self.client.get_memory(&id).await?)?
             }
-            "leb_record_human_decision" => serde_json::to_value(
+            "engram_record_human_decision" => serde_json::to_value(
                 self.client
                     .create_memory(&human_decision_request(&arguments)?)
                     .await?,
             )?,
-            "leb_get_skill" => {
+            "engram_get_skill" => {
                 let id = MemoryId::parse(required_string(&arguments, "memory_id")?)?;
                 let memory = self.client.get_memory(&id).await?;
                 if memory
@@ -202,7 +202,7 @@ impl McpServer {
                 }
                 serde_json::to_value(memory)?
             }
-            "leb_task_start" => {
+            "engram_task_start" => {
                 let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
                 serde_json::to_value(
                     self.client
@@ -217,7 +217,7 @@ impl McpServer {
                         .await?,
                 )?
             }
-            "leb_record_attempt" => {
+            "engram_record_attempt" => {
                 let task_id = TaskId::parse(required_string(&arguments, "task_id")?)?;
                 serde_json::to_value(
                     self.client
@@ -235,7 +235,7 @@ impl McpServer {
                         .await?,
                 )?
             }
-            "leb_record_evidence" => {
+            "engram_record_evidence" => {
                 let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
                 serde_json::to_value(
                     self.client
@@ -272,7 +272,7 @@ impl McpServer {
                         .await?,
                 )?
             }
-            "leb_learn" => {
+            "engram_learn" => {
                 let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
                 let task_ids = string_array(&arguments, "task_ids")?
                     .iter()
@@ -314,7 +314,7 @@ impl McpServer {
                         .await?,
                 )?
             }
-            "leb_workspace" => {
+            "engram_workspace" => {
                 let snapshot = self.client.workspace().await?;
                 let summary = snapshot
                     .projects
@@ -335,7 +335,7 @@ impl McpServer {
                     .collect::<Vec<_>>();
                 json!(summary)
             }
-            "leb_symbol_search" => {
+            "engram_symbol_search" => {
                 let query = required_string(&arguments, "query")?.to_owned();
                 let snapshot = self.client.workspace().await?;
                 let mut hits = Vec::new();
@@ -368,11 +368,11 @@ impl McpServer {
                 }
                 json!(hits)
             }
-            "leb_architecture_guide" => {
+            "engram_architecture_guide" => {
                 let dossier = self.client.architect_dossier().await?;
                 json!({ "dossier": dossier })
             }
-            "leb_mark_outcome" => {
+            "engram_mark_outcome" => {
                 let task_id = TaskId::parse(required_string(&arguments, "task_id")?)?;
                 let outcome = parse_task_outcome(required_string(&arguments, "outcome")?)?;
                 serde_json::to_value(
@@ -393,7 +393,7 @@ impl McpServer {
                         .await?,
                 )?
             }
-            "leb_get_invariants" => {
+            "engram_get_invariants" => {
                 let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
                 let limit = usize::try_from(optional_u64(&arguments, "limit").unwrap_or(50))
                     .map_err(|_| Error::Config("limit is too large".to_owned()))?;
@@ -407,7 +407,7 @@ impl McpServer {
                         .await?,
                 )?
             }
-            "leb_get_impact" => {
+            "engram_get_impact" => {
                 let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
                 let node_id = NodeId::parse(required_string(&arguments, "node_id")?)?;
                 let depth = usize::try_from(optional_u64(&arguments, "max_depth").unwrap_or(3))
@@ -426,7 +426,7 @@ impl McpServer {
                         .await?,
                 )?
             }
-            "leb_forget" => {
+            "engram_forget" => {
                 let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
                 let id = MemoryId::parse(required_string(&arguments, "memory_id")?)?;
                 let memory = self
@@ -441,7 +441,7 @@ impl McpServer {
                 }
                 serde_json::to_value(self.client.forget_memory(&id).await?)?
             }
-            _ => return Err(Error::Config(format!("unknown LEB tool `{name}`"))),
+            _ => return Err(Error::Config(format!("unknown Engram tool `{name}`"))),
         };
         Ok(json!({
             "content": [{"type": "text", "text": serde_json::to_string_pretty(&output)?}],
@@ -560,7 +560,7 @@ fn initialize_result(request: &Value) -> Value {
     json!({
         "protocolVersion": protocol,
         "capabilities": {"tools": {"listChanged": false}},
-        "serverInfo": {"name": "leb-mcp", "version": env!("CARGO_PKG_VERSION")}
+        "serverInfo": {"name": "engram-mcp", "version": env!("CARGO_PKG_VERSION")}
     })
 }
 
@@ -570,7 +570,7 @@ fn discover_result() -> Value {
         "capabilities": {"tools": {}},
         "_meta": {
             "io.modelcontextprotocol/serverInfo": {
-                "name": "leb-mcp",
+                "name": "engram-mcp",
                 "version": env!("CARGO_PKG_VERSION")
             }
         }
@@ -581,16 +581,16 @@ fn discover_result() -> Value {
 fn tool_catalog() -> Value {
     json!({
         "tools": [
-            tool("leb_project_status", "Resolve project identity and current Git state", &json!({
+            tool("engram_project_status", "Resolve project identity and current Git state", &json!({
                 "type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": false
             })),
-            tool("leb_query_world", "Search normalized structural nodes", &json!({
+            tool("engram_query_world", "Search normalized structural nodes", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"}, "query": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
                 }, "required": ["project_id", "query"], "additionalProperties": false
             })),
-            tool("leb_recall", "Compile relevant validated context with explanations. Passing the open task_id records truthful usage provenance for procedure-to-skill promotion", &json!({
+            tool("engram_recall", "Compile relevant validated context with explanations. Passing the open task_id records truthful usage provenance for procedure-to-skill promotion", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"}, "task": {"type": "string"},
                     "current_paths": {"type": "array", "items": {"type": "string"}},
@@ -598,41 +598,41 @@ fn tool_catalog() -> Value {
                     "task_id": {"type": "string"}
                 }, "required": ["project_id", "task"], "additionalProperties": false
             })),
-            tool("leb_explain_context", "Explain one selected item from a durable context run", &json!({
+            tool("engram_explain_context", "Explain one selected item from a durable context run", &json!({
                 "type": "object", "properties": {
                     "context_run_id": {"type": "string"},
                     "ordinal": {"type": "integer", "minimum": 1}
                 }, "required": ["context_run_id", "ordinal"], "additionalProperties": false
             })),
-            tool("leb_get_past_failures", "Query demonstrated failed approaches for a project", &json!({
+            tool("engram_get_past_failures", "Query demonstrated failed approaches for a project", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"}, "query": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
                 }, "required": ["project_id"], "additionalProperties": false
             })),
-            tool("leb_get_memory", "Inspect one durable memory and its state", &json!({
+            tool("engram_get_memory", "Inspect one durable memory and its state", &json!({
                 "type": "object", "properties": {"memory_id": {"type": "string"}},
                 "required": ["memory_id"], "additionalProperties": false
             })),
-            tool("leb_record_human_decision", "Record an explicit project-scoped human decision as a candidate", &json!({
+            tool("engram_record_human_decision", "Record an explicit project-scoped human decision as a candidate", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"}, "claim": {"type": "string"},
                     "rationale": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}},
                     "valid_from_commit": {"type": "string"}
                 }, "required": ["project_id", "claim"], "additionalProperties": false
             })),
-            tool("leb_get_skill", "Inspect a typed skill or procedure memory. Procedures are synthesized from repeated evidence-backed episodes; their rationale carries a procedure_json payload (steps, preconditions, source episodes). Skills are procedures promoted after validation plus repeated successful use", &json!({
+            tool("engram_get_skill", "Inspect a typed skill or procedure memory. Procedures are synthesized from repeated evidence-backed episodes; their rationale carries a procedure_json payload (steps, preconditions, source episodes). Skills are procedures promoted after validation plus repeated successful use", &json!({
                 "type": "object", "properties": {"memory_id": {"type": "string"}},
                 "required": ["memory_id"], "additionalProperties": false
             })),
-            tool("leb_task_start", "Open an explicit task episode BEFORE starting substantive work, so attempts and evidence attach to it and finished work can be learned from", &json!({
+            tool("engram_task_start", "Open an explicit task episode BEFORE starting substantive work, so attempts and evidence attach to it and finished work can be learned from", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"},
                     "prompt": {"type": "string", "description": "The user's task, verbatim or summarized"},
                     "session_id": {"type": "string"}
                 }, "required": ["project_id", "prompt"], "additionalProperties": false
             })),
-            tool("leb_record_attempt", "Record one strategy attempt on an open task (outcome: success|failure|partial|unknown)", &json!({
+            tool("engram_record_attempt", "Record one strategy attempt on an open task (outcome: success|failure|partial|unknown)", &json!({
                 "type": "object", "properties": {
                     "task_id": {"type": "string"},
                     "summary": {"type": "string", "description": "What was tried, phrased as the reusable takeaway"},
@@ -640,7 +640,7 @@ fn tool_catalog() -> Value {
                     "files": {"type": "array", "items": {"type": "string"}}
                 }, "required": ["task_id", "summary", "outcome"], "additionalProperties": false
             })),
-            tool("leb_record_evidence", "Attach verification evidence (a test/build/lint run) to a task. kind: test_result|build_result|lint_result|typecheck_result; strength: deterministic|observational|inferred. Only deterministic exit-0 evidence on successful accepted tasks can later promote memories", &json!({
+            tool("engram_record_evidence", "Attach verification evidence (a test/build/lint run) to a task. kind: test_result|build_result|lint_result|typecheck_result; strength: deterministic|observational|inferred. Only deterministic exit-0 evidence on successful accepted tasks can later promote memories", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"},
                     "task_id": {"type": "string"},
@@ -652,7 +652,7 @@ fn tool_catalog() -> Value {
                     "artifact": {"type": "string", "description": "Bounded output excerpt"}
                 }, "required": ["project_id", "kind", "strength"], "additionalProperties": false
             })),
-            tool("leb_learn", "Distill a finished, evidence-backed task into a candidate memory (kind: lesson|preference). Candidates never inject until promoted through evidence gates", &json!({
+            tool("engram_learn", "Distill a finished, evidence-backed task into a candidate memory (kind: lesson|preference). Candidates never inject until promoted through evidence gates", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"},
                     "claim": {"type": "string", "description": "The reusable rule, phrased for a future engineer"},
@@ -663,38 +663,38 @@ fn tool_catalog() -> Value {
                     "tags": {"type": "array", "items": {"type": "string"}}
                 }, "required": ["project_id", "claim", "task_ids", "evidence_ids"], "additionalProperties": false
             })),
-            tool("leb_workspace", "Map of every repository in the workspace: facts (hosting, role), links (who calls whom), technology stacks, and memory counts. Use before cross-repo changes", &json!({
+            tool("engram_workspace", "Map of every repository in the workspace: facts (hosting, role), links (who calls whom), technology stacks, and memory counts. Use before cross-repo changes", &json!({
                 "type": "object", "properties": {}, "additionalProperties": false
             })),
-            tool("leb_symbol_search", "Find which repository and file defines a symbol, across the whole workspace", &json!({
+            tool("engram_symbol_search", "Find which repository and file defines a symbol, across the whole workspace", &json!({
                 "type": "object", "properties": {
                     "query": {"type": "string"}
                 }, "required": ["query"], "additionalProperties": false
             })),
-            tool("leb_architecture_guide", "The deterministic workspace architecture dossier: per-repo facts, tech, links, modules, and route surfaces", &json!({
+            tool("engram_architecture_guide", "The deterministic workspace architecture dossier: per-repo facts, tech, links, modules, and route surfaces", &json!({
                 "type": "object", "properties": {}, "additionalProperties": false
             })),
-            tool("leb_mark_outcome", "Close an explicit task with an observed outcome", &json!({
+            tool("engram_mark_outcome", "Close an explicit task with an observed outcome", &json!({
                 "type": "object", "properties": {
                     "task_id": {"type": "string"},
                     "outcome": {"type": "string", "enum": ["success", "partial", "failure", "abandoned"]},
                     "accepted_by_user": {"type": "boolean"}, "final_commit": {"type": "string"}
                 }, "required": ["task_id", "outcome"], "additionalProperties": false
             })),
-            tool("leb_get_invariants", "List typed invariant memories for a project", &json!({
+            tool("engram_get_invariants", "List typed invariant memories for a project", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 10000}
                 }, "required": ["project_id"], "additionalProperties": false
             })),
-            tool("leb_get_impact", "Traverse a bounded structural impact neighborhood", &json!({
+            tool("engram_get_impact", "Traverse a bounded structural impact neighborhood", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"}, "node_id": {"type": "string"},
                     "max_depth": {"type": "integer", "minimum": 1, "maximum": 8},
                     "max_nodes": {"type": "integer", "minimum": 1, "maximum": 10000}
                 }, "required": ["project_id", "node_id"], "additionalProperties": false
             })),
-            tool("leb_forget", "Logically archive a project-scoped memory so retrieval excludes it while preserving audit history", &json!({
+            tool("engram_forget", "Logically archive a project-scoped memory so retrieval excludes it while preserving audit history", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"}, "memory_id": {"type": "string"}
                 },
@@ -799,10 +799,10 @@ mod tests {
         let first = tool_catalog();
         assert_eq!(first, tool_catalog());
         let tools = first["tools"].as_array().expect("tools");
-        assert_eq!(tools[0]["name"], "leb_project_status");
+        assert_eq!(tools[0]["name"], "engram_project_status");
         let recall = tools
             .iter()
-            .find(|tool| tool["name"] == "leb_recall")
+            .find(|tool| tool["name"] == "engram_recall")
             .expect("recall");
         assert!(
             recall["inputSchema"]["required"]
@@ -812,7 +812,7 @@ mod tests {
         );
         let forget = tools
             .iter()
-            .find(|tool| tool["name"] == "leb_forget")
+            .find(|tool| tool["name"] == "engram_forget")
             .expect("forget");
         assert!(
             forget["inputSchema"]["required"]

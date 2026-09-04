@@ -45,7 +45,7 @@ pub fn export_project(
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).map_err(|source| io_error(parent, source))?;
     }
-    let temporary = destination.with_extension(format!("leb-tmp-{}", std::process::id()));
+    let temporary = destination.with_extension(format!("engram-tmp-{}", std::process::id()));
     if temporary.exists() {
         return Err(Error::Config(format!(
             "temporary export path already exists: {}",
@@ -142,7 +142,7 @@ fn write_value_envelope(
 ) -> Result<()> {
     serde_json::to_writer(
         &mut *writer,
-        &json!({"format": "leb-project-ndjson-v1", "type": kind, "data": data}),
+        &json!({"format": "engram-project-ndjson-v1", "type": kind, "data": data}),
     )?;
     writer.write_all(b"\n").map_err(|source| Error::Io {
         path: PathBuf::from("project export"),
@@ -224,7 +224,7 @@ mod tests {
         assert!(report.records >= 3);
         for line in fs::read_to_string(&path).expect("read").lines() {
             let value: serde_json::Value = serde_json::from_str(line).expect("JSON line");
-            assert_eq!(value["format"], "leb-project-ndjson-v1");
+            assert_eq!(value["format"], "engram-project-ndjson-v1");
         }
         assert!(export_project(&database, &project.project.id, &path).is_err());
     }

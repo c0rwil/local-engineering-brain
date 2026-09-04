@@ -79,7 +79,7 @@ impl InjectionFraming {
         }
     }
 
-    /// Parse the `x-leb-injection-framing` header value.
+    /// Parse the `x-engram-injection-framing` header value.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
@@ -1913,8 +1913,8 @@ mod tests {
         std::fs::create_dir(&root_a).expect("a");
         std::fs::create_dir(&root_b).expect("b");
         run_git(&root_b, &["init", "-q"]);
-        run_git(&root_b, &["config", "user.email", "leb@example.invalid"]);
-        run_git(&root_b, &["config", "user.name", "LEB Tests"]);
+        run_git(&root_b, &["config", "user.email", "engram@example.invalid"]);
+        run_git(&root_b, &["config", "user.name", "Engram Tests"]);
         std::fs::write(root_b.join("README.md"), "provider\n").expect("file");
         run_git(&root_b, &["add", "README.md"]);
         run_git(&root_b, &["commit", "-qm", "initial"]);

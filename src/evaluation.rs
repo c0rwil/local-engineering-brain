@@ -51,7 +51,7 @@ pub struct BenchmarkConfig {
     #[serde(default = "default_wall_seconds")]
     pub wall_seconds: u64,
     pub artifact_dir: PathBuf,
-    /// Optional immutable backup created by `leb backup create`. Every arm
+    /// Optional immutable backup created by `engram backup create`. Every arm
     /// receives its own byte-identical copy.
     #[serde(default)]
     pub brain_snapshot: Option<PathBuf>,
@@ -217,7 +217,7 @@ fn run_with_environment_lookup(
     let jsonl_path = artifact_dir.join("runs.jsonl");
     let mut jsonl = create_private_file(&jsonl_path, true)?;
     let isolation = tempfile::Builder::new()
-        .prefix("leb-eval-")
+        .prefix("engram-eval-")
         .tempdir()
         .map_err(|source| io_error(std::env::temp_dir(), source))?;
     let (baseline, brain_snapshot_hash) = prepare_brain_baseline(&config, base, isolation.path())?;
@@ -313,7 +313,7 @@ fn prepare_brain_baseline(
             let sidecar = PathBuf::from(sidecar);
             if sidecar.metadata().is_ok_and(|metadata| metadata.len() > 0) {
                 return Err(Error::Config(format!(
-                    "brain_snapshot must be a standalone `leb backup create` file; live sidecar exists: {}",
+                    "brain_snapshot must be a standalone `engram backup create` file; live sidecar exists: {}",
                     sidecar.display()
                 )));
             }
@@ -375,7 +375,7 @@ fn run_one(
     make_private_dir(&state_root)?;
     let arm_database = state_root.join("brain.sqlite");
     fs::copy(brain_baseline, &arm_database).map_err(|source| io_error(&arm_database, source))?;
-    let arm_socket = state_root.join("lebd.sock");
+    let arm_socket = state_root.join("engramd.sock");
     if arm_socket.as_os_str().len() > 100 {
         return Err(Error::Config(format!(
             "evaluation socket path exceeds the platform Unix-socket limit ({} bytes): {}; \
@@ -392,25 +392,28 @@ fn run_one(
     );
     let started = Instant::now();
     let environment = vec![
-        ("LEB_MODE".to_owned(), mode.as_str().to_owned()),
-        ("LEB_SEED".to_owned(), seed.to_string()),
-        ("LEB_TASK_ID".to_owned(), task.id.clone()),
-        ("LEB_BENCHMARK_ID".to_owned(), config.benchmark_id.clone()),
+        ("ENGRAM_MODE".to_owned(), mode.as_str().to_owned()),
+        ("ENGRAM_SEED".to_owned(), seed.to_string()),
+        ("ENGRAM_TASK_ID".to_owned(), task.id.clone()),
         (
-            "LEB_DB_PATH".to_owned(),
+            "ENGRAM_BENCHMARK_ID".to_owned(),
+            config.benchmark_id.clone(),
+        ),
+        (
+            "ENGRAM_DB_PATH".to_owned(),
             arm_database.to_string_lossy().into_owned(),
         ),
         (
-            "LEB_SOCKET_PATH".to_owned(),
+            "ENGRAM_SOCKET_PATH".to_owned(),
             arm_socket.to_string_lossy().into_owned(),
         ),
         (
-            "LEB_STATE_DIR".to_owned(),
+            "ENGRAM_STATE_DIR".to_owned(),
             state_root.to_string_lossy().into_owned(),
         ),
-        ("LEB_PROXY_PORT".to_owned(), proxy_port.to_string()),
+        ("ENGRAM_PROXY_PORT".to_owned(), proxy_port.to_string()),
         (
-            "LEB_BRAIN_SNAPSHOT_HASH".to_owned(),
+            "ENGRAM_BRAIN_SNAPSHOT_HASH".to_owned(),
             brain_snapshot_hash.to_owned(),
         ),
     ];
@@ -979,7 +982,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 
 fn comparison_markdown(report: &ComparisonReport) -> String {
     format!(
-        "# LEB paired evaluation: {}\n\nModel: `{}`  \nConfig: `{}`  \nPairs: {}\n\n| Mode | Runs | Successes | Success rate | Mean wall ms |\n|---|---:|---:|---:|---:|\n| off | {} | {} | {:.3} | {:.1} |\n| brain | {} | {} | {:.3} | {:.1} |\n\nSuccess-rate delta: **{}**  \nMean wall-time delta: **{}**\n",
+        "# Engram paired evaluation: {}\n\nModel: `{}`  \nConfig: `{}`  \nPairs: {}\n\n| Mode | Runs | Successes | Success rate | Mean wall ms |\n|---|---:|---:|---:|---:|\n| off | {} | {} | {:.3} | {:.1} |\n| brain | {} | {} | {:.3} | {:.1} |\n\nSuccess-rate delta: **{}**  \nMean wall-time delta: **{}**\n",
         report.benchmark_id,
         report.model_hash,
         report.config_hash,
@@ -1063,7 +1066,7 @@ mod tests {
         fs::write(
             &config_path,
             format!(
-                "benchmark_id: smoke\nmodel_hash: model-1\nmodes: [off, brain]\nseeds: [1, 2]\nwall_seconds: 5\nartifact_dir: artifacts\ntasks:\n  - id: task_1\n    repo: {}\n    prompt_file: {}\n    agent:\n      command: \"printf '{{\\\"db\\\":\\\"%s\\\",\\\"socket\\\":\\\"%s\\\",\\\"snapshot\\\":\\\"%s\\\"}}' \\\"$LEB_DB_PATH\\\" \\\"$LEB_SOCKET_PATH\\\" \\\"$LEB_BRAIN_SNAPSHOT_HASH\\\" > metrics.json; printf '%s' \\\"$LEB_MODE\\\" > mode\"\n    success:\n      command: \"test -s mode && test \\\"$(cat state)\\\" = clean\"\n    metrics_file: metrics.json\n",
+                "benchmark_id: smoke\nmodel_hash: model-1\nmodes: [off, brain]\nseeds: [1, 2]\nwall_seconds: 5\nartifact_dir: artifacts\ntasks:\n  - id: task_1\n    repo: {}\n    prompt_file: {}\n    agent:\n      command: \"printf '{{\\\"db\\\":\\\"%s\\\",\\\"socket\\\":\\\"%s\\\",\\\"snapshot\\\":\\\"%s\\\"}}' \\\"$ENGRAM_DB_PATH\\\" \\\"$ENGRAM_SOCKET_PATH\\\" \\\"$ENGRAM_BRAIN_SNAPSHOT_HASH\\\" > metrics.json; printf '%s' \\\"$ENGRAM_MODE\\\" > mode\"\n    success:\n      command: \"test -s mode && test \\\"$(cat state)\\\" = clean\"\n    metrics_file: metrics.json\n",
                 repo.display(),
                 prompt.display()
             ),
@@ -1125,7 +1128,7 @@ mod tests {
         fs::write(
             &config_path,
             format!(
-                "benchmark_id: single\nmodel_hash: model-1\nmodes: [brain]\nseeds: [1, 2]\nwall_seconds: 5\nartifact_dir: artifacts\ntasks:\n  - id: task_1\n    repo: {}\n    prompt_file: {}\n    agent:\n      command: \"printf '%s' \\\"$LEB_MODE\\\" > mode\"\n    success:\n      command: \"test \\\"$(cat mode)\\\" = brain\"\n",
+                "benchmark_id: single\nmodel_hash: model-1\nmodes: [brain]\nseeds: [1, 2]\nwall_seconds: 5\nartifact_dir: artifacts\ntasks:\n  - id: task_1\n    repo: {}\n    prompt_file: {}\n    agent:\n      command: \"printf '%s' \\\"$ENGRAM_MODE\\\" > mode\"\n    success:\n      command: \"test \\\"$(cat mode)\\\" = brain\"\n",
                 repo.display(),
                 prompt.display()
             ),

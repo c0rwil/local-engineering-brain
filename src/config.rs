@@ -39,12 +39,12 @@ pub struct Config {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SyncConfig {
-    /// Central instance base URL (e.g. `http://leb.internal:11436`).
+    /// Central instance base URL (e.g. `http://engram.internal:11436`).
     /// Empty disables sync entirely.
     pub central_url: String,
     /// Bearer token for the central instance's API.
     pub token: Option<String>,
-    /// Automatic sync cadence in the daemon watcher. 0 = manual `leb sync`
+    /// Automatic sync cadence in the daemon watcher. 0 = manual `engram sync`
     /// only.
     pub every_secs: u64,
     /// Also offer local validated memories upstream.
@@ -89,7 +89,7 @@ impl Default for WatchConfig {
 }
 
 /// The embedded workspace browser (`src/web.rs`), served by the daemon so
-/// the encyclopedia is always available while LEB is alive.
+/// the encyclopedia is always available while Engram is alive.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WebConfig {
@@ -118,7 +118,7 @@ impl Default for WebConfig {
     }
 }
 
-/// LLM-assisted architecture synthesis (`leb architect`, `src/architect.rs`).
+/// LLM-assisted architecture synthesis (`engram architect`, `src/architect.rs`).
 /// The output is a derived vault document, never evidence-gated memory.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -158,7 +158,7 @@ pub struct LinksConfig {
     /// path deps, npm `file:` deps, pip editable installs, git submodules)
     /// and auto-link DEFINITIVE matches to registered projects, with the
     /// evidence recorded in the link note. Name-only matches are never
-    /// auto-applied — `leb link scan` surfaces them as proposals.
+    /// auto-applied — `engram link scan` surfaces them as proposals.
     pub auto_scan: bool,
 }
 
@@ -187,7 +187,7 @@ impl Default for VaultConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            root: PathBuf::from("~/.leb/vault"),
+            root: PathBuf::from("~/.engram/vault"),
             auto_refresh: true,
         }
     }
@@ -325,7 +325,7 @@ pub struct ContextConfig {
     /// (6/6 vs 6/6); disable for a verbose-mode ablation.
     pub compact_injection: bool,
     /// Also inject relevance-gated memories from explicitly linked projects
-    /// (`leb link add`), each under a heading naming the source repository.
+    /// (`engram link add`), each under a heading naming the source repository.
     /// Default ON: links themselves are always an explicit operator action,
     /// and unlinked projects are never eligible.
     pub include_linked_projects: bool,
@@ -460,7 +460,7 @@ impl Default for BrainConfig {
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
-            socket_path: PathBuf::from("~/.leb/lebd.sock"),
+            socket_path: PathBuf::from("~/.engram/engramd.sock"),
             max_connections: 128,
             max_request_bytes: 1_048_576,
             request_timeout_ms: 30_000,
@@ -491,7 +491,7 @@ impl Default for ContextConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            db_path: PathBuf::from("~/.leb/brain.sqlite"),
+            db_path: PathBuf::from("~/.engram/brain.sqlite"),
             blob_budget_gb: 0,
             blob_threshold_bytes: 16_384,
             vector_backend: "disabled".to_owned(),
@@ -558,10 +558,27 @@ impl Config {
     /// Returns an error for an unreadable/malformed layer or an invalid merged configuration.
     pub fn load_for(project_root: Option<&Path>, overrides: &ConfigOverrides) -> Result<Self> {
         let home = home_dir();
-        let user_config = home
-            .as_ref()
-            .map(|home| home.join(".config/leb/config.toml"));
-        let project_config = project_root.map(|root| root.join(".leb/config.toml"));
+        if let Some(home) = home.as_deref() {
+            migrate_legacy_state(home);
+        }
+        let user_config = home.as_ref().map(|home| {
+            let current = home.join(".config/engram/config.toml");
+            let legacy = home.join(".config/leb/config.toml");
+            if !current.exists() && legacy.exists() {
+                legacy
+            } else {
+                current
+            }
+        });
+        let project_config = project_root.map(|root| {
+            let current = root.join(".engram/config.toml");
+            let legacy = root.join(".leb/config.toml");
+            if !current.exists() && legacy.exists() {
+                legacy
+            } else {
+                current
+            }
+        });
         Self::load_layers_inner(
             user_config.as_deref(),
             project_config.as_deref(),
@@ -604,14 +621,15 @@ impl Config {
         let mut config: Self = merged.try_into().map_err(Error::TomlDeserialize)?;
         let default_socket = DaemonConfig::default().socket_path;
         let database_overridden = overrides.db_path.is_some()
-            || (apply_environment && std::env::var_os("LEB_DB_PATH").is_some());
-        let socket_overridden = apply_environment && std::env::var_os("LEB_SOCKET_PATH").is_some();
+            || (apply_environment && std::env::var_os("ENGRAM_DB_PATH").is_some());
+        let socket_overridden =
+            apply_environment && std::env::var_os("ENGRAM_SOCKET_PATH").is_some();
         let socket_was_default = config.daemon.socket_path == default_socket;
         if apply_environment {
-            if let Some(path) = std::env::var_os("LEB_DB_PATH") {
+            if let Some(path) = std::env::var_os("ENGRAM_DB_PATH") {
                 config.storage.db_path = PathBuf::from(path);
             }
-            if let Some(path) = std::env::var_os("LEB_SOCKET_PATH") {
+            if let Some(path) = std::env::var_os("ENGRAM_SOCKET_PATH") {
                 config.daemon.socket_path = PathBuf::from(path);
             }
         }
@@ -635,7 +653,7 @@ impl Config {
                     .db_path
                     .parent()
                     .unwrap_or_else(|| Path::new("."))
-                    .join("lebd.sock")
+                    .join("engramd.sock")
             } else {
                 expand_home(&config.daemon.socket_path, home)?
             };
@@ -903,6 +921,21 @@ fn merge_toml(base: &mut toml::Value, overlay: toml::Value) {
     }
 }
 
+/// One-time rename of pre-Engram state directories (`~/.leb` -> `~/.engram`,
+/// `~/.config/leb` -> `~/.config/engram`). Only when the new location does
+/// not exist yet, so a machine that already migrated is untouched; the
+/// daemon is stopped by the installer before this can run.
+fn migrate_legacy_state(home: &Path) {
+    for (legacy, current) in [
+        (home.join(".leb"), home.join(".engram")),
+        (home.join(".config/leb"), home.join(".config/engram")),
+    ] {
+        if legacy.is_dir() && !current.exists() {
+            let _ = std::fs::rename(&legacy, &current);
+        }
+    }
+}
+
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
@@ -938,7 +971,7 @@ fn socket_for_database(database: &Path) -> PathBuf {
     database
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join(format!(".lebd-{short}.sock"))
+        .join(format!(".engramd-{short}.sock"))
 }
 
 #[cfg(test)]
@@ -1058,7 +1091,7 @@ mod tests {
     #[test]
     fn shipped_example_config_parses_and_validates() {
         let temp = TempDir::new().expect("temp dir");
-        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/leb.example.toml");
+        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/engram.example.toml");
         let config = Config::load_layers(
             Some(&example),
             None,
@@ -1151,7 +1184,7 @@ mod tests {
             .expect("config");
         assert_eq!(
             config.storage.db_path,
-            temp.path().join(".leb/brain.sqlite")
+            temp.path().join(".engram/brain.sqlite")
         );
     }
 
@@ -1161,7 +1194,7 @@ mod tests {
             None,
             None,
             &ConfigOverrides {
-                db_path: Some(PathBuf::from("/tmp/leb-absolute.sqlite")),
+                db_path: Some(PathBuf::from("/tmp/engram-absolute.sqlite")),
                 local_only: None,
             },
             None,
@@ -1170,7 +1203,7 @@ mod tests {
         .expect("absolute override");
         assert_eq!(
             config.storage.db_path,
-            Path::new("/tmp/leb-absolute.sqlite")
+            Path::new("/tmp/engram-absolute.sqlite")
         );
     }
 

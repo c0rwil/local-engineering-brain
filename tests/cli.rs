@@ -7,13 +7,13 @@ use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
-use leb::storage::Database;
+use engram::storage::Database;
 
 #[test]
 fn doctor_json_reports_healthy_database() {
     let temp = TempDir::new().expect("temp dir");
     let db = temp.path().join("brain.sqlite");
-    let mut command = AssertCommand::cargo_bin("leb").expect("leb binary");
+    let mut command = AssertCommand::cargo_bin("engram").expect("engram binary");
     command
         .args(["--db", db.to_str().unwrap(), "doctor", "--json"])
         .assert()
@@ -28,8 +28,8 @@ fn status_registers_plain_project_and_is_stable() {
     let project = temp.path().join("project");
     fs::create_dir_all(&project).expect("project");
     let db = temp.path().join("brain.sqlite");
-    let socket = temp.path().join("lebd.sock");
-    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("lebd"))
+    let socket = temp.path().join("engramd.sock");
+    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("engramd"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -52,7 +52,7 @@ fn status_registers_plain_project_and_is_stable() {
         thread::sleep(Duration::from_millis(20));
     }
 
-    let first = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+    let first = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -69,7 +69,7 @@ fn status_registers_plain_project_and_is_stable() {
         "{}",
         String::from_utf8_lossy(&first.stderr)
     );
-    let second = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+    let second = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -92,7 +92,7 @@ fn status_registers_plain_project_and_is_stable() {
     assert_eq!(first_json["project"]["id"], second_json["project"]["id"]);
     assert_eq!(second_json["project_event_count"], 2);
 
-    let stopped = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+    let stopped = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -118,8 +118,8 @@ fn metrics_and_dashboard_render_from_a_running_daemon() {
     let project = temp.path().join("project");
     fs::create_dir_all(&project).expect("project");
     let db = temp.path().join("brain.sqlite");
-    let socket = temp.path().join("lebd.sock");
-    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("lebd"))
+    let socket = temp.path().join("engramd.sock");
+    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("engramd"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -142,8 +142,8 @@ fn metrics_and_dashboard_render_from_a_running_daemon() {
         thread::sleep(Duration::from_millis(20));
     }
 
-    let leb = |args: &[&str]| {
-        let mut command = Command::new(assert_cmd::cargo::cargo_bin!("leb"));
+    let engram = |args: &[&str]| {
+        let mut command = Command::new(assert_cmd::cargo::cargo_bin!("engram"));
         command.args([
             "--db",
             db.to_str().unwrap(),
@@ -151,7 +151,7 @@ fn metrics_and_dashboard_render_from_a_running_daemon() {
             socket.to_str().unwrap(),
         ]);
         command.args(args);
-        let output = command.output().expect("run leb");
+        let output = command.output().expect("run engram");
         assert!(
             output.status.success(),
             "{}",
@@ -161,18 +161,18 @@ fn metrics_and_dashboard_render_from_a_running_daemon() {
     };
 
     // Register a project so the dashboard has canonical state to report.
-    leb(&["status", project.to_str().unwrap()]);
+    engram(&["status", project.to_str().unwrap()]);
 
-    let metrics_json = leb(&["metrics", "--json"]);
+    let metrics_json = engram(&["metrics", "--json"]);
     let parsed: serde_json::Value = serde_json::from_str(&metrics_json).expect("metrics json");
     assert!(parsed["metrics"]["counters"]["context_compiles_brain"].is_u64());
     assert!(parsed["metrics"]["requests_ms"]["projects"]["count"].is_u64());
 
-    let metrics_text = leb(&["metrics"]);
+    let metrics_text = engram(&["metrics"]);
     assert!(metrics_text.contains("Counters"), "{metrics_text}");
     assert!(metrics_text.contains("Latency (ms)"), "{metrics_text}");
 
-    let dashboard = leb(&["dashboard"]);
+    let dashboard = engram(&["dashboard"]);
     for section in [
         "== Daemon ==",
         "== Cache ==",
@@ -184,7 +184,7 @@ fn metrics_and_dashboard_render_from_a_running_daemon() {
         assert!(dashboard.contains(section), "{dashboard}");
     }
 
-    leb(&["daemon", "stop"]);
+    engram(&["daemon", "stop"]);
     let daemon_output = daemon.wait_with_output().expect("daemon exits gracefully");
     assert_process_success(&daemon_output);
 }
@@ -204,7 +204,7 @@ fn status_autostarts_daemon_without_direct_writes() {
     fs::create_dir_all(&project).expect("project");
     let db = temp.path().join("brain.sqlite");
     let socket = temp.path().join("missing.sock");
-    let mut command = AssertCommand::cargo_bin("leb").expect("leb binary");
+    let mut command = AssertCommand::cargo_bin("engram").expect("engram binary");
     command
         .args([
             "--db",
@@ -220,8 +220,8 @@ fn status_autostarts_daemon_without_direct_writes() {
     assert!(db.exists(), "the canonical daemon must create storage");
     assert!(socket.exists(), "the canonical daemon must own the socket");
 
-    AssertCommand::cargo_bin("leb")
-        .expect("leb binary")
+    AssertCommand::cargo_bin("engram")
+        .expect("engram binary")
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -247,8 +247,8 @@ fn status_autostarts_daemon_without_direct_writes() {
 fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
     let temp = TempDir::new().expect("temp dir");
     let db = temp.path().join("brain.sqlite");
-    let socket = temp.path().join("lebd.sock");
-    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("lebd"))
+    let socket = temp.path().join("engramd.sock");
+    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("engramd"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -271,7 +271,7 @@ fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
         thread::sleep(Duration::from_millis(20));
     }
 
-    let enqueued = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+    let enqueued = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -292,8 +292,8 @@ fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
     assert_eq!(job["job_type"], "fts_integrity");
 
     // Job types outside the allowlist never reach the daemon.
-    AssertCommand::cargo_bin("leb")
-        .expect("leb binary")
+    AssertCommand::cargo_bin("engram")
+        .expect("engram binary")
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -307,7 +307,7 @@ fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
         .failure()
         .stderr(predicate::str::contains("unsupported job type"));
 
-    let listed = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+    let listed = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -323,7 +323,7 @@ fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
     assert!(stdout.contains(&job_id), "list shows the job: {stdout}");
     assert!(stdout.contains("fts_integrity"), "{stdout}");
 
-    let shown = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+    let shown = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -338,7 +338,7 @@ fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
     assert_process_success(&shown);
     assert!(String::from_utf8_lossy(&shown.stdout).contains(&job_id));
 
-    let stopped = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+    let stopped = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -359,7 +359,7 @@ fn process_kill_rolls_back_event_and_projection_together() {
     let temp = TempDir::new().expect("temp dir");
     let db = temp.path().join("brain.sqlite");
     let ready = temp.path().join("ready");
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -405,8 +405,8 @@ fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
     let project = temp.path().join("project");
     fs::create_dir_all(&project).expect("project");
     let db = temp.path().join("brain.sqlite");
-    let socket = temp.path().join("lebd.sock");
-    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("lebd"))
+    let socket = temp.path().join("engramd.sock");
+    let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("engramd"))
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -429,7 +429,7 @@ fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
         thread::sleep(Duration::from_millis(20));
     }
 
-    let leb = |args: &[&str]| {
+    let engram = |args: &[&str]| {
         let mut full = vec![
             "--db",
             db.to_str().unwrap(),
@@ -437,20 +437,20 @@ fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
             socket.to_str().unwrap(),
         ];
         full.extend_from_slice(args);
-        let output = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
             .args(&full)
             .output()
-            .expect("run leb");
+            .expect("run engram");
         assert!(
             output.status.success(),
-            "leb {args:?} failed: {}",
+            "engram {args:?} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         output.stdout
     };
 
     for _ in 0..3 {
-        let started: serde_json::Value = serde_json::from_slice(&leb(&[
+        let started: serde_json::Value = serde_json::from_slice(&engram(&[
             "task",
             "start",
             "fix worker lifecycle timeout",
@@ -459,7 +459,7 @@ fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
         ]))
         .expect("task json");
         let task_id = started["id"].as_str().expect("task id").to_owned();
-        leb(&[
+        engram(&[
             "task",
             "attempt",
             &task_id,
@@ -469,7 +469,7 @@ fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
             "--file",
             "worker.rs",
         ]);
-        leb(&[
+        engram(&[
             "task",
             "evidence",
             "test_result",
@@ -484,7 +484,7 @@ fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
             "--exit-code",
             "0",
         ]);
-        leb(&[
+        engram(&[
             "task",
             "finish",
             &task_id,
@@ -495,9 +495,12 @@ fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
         ]);
     }
 
-    let report: serde_json::Value =
-        serde_json::from_slice(&leb(&["synthesize", project.to_str().unwrap(), "--json"]))
-            .expect("synthesis json");
+    let report: serde_json::Value = serde_json::from_slice(&engram(&[
+        "synthesize",
+        project.to_str().unwrap(),
+        "--json",
+    ]))
+    .expect("synthesis json");
     assert_eq!(report["examined_episodes"], 3);
     let procedures = report["procedures"].as_array().expect("procedures");
     assert_eq!(procedures.len(), 1);
@@ -511,7 +514,7 @@ fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
     );
     assert_eq!(procedures[0]["reused_existing"], serde_json::json!(false));
 
-    let stopped = Command::new(assert_cmd::cargo::cargo_bin!("leb"))
+    let stopped = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
         .args([
             "--db",
             db.to_str().unwrap(),

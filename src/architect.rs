@@ -1,6 +1,6 @@
 //! LLM-assisted workspace architecture synthesis.
 //!
-//! `leb architect` compiles a DETERMINISTIC dossier — every registered
+//! `engram architect` compiles a DETERMINISTIC dossier — every registered
 //! project's facts, links (with their recorded evidence), module structure,
 //! and route-like string literals extracted from source — and asks the
 //! configured local runtime for a CLAUDE.md-style explanation of what
@@ -429,7 +429,7 @@ pub fn synthesize_with_claude_cli(model: &str, prompt: &str) -> Result<String> {
 pub fn guide_document(model: &str, dossier: &str, synthesized: &str) -> String {
     let digest = stable_digest(dossier);
     format!(
-        "<!-- SYNTHESIZED by `leb architect` (model: {model}; stable-sha256: {digest}). \
+        "<!-- SYNTHESIZED by `engram architect` (model: {model}; stable-sha256: {digest}). \
          Derived document - regenerate at will; the dossier facts it cites are canonical, \
          its prose is not. -->\n\n{synthesized}\n"
     )

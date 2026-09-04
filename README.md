@@ -1,6 +1,6 @@
-# Local Engineering Brain
+# Engram
 
-LEB is a local-first, evidence-grounded engineering world model for coding agents. It keeps
+Engram is a local-first, evidence-grounded engineering world model for coding agents. It keeps
 canonical state in a per-user Rust daemon, compiles a small version-aware context for each model
 request, and provides the same model/runtime an exact brain-off control path.
 
@@ -10,7 +10,7 @@ retrieval, bounded context compilation, OpenAI/Anthropic proxying, MCP, CLI insp
 backup/export, and paired evaluation. The detailed contract is in
 [`LOCAL_ENGINEERING_BRAIN_SPEC.md`](LOCAL_ENGINEERING_BRAIN_SPEC.md).
 
-Beyond the core, LEB is a **living engineering encyclopedia** for multi-repo workspaces:
+Beyond the core, Engram is a **living engineering encyclopedia** for multi-repo workspaces:
 
 - **Workspace browser** at `http://127.0.0.1:11436` whenever the daemon runs: an SVG service
   map of repositories and their declared relations, clickable service pages (facts, links,
@@ -23,7 +23,7 @@ Beyond the core, LEB is a **living engineering encyclopedia** for multi-repo wor
   (never on uncommitted edits) and periodically refreshes the shared-truth views, so diagrams,
   links, and the Obsidian vault export update without any manual step.
 - **Automatic cross-repo linking**: manifest path deps, submodules, and references to other
-  services' declared hostnames (`leb fact set hosting.base_url …`) create evidence-stamped
+  services' declared hostnames (`engram fact set hosting.base_url …`) create evidence-stamped
   links; linked repos' validated knowledge then injects into each other's compiled context.
 
 ## Architecture
@@ -32,10 +32,10 @@ Beyond the core, LEB is a **living engineering encyclopedia** for multi-repo wor
 Claude Code / agent / OpenAI client
           | MCP + loopback HTTP
           v
-  leb-mcp / leb-proxy
+  engram-mcp / engram-proxy
           |
           v
-        lebd  -- one bounded priority writer, bounded reader pool
+        engramd  -- one bounded priority writer, bounded reader pool
           |
           +-- SQLite WAL/FULL (canonical events, graph, evidence, memory, metrics)
           +-- rebuildable indexes and byte-bounded, generation-invalidated read caches
@@ -59,95 +59,95 @@ Requirements: macOS or Linux, Rust 1.85+, Git, and `shasum`.
 ```bash
 ./scripts/install.sh
 export PATH="$HOME/.local/bin:$PATH"
-leb doctor
+engram doctor
 
 # One command from empty machine to living encyclopedia:
-leb onboard ~/code                 # registers, indexes, auto-links, vault
+engram onboard ~/code                 # registers, indexes, auto-links, vault
 open http://127.0.0.1:11436        # served by the daemon whenever it runs
 
 # Make stock `claude` sessions draw from and feed the brain — once, machine-wide:
-leb hooks install --global         # user-level hooks: session brief, context
+engram hooks install --global         # user-level hooks: session brief, context
                                    # injection, pre-read file shapes, evidence
                                    # capture; silent no-op in untracked repos
-leb agent-md --global              # the agent tool loop, in ~/.claude/CLAUDE.md
-leb hooks codex --install          # Codex: the same automatic hook loop
-# (or per repo: leb hooks install <repo> / leb agent-md --install <repo>)
+engram agent-md --global              # the agent tool loop, in ~/.claude/CLAUDE.md
+engram hooks codex --install          # Codex: the same automatic hook loop
+# (or per repo: engram hooks install <repo> / engram agent-md --install <repo>)
 
 # Distribute agent-native skills to every agent on the machine:
-leb skills add https://github.com/DietrichGebert/ponytail
+engram skills add https://github.com/DietrichGebert/ponytail
 # installs each SKILL.md into ~/.claude/skills and ~/.codex/skills, where
 # Claude Code and Codex trigger them natively when relevant to the task;
-# `leb skills update` pulls and re-installs every pack.
+# `engram skills update` pulls and re-installs every pack.
 
 # Day-to-day guide: docs/USER_GUIDE.md
 # Team/company rollout: docs/COMPANY_ROLLOUT.md (central source of truth
 # from origin/main, CI webhooks, cross-instance sync, incremental freshness).
 ```
 
-The atomic installer builds all four binaries (`leb`, `lebd`, `leb-proxy`, and `leb-mcp`), installs
+The atomic installer builds all four binaries (`engram`, `engramd`, `engram-proxy`, and `engram-mcp`), installs
 all three MTPLX launchers, and writes checksums plus a source identity to
-`~/.local/share/leb/install-manifest.json`. CLI commands that
+`~/.local/share/engram/install-manifest.json`. CLI commands that
 need the canonical writer and both edge binaries health-check and auto-start their sibling daemon.
-Defaults are `~/.leb/brain.sqlite`, `~/.leb/lebd.sock`, and a loopback-only proxy at
+Defaults are `~/.engram/brain.sqlite`, `~/.engram/engramd.sock`, and a loopback-only proxy at
 `127.0.0.1:11435`. Evidence artifacts larger than `storage.blob_threshold_bytes` (16 KiB by
-default) are redacted and then stored content-addressed under `~/.leb/blobs/`; reads, exports,
-and purges resolve them transparently, and `leb doctor` reports blob-store health.
+default) are redacted and then stored content-addressed under `~/.engram/blobs/`; reads, exports,
+and purges resolve them transparently, and `engram doctor` reports blob-store health.
 
 ## Core workflow
 
 ```bash
 # Register and index native structure plus bounded Git history.
-leb status /path/to/repo
-leb index /path/to/repo
+engram status /path/to/repo
+engram index /path/to/repo
 
 # Or import a bounded Graphify JSON snapshot.
-leb index /path/to/repo --graphify /path/to/graphify-export.json
+engram index /path/to/repo --graphify /path/to/graphify-export.json
 
 # Inspect graph/context/memory.
-leb graph Reactor --path /path/to/repo
-leb context "fix abort cleanup" --path /path/to/repo
-leb memory list --path /path/to/repo
+engram graph Reactor --path /path/to/repo
+engram context "fix abort cleanup" --path /path/to/repo
+engram memory list --path /path/to/repo
 
 # Capture an evidence-grounded episode.
-leb task start "fix abort cleanup" --path /path/to/repo --json
-leb task attempt tsk_... "move cleanup into child lifecycle" --outcome success --file src/reactor.rs
-leb task evidence test_result --path /path/to/repo --task-id tsk_... \
+engram task start "fix abort cleanup" --path /path/to/repo --json
+engram task attempt tsk_... "move cleanup into child lifecycle" --outcome success --file src/reactor.rs
+engram task evidence test_result --path /path/to/repo --task-id tsk_... \
   --strength deterministic --command "cargo test cleanup" --exit-code 0
-leb task finish tsk_... --outcome success --accepted-by-user true
-leb learn "Cleanup runs in the child lifecycle" --path /path/to/repo \
+engram task finish tsk_... --outcome success --accepted-by-user true
+engram learn "Cleanup runs in the child lifecycle" --path /path/to/repo \
   --task tsk_... --evidence evd_...
 
 # Candidates never auto-inject until evidence-gated promotion or explicit human override.
-leb memory promote mem_... --to observed
-leb memory promote mem_... --to supported
-leb memory promote mem_... --to validated
+engram memory promote mem_... --to observed
+engram memory promote mem_... --to supported
+engram memory promote mem_... --to validated
 ```
 
-Every command intended for automation has `--json`. Use `leb --help` for the complete surface.
+Every command intended for automation has `--json`. Use `engram --help` for the complete surface.
 
 ## Runtime proxy and brain-off control
 
 ```bash
-leb-proxy --runtime http://127.0.0.1:8000 --bind 127.0.0.1:11435
+engram-proxy --runtime http://127.0.0.1:8000 --bind 127.0.0.1:11435
 ```
 
 Point an Anthropic client at `http://127.0.0.1:11435` and send
-`x-leb-project-path: /absolute/repo`. Use `x-leb-mode: off` for the paired control; without a
+`x-engram-project-path: /absolute/repo`. Use `x-engram-mode: off` for the paired control; without a
 project header, off mode bypasses the daemon and forwards the semantic request unchanged. OpenAI
 clients use `/v1/chat/completions`; Anthropic clients use `/v1/messages`. Streaming and tool schemas
 pass through end-to-end. If the brain daemon is temporarily unavailable, the default fail-open path
-forwards unchanged and adds `x-leb-degraded: context_unavailable`; set
+forwards unchanged and adds `x-engram-degraded: context_unavailable`; set
 `proxy.failure_mode = "fail_closed"` for policy-sensitive or controlled evaluation use.
 
 When a brain-mode request carries Claude Code's `x-claude-code-session-id`, the proxy pins the
-first compiled LEB context block for that session, resolved project, and effective token budget in
+first compiled Engram context block for that session, resolved project, and effective token budget in
 an 8 MiB byte-bounded process-local cache. Later turns reuse those exact UTF-8 bytes; off mode never
-reads or populates this cache. Each injected response reports `x-leb-injection-sha256`,
-`x-leb-injection-bytes`, and `x-leb-session-cache` (`hit`, `miss`, or `disabled`), while
-`GET /leb/metrics` exposes aggregate injected bytes and session-cache hit/miss counts. No context
+reads or populates this cache. Each injected response reports `x-engram-injection-sha256`,
+`x-engram-injection-bytes`, and `x-engram-session-cache` (`hit`, `miss`, or `disabled`), while
+`GET /engram/metrics` exposes aggregate injected bytes and session-cache hit/miss counts. No context
 content is logged by this telemetry.
 
-This stability intentionally snapshots LEB guidance for the life of the Claude Code session.
+This stability intentionally snapshots Engram guidance for the life of the Claude Code session.
 Project resolution and freshness checks still run, but new or invalidated memories and changed
 source-derived guidance do not alter the already-pinned injection. Start a new Claude Code session
 after material source, configuration, or memory changes when freshness is more important than
@@ -174,17 +174,17 @@ allow_remote_runtime = true
 The proxy still binds only to a loopback address. A remote runtime URL must use HTTPS and cannot
 contain URL credentials, a query, or a fragment. Supply credentials through the normal client
 headers instead: `Authorization`, `x-api-key`, `anthropic-version`, and other provider headers are
-forwarded unchanged. LEB strips its private `x-leb-*` control headers and hop-by-hop transport
+forwarded unchanged. Engram strips its private `x-engram-*` control headers and hop-by-hop transport
 headers before forwarding. Request tools and streaming response content pass through without
 translation; brain-off mode also preserves the request's model, messages, system content, tool
 schemas, streaming flag, and other runtime parameters semantically unchanged.
 
 Remote use sends the model request, including any prompt or injected repository context, to that
 provider. Enable it only for repositories and data that are approved for that provider. Put the
-settings in `~/.config/leb/config.toml`, or opt in for one process without changing global config:
+settings in `~/.config/engram/config.toml`, or opt in for one process without changing global config:
 
 ```bash
-leb-proxy --runtime https://api.anthropic.com \
+engram-proxy --runtime https://api.anthropic.com \
   --allow-remote-runtime --no-local-only \
   --bind 127.0.0.1:11435
 ```
@@ -195,23 +195,23 @@ runtime. Keep secrets out of the URL.
 ## MCP
 
 ```bash
-claude mcp add --scope user leb -- "$HOME/.local/bin/leb-mcp"
-claude mcp get leb
+claude mcp add --scope user engram -- "$HOME/.local/bin/engram-mcp"
+claude mcp get engram
 ```
 
 The stdio adapter is stateless and requires explicit project/task/context IDs for stateful calls.
-It auto-starts `lebd` and exposes project status, world query/impact, recall/explain, memory,
+It auto-starts `engramd` and exposes project status, world query/impact, recall/explain, memory,
 failures, skills/invariants, outcome marking, human decisions, and logical forget.
-`leb_forget` requires both `project_id` and `memory_id`, and verifies ownership before mutation.
+`engram_forget` requires both `project_id` and `memory_id`, and verifies ownership before mutation.
 
 ## Backup, export, and purge
 
 ```bash
-leb backup create "$HOME/.leb/backups/brain-$(date +%Y%m%d).sqlite"
-leb backup verify "$HOME/.leb/backups/brain-20260828.sqlite"
-leb export ./project.ndjson --path /path/to/repo
-leb memory forget mem_...
-leb memory purge mem_...
+engram backup create "$HOME/.engram/backups/brain-$(date +%Y%m%d).sqlite"
+engram backup verify "$HOME/.engram/backups/brain-20260828.sqlite"
+engram export ./project.ndjson --path /path/to/repo
+engram memory forget mem_...
+engram memory purge mem_...
 ```
 
 Backups use SQLite's consistent snapshot operation. Exports stream versioned NDJSON rather than
@@ -228,7 +228,7 @@ Every claim below is backed by a dated evidence file in
 verified injection telemetry, and honest controls (brain-off is the same
 model, runtime, and harness with zero injection).
 
-- **Frontier tier (Claude Code + Opus 4.8 through the LEB proxy):** on
+- **Frontier tier (Claude Code + Opus 4.8 through the Engram proxy):** on
   tribal-knowledge fidelity probes — unwritten team conventions enforced by
   mechanical style verifiers — the memoryless control passed 5/12 across
   four seeds while brain-arm compositions passed 24/24, at 36-100 s per
@@ -274,21 +274,21 @@ model, runtime, and harness with zero injection).
 Copy [`bench.example.yaml`](bench.example.yaml), pin the model/runtime identity, and run:
 
 ```bash
-leb eval run ./bench.yaml
+engram eval run ./bench.yaml
 ```
 
 To verify the evaluation machinery itself on a clean machine, run the bundled deterministic smoke
 fixture first:
 
 ```bash
-leb eval run ./bench.smoke.yaml
+engram eval run ./bench.smoke.yaml
 ```
 
 The smoke fixture proves isolation and artifact/report production; it does not make a model-quality
 claim. Use a pinned real-agent command in `bench.example.yaml` for efficacy measurements.
 
-Set `brain_snapshot` to a standalone file created by `leb backup create` when evaluating learned
-state. Each task/seed runs once with `LEB_MODE=off` and once with `LEB_MODE=brain` in fresh
+Set `brain_snapshot` to a standalone file created by `engram backup create` when evaluating learned
+state. Each task/seed runs once with `ENGRAM_MODE=off` and once with `ENGRAM_MODE=brain` in fresh
 repository copies. Every arm gets a byte-identical baseline copied to a distinct database, Unix
 socket, state root, and proxy port; process-group cleanup prevents child agents/servers from leaking
 into another arm. Order alternates. The snapshot hash is folded into the configuration hash and
@@ -310,13 +310,13 @@ code or private repositories; keep cloud evaluation confined to an approved synt
 
 ## Configuration and resource model
 
-Priority: request/CLI override → project `.leb/config.toml` → user
-`~/.config/leb/config.toml` → defaults. See [`config/leb.example.toml`](config/leb.example.toml).
+Priority: request/CLI override → project `.engram/config.toml` → user
+`~/.config/engram/config.toml` → defaults. See [`config/engram.example.toml`](config/engram.example.toml).
 
 `context.compact_injection = true` selects deterministic, bounded memory blocks that omit full IDs
 and rationale boilerplate while retaining canonical source IDs and `why` records for audit. It is
 off by default for an exact verbose/compact ablation. With unchanged eligible memory and repository
-state, rendered LEB context is byte-stable across turn/request IDs and contains no volatile metadata.
+state, rendered Engram context is byte-stable across turn/request IDs and contains no volatile metadata.
 
 - canonical writer queue, read pool, request sizes, connections, scans, Graphify imports, Git
   history, traversal, context tokens, and prepared data are hard-bounded;

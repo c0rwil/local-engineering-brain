@@ -1,4 +1,4 @@
-# Running LEB as a central source of truth
+# Running Engram as a central source of truth
 
 One always-on machine holds the canonical brain, built from `origin/main` of
 every tracked repository; teammates browse it, curate it, and their CI keeps
@@ -12,14 +12,14 @@ sh scripts/install.sh
 export PATH="$HOME/.local/bin:$PATH"
 
 # Clone every tracked repository once (read-only checkouts are fine).
-leb onboard /srv/repos            # registers + indexes + auto-links + vault
+engram onboard /srv/repos            # registers + indexes + auto-links + vault
 
 # Seed the shared-truth views (afterwards the watcher maintains them).
 # For each repo: click "Refresh from origin/main" in the browser, or POST
 # the webhook below once per repo.
 ```
 
-`~/.config/leb/config.toml` on the server:
+`~/.config/engram/config.toml` on the server:
 
 ```toml
 [web]
@@ -51,8 +51,8 @@ Add this job to each tracked repository so a merge to main updates the
 central brain immediately (the origin poll remains as backstop):
 
 ```yaml
-# .github/workflows/leb-central.yml
-name: Update central LEB
+# .github/workflows/engram-central.yml
+name: Update central Engram
 on:
   push:
     branches: [main]
@@ -61,13 +61,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          curl -fsS -X POST "$LEB_CENTRAL_URL/webhook/repo-updated" \
-            -H "authorization: Bearer $LEB_CENTRAL_TOKEN" \
+          curl -fsS -X POST "$ENGRAM_CENTRAL_URL/webhook/repo-updated" \
+            -H "authorization: Bearer $ENGRAM_CENTRAL_TOKEN" \
             -H "content-type: application/json" \
             -d "{\"repo\": \"${{ github.event.repository.name }}\"}"
         env:
-          LEB_CENTRAL_URL: ${{ vars.LEB_CENTRAL_URL }}
-          LEB_CENTRAL_TOKEN: ${{ secrets.LEB_CENTRAL_TOKEN }}
+          ENGRAM_CENTRAL_URL: ${{ vars.ENGRAM_CENTRAL_URL }}
+          ENGRAM_CENTRAL_TOKEN: ${{ secrets.ENGRAM_CENTRAL_TOKEN }}
 ```
 
 The webhook fetches `origin/<default>`, refreshes that repo's shared-truth
@@ -78,21 +78,21 @@ links, the architecture guide's staleness check — follows automatically.
 
 - **Central → humans**: the browser (map, service pages, memories with ROI,
   curation, symbol search) and the Obsidian vault on the server.
-- **Repos → central**: webhook + origin polling; `leb fact set` and curation
+- **Repos → central**: webhook + origin polling; `engram fact set` and curation
   happen against the central brain (point the CLI at it from the server, or
   curate in the browser).
-- **Developer laptops**: run their own LEB for agent context (local
+- **Developer laptops**: run their own Engram for agent context (local
   checkouts are the right source for coding). Branch→main propagation is
   natural: when a branch merges, the webhook updates central, so main's
   documentation is already current the moment the merge lands.
 
 ## Brain synchronization
 
-Laptops sync with `leb sync` (or automatically: set `[sync]` locally):
+Laptops sync with `engram sync` (or automatically: set `[sync]` locally):
 
 ```toml
 [sync]
-central_url = "http://leb.internal:11436"
+central_url = "http://engram.internal:11436"
 token = "<the central token>"
 every_secs = 900        # automatic cycles in the daemon; 0 = manual only
 push = true             # also offer local validated memories upstream

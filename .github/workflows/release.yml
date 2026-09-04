@@ -1,5 +1,5 @@
 # Prebuilt release binaries: push a tag like v0.2.0 and each platform's
-# bundle (leb, lebd, leb-proxy, leb-mcp) lands on the GitHub release, so
+# bundle (engram, engramd, engram-proxy, engram-mcp) lands on the GitHub release, so
 # engineers install without a Rust toolchain. macOS arm64 + Linux x86_64;
 # Windows is out by architecture (Unix-socket daemon).
 name: release
@@ -33,9 +33,9 @@ jobs:
       - name: Bundle
         run: |
           set -eu
-          STAGE="leb-${GITHUB_REF_NAME}-${{ matrix.label }}"
+          STAGE="engram-${GITHUB_REF_NAME}-${{ matrix.label }}"
           mkdir -p "${STAGE}"
-          for binary in leb lebd leb-proxy leb-mcp; do
+          for binary in engram engramd engram-proxy engram-mcp; do
             cp "target/${{ matrix.target }}/release/${binary}" "${STAGE}/"
           done
           cp README.md LICENSE* "${STAGE}/" 2>/dev/null || cp README.md "${STAGE}/"
@@ -45,5 +45,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            leb-*.tar.gz
-            leb-*.tar.gz.sha256
+            engram-*.tar.gz
+            engram-*.tar.gz.sha256

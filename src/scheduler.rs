@@ -121,7 +121,7 @@ impl MutationScheduler {
         });
         let worker_metrics = Arc::clone(&metrics);
         thread::Builder::new()
-            .name("leb-canonical-writer".to_owned())
+            .name("engram-canonical-writer".to_owned())
             .spawn(move || writer_loop(&receiver, &worker_metrics))
             .expect("canonical writer thread must start");
         Self {
