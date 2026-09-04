@@ -43,5 +43,27 @@ lower wall cost with no proxy in the path.
 ## Raw summary
 
 ```json
-
+{
+  "benchmark_id": "conveyor-g2-opus-hooks-v1",
+  "model_hash": "anthropic-api-claude-opus-4-8-via-hooks",
+  "config_hash": "d200deebdd4ff3f5b5c9313affe09e73ab4bfa9231196f469f15d102630ee626",
+  "paired_runs": 10,
+  "off": {
+    "mode": "off",
+    "runs": 10,
+    "successes": 6,
+    "success_rate": 0.6,
+    "mean_wall_ms": 116931.6
+  },
+  "brain": {
+    "mode": "brain",
+    "runs": 10,
+    "successes": 10,
+    "success_rate": 1.0,
+    "mean_wall_ms": 94604.2
+  },
+  "success_rate_delta": 0.4,
+  "mean_wall_time_delta_pct": -19.094410749532212,
+  "generated_at_ms": 1788484351515
+}
 ```
