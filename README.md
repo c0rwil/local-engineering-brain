@@ -245,6 +245,11 @@ model, runtime, and harness with zero injection).
   (all cells warmed and activity-verified), **brain passed 10/10 vs
   control 7/10 with 33% lower mean wall time** — injected tribal knowledge
   prevents the exploratory spirals that burn the clock (2026-09-01).
+- **Hook pipeline (the production path):** re-proven end-to-end with the
+  five-moment hook delivery replacing the proxy: on undocumented-preference
+  probes (t20-t24 × 2 seeds, Opus 4.8), stock-Claude control 6/10 vs
+  brain 10/10 at 19% lower mean wall; the control's failures concentrate
+  exactly on the two conventions least inducible from code (2026-09-03).
 - **Compact injection:** the deterministic compact rendering held success
   parity at 33% fewer injected bytes on frontier A/B; it stays opt-in
   until a fidelity-family A/B (2026-09-01).

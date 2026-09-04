@@ -16,7 +16,7 @@ fairness audit live in the benchmark target repo.
 | Preference distillation (learned conventions, unprompted) | 3/4 | **4/4**, −41% wall | 2026-09-02 |
 | Real-repo recall@1 (production backend, non-verbatim queries) | — | **11/11** | 2026-09-01 |
 | Compact injection (bytes at success parity) | baseline | **−33% injected bytes** | 2026-09-01 |
-| Hook-pipeline fidelity (five injection moments, Opus) | see below | see below | 2026-09-03 |
+| Hook-pipeline fidelity (five injection moments, Opus) | 6/10 | **10/10**, −19% wall | 2026-09-03 |
 
 ## What the fidelity probes measure
 
