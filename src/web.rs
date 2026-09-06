@@ -215,9 +215,25 @@ pub async fn serve(config: Config, port: u16) -> Result<()> {
         ));
     }
     let app = router(&config);
-    let listener = tokio::net::TcpListener::bind((bind.as_str(), port))
-        .await
-        .map_err(|error| Error::Config(format!("web bind {bind}:{port}: {error}")))?;
+    // A restarting daemon races the previous instance releasing the port
+    // (`daemon stop` returns before the process exits). Retry the bind for a
+    // bounded window instead of silently running without the browser for the
+    // daemon's whole lifetime — observed twice after upgrades.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let listener = loop {
+        match tokio::net::TcpListener::bind((bind.as_str(), port)).await {
+            Ok(listener) => break listener,
+            Err(error) if std::time::Instant::now() < deadline => {
+                let _ = error;
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+            Err(error) => {
+                return Err(Error::Config(format!(
+                    "web bind {bind}:{port}: {error} (gave up after 30 s)"
+                )));
+            }
+        }
+    };
     axum::serve(listener, app)
         .await
         .map_err(|error| Error::Config(format!("web serve: {error}")))
