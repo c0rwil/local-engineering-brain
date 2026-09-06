@@ -934,6 +934,23 @@ fn migrate_legacy_state(home: &Path) {
             let _ = std::fs::rename(&legacy, &current);
         }
     }
+    // Path VALUES inside the migrated config must follow the directories:
+    // a pinned `root = "~/.leb/vault"` would otherwise point at a folder
+    // that no longer exists (observed: the encyclopedia lost its guide).
+    let config_path = home.join(".config/engram/config.toml");
+    if let Ok(text) = std::fs::read_to_string(&config_path) {
+        let home_str = home.to_string_lossy();
+        let rewritten = text
+            .replace("~/.leb/", "~/.engram/")
+            .replace("~/.leb\"", "~/.engram\"")
+            .replace(
+                &format!("{home_str}/.leb/"),
+                &format!("{home_str}/.engram/"),
+            );
+        if rewritten != text {
+            let _ = std::fs::write(&config_path, rewritten);
+        }
+    }
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -976,6 +993,26 @@ fn socket_for_database(database: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_state_migration_moves_dirs_and_rewrites_config_paths() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let home = temp.path();
+        std::fs::create_dir_all(home.join(".leb/vault")).expect("legacy state");
+        std::fs::create_dir_all(home.join(".config/leb")).expect("legacy config dir");
+        std::fs::write(
+            home.join(".config/leb/config.toml"),
+            "[vault]\nroot = \"~/.leb/vault\"\n",
+        )
+        .expect("legacy config");
+        super::migrate_legacy_state(home);
+        assert!(home.join(".engram/vault").is_dir());
+        assert!(!home.join(".leb").exists());
+        let migrated =
+            std::fs::read_to_string(home.join(".config/engram/config.toml")).expect("migrated");
+        assert!(migrated.contains("~/.engram/vault"), "{migrated}");
+        assert!(!migrated.contains("~/.leb"));
+    }
+
     use std::fs;
 
     use tempfile::TempDir;
