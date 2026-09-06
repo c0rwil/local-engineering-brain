@@ -59,6 +59,31 @@ pub fn extract_file_path(tool_input: &serde_json::Value) -> Option<String> {
     None
 }
 
+/// Atomically claim a once-per-session action (`tag`, e.g. `brief` or
+/// `prompt`). Claude Code runs user-level and project-level hooks
+/// CONCURRENTLY, so a read-then-write existence check races and both fire;
+/// `create_new` makes exactly one caller win.
+#[must_use]
+pub fn claim_once(state_dir: &Path, session_id: &str, tag: &str) -> bool {
+    let path = session_state_path(state_dir, session_id).with_extension(format!("{tag}.claim"));
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .is_ok()
+}
+
+/// Remove a session's claim files (session end).
+pub fn clear_claims(state_dir: &Path, session_id: &str) {
+    for tag in ["brief", "prompt"] {
+        let path = session_state_path(state_dir, session_id).with_extension(format!("{tag}.claim"));
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 /// Sidecar tracking which files a session has already been briefed on, so
 /// pre-tool shape injection fires once per file per session.
 #[must_use]
@@ -664,6 +689,29 @@ mod tests {
         assert!(shape.contains("validate (Function)"));
         assert!(shape.contains("login [src/routes.rs]"));
         assert!(shape.contains("crate::db"));
+    }
+
+    #[test]
+    fn claims_are_won_exactly_once_per_session_and_tag() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        assert!(claim_once(temp.path(), "s1", "prompt"));
+        assert!(
+            !claim_once(temp.path(), "s1", "prompt"),
+            "second racer loses"
+        );
+        assert!(
+            claim_once(temp.path(), "s1", "brief"),
+            "tags are independent"
+        );
+        assert!(
+            claim_once(temp.path(), "s2", "prompt"),
+            "sessions are independent"
+        );
+        clear_claims(temp.path(), "s1");
+        assert!(
+            claim_once(temp.path(), "s1", "prompt"),
+            "cleared at session end"
+        );
     }
 
     #[test]

@@ -2208,11 +2208,13 @@ fn run_hook_event(
                         .join("\n")
                 )
             };
-            if engram::agenthooks::load_session(&state_dir, &session_id).is_some() {
+            if engram::agenthooks::load_session(&state_dir, &session_id).is_some()
+                || !engram::agenthooks::claim_once(&state_dir, &session_id, "prompt")
+            {
                 if !relay_block.is_empty() {
                     emit("UserPromptSubmit", &relay_block);
                 }
-                return Ok(true); // session already primed (pinned semantics)
+                return Ok(true); // primed (pinned semantics) or a concurrent hook won
             }
             let prompt = payload
                 .get("user_prompt")
@@ -2280,6 +2282,9 @@ fn run_hook_event(
             }
         }
         "session-start" => {
+            if !engram::agenthooks::claim_once(&state_dir, &session_id, "brief") {
+                return Ok(true); // a concurrent hook (user + project level) already briefed
+            }
             let Ok(lookup) = block_on(client.lookup_project(&cwd)) else {
                 return Ok(true);
             };
@@ -2408,6 +2413,7 @@ fn run_hook_event(
                 &state_dir,
                 &session_id,
             ));
+            engram::agenthooks::clear_claims(&state_dir, &session_id);
         }
         "bash" => {
             let command = payload
