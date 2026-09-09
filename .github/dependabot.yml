@@ -1,0 +1,37 @@
+version: 2
+
+updates:
+  # Rust dependencies. Grouped so a routine week produces one reviewable PR
+  # instead of a dozen; anything with a security advisory still comes through
+  # on its own and is caught independently by .github/workflows/audit.yml.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    groups:
+      cargo-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Pinned action versions in .github/workflows/*.yml.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+      include: scope
+    groups:
+      github-actions:
+        patterns:
+          - "*"

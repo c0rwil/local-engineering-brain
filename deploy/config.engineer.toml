@@ -1,0 +1,7 @@
+# Engineer machines — append to ~/.config/engram/config.toml
+
+[sync]
+central_url = "https://engram.internal.agi.tech"
+token = "CHANGE-ME"        # per-user or shared bearer
+every_secs = 900           # validated truth down, candidate lessons up
+push = true                # set false for pull-only machines

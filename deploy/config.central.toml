@@ -1,0 +1,19 @@
+# Central Engram host — ~/.config/engram/config.toml
+# The daemon REFUSES a non-loopback bind without a token. Front with TLS.
+
+[web]
+enabled = true
+bind = "0.0.0.0"          # or a private interface
+port = 11436
+token = "CHANGE-ME-LONG-RANDOM"
+
+[watch]
+enabled = true
+origin_poll_secs = 900     # safety net between CI webhooks
+
+[architect]
+auto = "claude"            # self-regenerating architecture guide
+auto_min_secs = 3600
+
+[vault]
+auto_refresh = true

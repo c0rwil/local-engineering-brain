@@ -1,0 +1,285 @@
+#!/bin/zsh
+
+set -euo pipefail
+umask 077
+
+readonly MTPLX_CLAUDE_HOST="${MTPLX_CLAUDE_HOST:-127.0.0.1}"
+readonly MTPLX_CLAUDE_PORT="${MTPLX_CLAUDE_PORT:-8010}"
+readonly MTPLX_CLAUDE_MODEL_REPO="${MTPLX_CLAUDE_MODEL_REPO:-Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed}"
+readonly MTPLX_CLAUDE_MODEL_ID="${MTPLX_CLAUDE_MODEL_ID:-mtplx-qwen38-27b-optimized-speed}"
+readonly MTPLX_CLAUDE_BASE_URL="http://${MTPLX_CLAUDE_HOST}:${MTPLX_CLAUDE_PORT}"
+readonly MTPLX_CLAUDE_LOG_DIR="${MTPLX_LOG_DIR:-${HOME}/.mtplx/logs}"
+readonly MTPLX_CLAUDE_LOG="${MTPLX_CLAUDE_LOG_DIR}/claude-code-${MTPLX_CLAUDE_MODEL_ID}.log"
+readonly ENGRAM_BIN_DIR="${ENGRAM_BIN_DIR:-${HOME}/.local/bin}"
+readonly ENGRAM_STATE_DIR="${ENGRAM_STATE_DIR:-${HOME}/.engram}"
+readonly ENGRAM_PROXY_HOST="${ENGRAM_PROXY_HOST:-127.0.0.1}"
+readonly ENGRAM_PROXY_PORT="${ENGRAM_PROXY_PORT:-11435}"
+readonly ENGRAM_PROXY_BASE_URL="http://${ENGRAM_PROXY_HOST}:${ENGRAM_PROXY_PORT}"
+readonly ENGRAM_LOG_DIR="${ENGRAM_STATE_DIR}/logs"
+readonly ENGRAM_PROXY_LOG="${ENGRAM_LOG_DIR}/claude-code-proxy.log"
+readonly ENGRAM_PROXY_PID_FILE="${ENGRAM_STATE_DIR}/claude-code-proxy.pid"
+readonly ENGRAM_PROXY_LOCK="${ENGRAM_STATE_DIR}/claude-code-proxy.lock"
+readonly MTPLX_LOCK="${MTPLX_CLAUDE_LOG_DIR}/claude-code-start.lock"
+
+usage() {
+  print "Usage: claude-mtplx [WRAPPER OPTION] [CLAUDE ARGUMENTS...]"
+  print ""
+  print "Wrapper options (do not start the model):"
+  print "  --help             Show this help"
+  print "  --version          Show Claude Code version"
+  print "  --server-status    Show MTPLX and Engram proxy status"
+  print "  --stop-brain       Stop only this launcher's Engram proxy/daemon"
+  print "  --stop-server      Stop this launcher's Engram proxy/daemon and MTPLX"
+  print ""
+  print "Environment: ENGRAM_MODE=brain|off, optional ENGRAM_TOKEN_BUDGET,"
+  print "MTPLX_BIN, CLAUDE_BIN, ENGRAM_BIN_DIR, ENGRAM_STATE_DIR, ENGRAM_DB_PATH,"
+  print "ENGRAM_SOCKET_PATH, ENGRAM_PROXY_PORT, and MTPLX_CLAUDE_PORT."
+}
+
+resolve_command() {
+  local label="$1"
+  local override="$2"
+  local fallback="$3"
+  local resolved=""
+  if [[ -n "${override}" ]]; then
+    if [[ -x "${override}" ]]; then
+      resolved="${override}"
+    else
+      resolved="$(command -v -- "${override}" 2>/dev/null || true)"
+    fi
+  else
+    resolved="$(command -v -- "${fallback}" 2>/dev/null || true)"
+  fi
+  if [[ -z "${resolved}" ]]; then
+    print -u2 "Missing ${label}; install it or set its binary override."
+    return 1
+  fi
+  print -r -- "${resolved}"
+}
+
+case "${1:-}" in
+  --help|-h)
+    usage
+    exit 0
+    ;;
+  --version|-v)
+    readonly CLAUDE_CMD="$(resolve_command "Claude Code" "${CLAUDE_BIN:-}" claude)"
+    exec "${CLAUDE_CMD}" --version
+    ;;
+esac
+
+readonly CURL_CMD="$(resolve_command curl "${CURL_BIN:-}" curl)"
+readonly JQ_CMD="$(resolve_command jq "${JQ_BIN:-}" jq)"
+
+health_json() {
+  "${CURL_CMD}" --fail --silent --show-error --max-time 2 \
+    "${MTPLX_CLAUDE_BASE_URL}/health" 2>/dev/null
+}
+
+health_model() {
+  health_json | "${JQ_CMD}" -r '.model // empty' 2>/dev/null
+}
+
+mtplx_status() {
+  local current_model="$(health_model || true)"
+  if [[ -n "${current_model}" ]]; then
+    print "MTPLX is ready on ${MTPLX_CLAUDE_BASE_URL} (${current_model})."
+    return 0
+  fi
+  print "MTPLX is not running on ${MTPLX_CLAUDE_BASE_URL}."
+  return 1
+}
+
+engram_proxy_ready() {
+  "${CURL_CMD}" --fail --silent --show-error --max-time 2 \
+    "${ENGRAM_PROXY_BASE_URL}/health" 2>/dev/null \
+    | "${JQ_CMD}" -e '.status == "ok"' >/dev/null 2>&1
+}
+
+engram_proxy_status() {
+  if engram_proxy_ready; then
+    print "Engram proxy is ready on ${ENGRAM_PROXY_BASE_URL}."
+    return 0
+  fi
+  print "Engram proxy is not running on ${ENGRAM_PROXY_BASE_URL}."
+  return 1
+}
+
+stop_leb_proxy() {
+  if [[ -f "${ENGRAM_PROXY_PID_FILE}" ]]; then
+    local proxy_pid="$(<"${ENGRAM_PROXY_PID_FILE}")"
+    if [[ "${proxy_pid}" == <-> ]]; then
+      local command="$(ps -p "${proxy_pid}" -o command= 2>/dev/null || true)"
+      if [[ -n "${command}" && "${command}" == *"engram-proxy"* ]]; then
+        kill "${proxy_pid}"
+        for _ in {1..50}; do
+          kill -0 "${proxy_pid}" 2>/dev/null || break
+          sleep 0.1
+        done
+      fi
+    else
+      print -u2 "Ignoring invalid Engram proxy PID file."
+    fi
+    rm -f -- "${ENGRAM_PROXY_PID_FILE}"
+  fi
+  if [[ -S "${ENGRAM_SOCKET_PATH:-${ENGRAM_STATE_DIR}/engramd.sock}" && -x "${ENGRAM_BIN_DIR}/engram" ]]; then
+    local db_args=()
+    [[ -n "${ENGRAM_DB_PATH:-}" ]] && db_args=(--db "${ENGRAM_DB_PATH}")
+    "${ENGRAM_BIN_DIR}/engram" \
+      "${db_args[@]}" \
+      --socket "${ENGRAM_SOCKET_PATH:-${ENGRAM_STATE_DIR}/engramd.sock}" daemon stop >/dev/null 2>&1 || true
+  fi
+}
+
+case "${1:-}" in
+  --server-status)
+    status_rc=0
+    mtplx_status || status_rc=1
+    engram_proxy_status || status_rc=1
+    exit "${status_rc}"
+    ;;
+  --stop-brain)
+    stop_leb_proxy
+    exit 0
+    ;;
+  --stop-server)
+    readonly MTPLX_CMD="$(resolve_command MTPLX "${MTPLX_BIN:-}" mtplx)"
+    stop_leb_proxy
+    exec "${MTPLX_CMD}" stop --host "${MTPLX_CLAUDE_HOST}" --port "${MTPLX_CLAUDE_PORT}"
+    ;;
+esac
+
+readonly LSOF_CMD="$(resolve_command lsof "${LSOF_BIN:-}" lsof)"
+readonly MTPLX_CMD="$(resolve_command MTPLX "${MTPLX_BIN:-}" mtplx)"
+readonly CLAUDE_CMD="$(resolve_command "Claude Code" "${CLAUDE_BIN:-}" claude)"
+
+wait_until_ready() {
+  for _ in {1..180}; do
+    if [[ "$(health_model || true)" == "${MTPLX_CLAUDE_MODEL_ID}" ]]; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  print -u2 "MTPLX did not become ready within 90 seconds. See ${MTPLX_CLAUDE_LOG}"
+  return 1
+}
+
+start_server_if_needed() {
+  if [[ "$(health_model || true)" == "${MTPLX_CLAUDE_MODEL_ID}" ]]; then
+    return 0
+  fi
+  mkdir -p "${MTPLX_CLAUDE_LOG_DIR}"
+  if ! mkdir "${MTPLX_LOCK}" 2>/dev/null; then
+    for _ in {1..180}; do
+      [[ "$(health_model || true)" == "${MTPLX_CLAUDE_MODEL_ID}" ]] && return 0
+      sleep 0.5
+    done
+    print -u2 "Timed out waiting for another MTPLX launcher."
+    return 1
+  fi
+  trap 'rmdir -- "${MTPLX_LOCK}" 2>/dev/null || true' EXIT INT TERM
+  if [[ -n "$(health_model || true)" ]]; then
+    print -u2 "MTPLX is already serving a different model; use --stop-server first."
+    return 1
+  fi
+  if "${LSOF_CMD}" -nP -iTCP:"${MTPLX_CLAUDE_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+    print -u2 "Port ${MTPLX_CLAUDE_PORT} is already used by another process."
+    return 1
+  fi
+  print -u2 "Starting ${MTPLX_CLAUDE_MODEL_REPO} for Claude Code..."
+  nohup "${MTPLX_CMD}" quickstart \
+    --model "${MTPLX_CLAUDE_MODEL_REPO}" \
+    --model-id "${MTPLX_CLAUDE_MODEL_ID}" \
+    --profile turbo --host "${MTPLX_CLAUDE_HOST}" --port "${MTPLX_CLAUDE_PORT}" \
+    --reasoning-effort medium --no-stats-footer \
+    >"${MTPLX_CLAUDE_LOG}" 2>&1 &
+  wait_until_ready
+  rmdir -- "${MTPLX_LOCK}" 2>/dev/null || true
+  trap - EXIT INT TERM
+}
+
+wait_for_leb_proxy() {
+  for _ in {1..100}; do
+    engram_proxy_ready && return 0
+    sleep 0.1
+  done
+  print -u2 "Engram proxy did not become ready. See ${ENGRAM_PROXY_LOG}"
+  return 1
+}
+
+start_leb_proxy_if_needed() {
+  engram_proxy_ready && return 0
+  [[ -x "${ENGRAM_BIN_DIR}/engram-proxy" ]] || {
+    print -u2 "Missing ${ENGRAM_BIN_DIR}/engram-proxy; reinstall Engram first."
+    return 1
+  }
+  mkdir -p "${ENGRAM_LOG_DIR}"
+  if ! mkdir "${ENGRAM_PROXY_LOCK}" 2>/dev/null; then
+    for _ in {1..100}; do
+      engram_proxy_ready && return 0
+      sleep 0.1
+    done
+    print -u2 "Timed out waiting for another Engram proxy launcher."
+    return 1
+  fi
+  trap 'rmdir -- "${ENGRAM_PROXY_LOCK}" 2>/dev/null || true' EXIT INT TERM
+  if "${LSOF_CMD}" -nP -iTCP:"${ENGRAM_PROXY_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+    print -u2 "Port ${ENGRAM_PROXY_PORT} is already used by another process."
+    return 1
+  fi
+  local socket_args=()
+  [[ -n "${ENGRAM_SOCKET_PATH:-}" ]] && socket_args=(--socket "${ENGRAM_SOCKET_PATH}")
+  nohup "${ENGRAM_BIN_DIR}/engram-proxy" \
+    --runtime "${MTPLX_CLAUDE_BASE_URL}" \
+    --bind "${ENGRAM_PROXY_HOST}:${ENGRAM_PROXY_PORT}" \
+    "${socket_args[@]}" >"${ENGRAM_PROXY_LOG}" 2>&1 &
+  print -r -- "$!" >"${ENGRAM_PROXY_PID_FILE}"
+  wait_for_leb_proxy
+  rmdir -- "${ENGRAM_PROXY_LOCK}" 2>/dev/null || true
+  trap - EXIT INT TERM
+}
+
+readonly ENGRAM_REQUEST_MODE="${ENGRAM_MODE:-brain}"
+if [[ "${ENGRAM_REQUEST_MODE}" != "brain" && "${ENGRAM_REQUEST_MODE}" != "off" ]]; then
+  print -u2 "ENGRAM_MODE must be 'brain' or 'off'."
+  exit 2
+fi
+if [[ -n "${ENGRAM_TOKEN_BUDGET:-}" ]] && \
+  { [[ "${ENGRAM_TOKEN_BUDGET}" != <-> ]] || [[ "${ENGRAM_TOKEN_BUDGET}" -eq 0 ]]; }; then
+  print -u2 "ENGRAM_TOKEN_BUDGET must be a positive integer when set."
+  exit 2
+fi
+if [[ "${PWD}" == *$'\n'* || "${PWD}" == *$'\r'* ]]; then
+  print -u2 "The project path cannot contain newline characters."
+  exit 2
+fi
+
+start_server_if_needed
+start_leb_proxy_if_needed
+
+local_headers="x-engram-project-path: ${PWD}
+x-engram-mode: ${ENGRAM_REQUEST_MODE}"
+if [[ -n "${ENGRAM_INJECTION_FRAMING:-}" ]]; then
+  case "${ENGRAM_INJECTION_FRAMING}" in
+    reference|directive) local_headers="${local_headers}
+x-engram-injection-framing: ${ENGRAM_INJECTION_FRAMING}" ;;
+    *) print -u2 "invalid ENGRAM_INJECTION_FRAMING (reference|directive)"; exit 64 ;;
+  esac
+fi
+if [[ -n "${ENGRAM_TOKEN_BUDGET:-}" ]]; then
+  local_headers="${local_headers}
+x-engram-token-budget: ${ENGRAM_TOKEN_BUDGET}"
+fi
+export ANTHROPIC_API_KEY=""
+export ANTHROPIC_AUTH_TOKEN="${MTPLX_API_KEY:-local-mtplx}"
+export ANTHROPIC_BASE_URL="${ENGRAM_PROXY_BASE_URL}"
+export ANTHROPIC_CUSTOM_HEADERS="${local_headers}"
+export ANTHROPIC_MODEL="${MTPLX_CLAUDE_MODEL_ID}"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="${MTPLX_CLAUDE_MODEL_ID}"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="${MTPLX_CLAUDE_MODEL_ID}"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="${MTPLX_CLAUDE_MODEL_ID}"
+export CLAUDE_CODE_SUBAGENT_MODEL="${MTPLX_CLAUDE_MODEL_ID}"
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
+export API_TIMEOUT_MS="${API_TIMEOUT_MS:-3000000}"
+
+exec "${CLAUDE_CMD}" --model "${MTPLX_CLAUDE_MODEL_ID}" "$@"

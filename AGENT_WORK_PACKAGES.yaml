@@ -1,0 +1,55 @@
+project: Local Engineering Brain
+canonical_spec: LOCAL_ENGINEERING_BRAIN_SPEC.md
+rules:
+  - domain logic must live behind typed interfaces
+  - no cloud dependency in default path
+  - no unsupported LLM claim may become validated knowledge
+  - preserve project isolation and bitemporal validity
+  - every implementation ships tests
+  - benchmark OFF mode must remain a valid control
+work_packages:
+  - id: WP-A
+    name: Core storage and events
+    owns: [storage, events, migrations, blobs, backup]
+    milestone: 0
+  - id: WP-B
+    name: Project and Git model
+    owns: [project identity, worktrees, ancestry, diffs]
+    milestone: 0
+  - id: WP-C
+    name: Structural world model
+    owns: [graph schema, tree-sitter provider, Graphify adapter, incremental indexing]
+    milestone: 1
+  - id: WP-D
+    name: Evidence and validity
+    owns: [evidence hierarchy, verification, bitemporal applicability, contradiction]
+    milestone: 2
+  - id: WP-E
+    name: Experience and learning
+    owns: [tasks, attempts, episodes, distillation, procedures, skills]
+    milestone: 2
+  - id: WP-F
+    name: Retrieval and context compiler
+    owns: [FTS, semantic adapter, structural retrieval, ranker, token compiler, why]
+    milestone: 3
+  - id: WP-G
+    name: Proxy and runtimes
+    owns: [OpenAI/Anthropic proxy, streaming, tool calls, MTPLX adapter]
+    milestone: 4
+  - id: WP-H
+    name: MCP and CLI
+    owns: [MCP adapter, CLI surfaces]
+    milestone: 4
+  - id: WP-I
+    name: Evaluation and performance
+    owns: [paired benchmark harness, ablations, statistics, performance CI]
+    milestone: 0
+    note: Start early so every later feature can be measured.
+  - id: WP-J
+    name: Security and observability
+    owns: [redaction, local-only enforcement, audit, metrics, doctor]
+    milestone: 0
+  - id: WP-K
+    name: Integration QA
+    owns: [E2E fixtures, fault injection, release gates]
+    milestone: 1

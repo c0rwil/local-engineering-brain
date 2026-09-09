@@ -1,0 +1,19 @@
+# Drop into each tracked product repo as .github/workflows/engram-central.yml
+# Repo settings: variable LEB_CENTRAL_URL (e.g. https://engram.internal.agi.tech),
+# secret LEB_CENTRAL_TOKEN (the central [web] token).
+name: Update central Engram
+on:
+  push:
+    branches: [main]
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fsS -X POST "$LEB_CENTRAL_URL/webhook/repo-updated" \
+            -H "authorization: Bearer $LEB_CENTRAL_TOKEN" \
+            -H "content-type: application/json" \
+            -d "{\"repo\": \"${{ github.event.repository.name }}\"}"
+        env:
+          LEB_CENTRAL_URL: ${{ vars.LEB_CENTRAL_URL }}
+          LEB_CENTRAL_TOKEN: ${{ secrets.LEB_CENTRAL_TOKEN }}

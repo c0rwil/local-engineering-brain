@@ -1,0 +1,22 @@
+benchmark_id: leb-clean-machine-smoke-v1
+model_hash: deterministic-fixture-agent-v1
+modes: [off, brain]
+seeds: [1]
+wall_seconds: 60
+artifact_dir: bench-smoke-artifacts
+runtime_config:
+  temperature: 0
+  top_p: 1
+tasks:
+  - id: bounded_fixture_task
+    repo: ./fixtures/example_repo
+    prompt_file: ./tasks/example_task/prompt.txt
+    setup:
+      command: "true"
+    agent:
+      command: sh ./.leb-eval-agent.sh {prompt_file}
+    success:
+      command: sh ./verify.sh
+    metrics_file: .leb-bench-metrics.json
+    limits:
+      wall_seconds: 30

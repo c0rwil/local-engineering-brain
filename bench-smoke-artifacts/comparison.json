@@ -1,0 +1,23 @@
+{
+  "benchmark_id": "leb-clean-machine-smoke-v1",
+  "model_hash": "deterministic-fixture-agent-v1",
+  "config_hash": "54ac083126e274939b244ca4ff86ff05b6f5fb782572fe3375352a8e0350f3a4",
+  "paired_runs": 1,
+  "off": {
+    "mode": "off",
+    "runs": 1,
+    "successes": 1,
+    "success_rate": 1.0,
+    "mean_wall_ms": 95.0
+  },
+  "brain": {
+    "mode": "brain",
+    "runs": 1,
+    "successes": 1,
+    "success_rate": 1.0,
+    "mean_wall_ms": 93.0
+  },
+  "success_rate_delta": 0.0,
+  "mean_wall_time_delta_pct": -2.1052631578947367,
+  "generated_at_ms": 1787992372617
+}

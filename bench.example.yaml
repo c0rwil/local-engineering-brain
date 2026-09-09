@@ -1,0 +1,36 @@
+benchmark_id: leb-smoke-v1
+model_hash: replace-with-exact-model-and-weights-hash
+modes: [off, brain]
+seeds: [1]
+wall_seconds: 900
+artifact_dir: bench-artifacts
+# Optional but recommended after learning episodes. Must be a standalone file
+# created by `leb backup create`; both arms receive byte-identical private copies.
+# brain_snapshot: /absolute/path/to/frozen-benchmark.sqlite
+runtime_config:
+  temperature: 0
+  top_p: 1
+# Optional credential names copied from the parent environment into the agent
+# phase only, identically for both arms. The strict allowlist is
+# ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN; requested values must be set.
+# This grants benchmarked agent code access to the named secret. Keep empty for
+# untrusted/private repositories; use only with an approved synthetic fixture.
+pass_env: []
+# The runner also sets isolated LEB_DB_PATH, LEB_SOCKET_PATH, LEB_STATE_DIR,
+# LEB_PROXY_PORT, and LEB_BRAIN_SNAPSHOT_HASH for every arm.
+# Configure your agent or proxy to honor LEB_MODE.
+tasks:
+  - id: example_task
+    repo: ./fixtures/example_repo
+    prompt_file: ./tasks/example_task/prompt.txt
+    setup:
+      command: "true"
+    agent:
+      command: >-
+        your-agent --prompt-file {prompt_file}
+    success:
+      command: pytest -q
+    # Optional JSON emitted by your integration, e.g. tokens/tool calls/LEB timing.
+    metrics_file: .leb-bench-metrics.json
+    limits:
+      wall_seconds: 600

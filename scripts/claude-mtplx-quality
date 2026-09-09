@@ -1,0 +1,9 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+export MTPLX_CLAUDE_MODEL_REPO="${MTPLX_CLAUDE_MODEL_REPO:-Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality}"
+export MTPLX_CLAUDE_MODEL_ID="${MTPLX_CLAUDE_MODEL_ID:-mtplx-qwen38-27b-optimized-quality-q8}"
+
+readonly SCRIPT_DIR="${0:A:h}"
+exec "${SCRIPT_DIR}/claude-mtplx" "$@"
