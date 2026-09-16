@@ -1,0 +1,1 @@
+engram: I/O error at /Users/corwil/.engram/engramd.sock: Connection refused (os error 61)

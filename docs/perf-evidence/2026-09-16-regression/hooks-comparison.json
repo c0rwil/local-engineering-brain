@@ -1,0 +1,23 @@
+{
+  "benchmark_id": "conveyor-g2-opus-hooks-v1",
+  "model_hash": "anthropic-api-claude-opus-4-8-via-hooks",
+  "config_hash": "f5c38c818dbb20306e80e875e70187e89c5fb3a76ce4b4e3ea5817da4b62f43d",
+  "paired_runs": 10,
+  "off": {
+    "mode": "off",
+    "runs": 10,
+    "successes": 8,
+    "success_rate": 0.8,
+    "mean_wall_ms": 86473.9
+  },
+  "brain": {
+    "mode": "brain",
+    "runs": 10,
+    "successes": 10,
+    "success_rate": 1.0,
+    "mean_wall_ms": 81022.4
+  },
+  "success_rate_delta": 0.19999999999999996,
+  "mean_wall_time_delta_pct": -6.304214335192469,
+  "generated_at_ms": 1789523272626
+}

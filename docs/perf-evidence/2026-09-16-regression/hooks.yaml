@@ -1,0 +1,88 @@
+
+benchmark_id: conveyor-g2-opus-hooks-v1
+model_hash: anthropic-api-claude-opus-4-8-via-hooks
+modes: [off, brain]
+seeds: [1, 2]
+wall_seconds: 900
+artifact_dir: bench-artifacts
+brain_snapshot: /Users/corwil/Documents/leb-bench-target/family-g2-snapshot.sqlite
+runtime_config:
+  temperature: 0
+  top_p: 1
+
+tasks:
+  - id: t20_discard_recovered_resolves_parked_jobs
+    repo: /private/tmp/engram-regression-20260916/fixture
+    prompt_file: /Users/corwil/Documents/leb-bench-target/tasks/t20_discard_recovered_resolves_parked_jobs/prompt.txt
+    agent:
+      command: >-
+        /private/tmp/engram-regression-20260916/agent-claude-hooks.sh {prompt_file}
+    success:
+      command: >-
+        git checkout -- Cargo.toml Cargo.lock tests &&
+        cargo test -q &&
+        cargo test -q --test acceptance -- --ignored --exact t20_discard_recovered_resolves_parked_jobs &&
+        bash "$(dirname {prompt_file})/../../scripts/style/t20_discard_recovered_resolves_parked_jobs.sh"
+    limits:
+      wall_seconds: 900
+    metrics_file: .leb-bench-metrics.json
+  - id: t21_schedule_lists_accept_ranges
+    repo: /private/tmp/engram-regression-20260916/fixture
+    prompt_file: /Users/corwil/Documents/leb-bench-target/tasks/t21_schedule_lists_accept_ranges/prompt.txt
+    agent:
+      command: >-
+        /private/tmp/engram-regression-20260916/agent-claude-hooks.sh {prompt_file}
+    success:
+      command: >-
+        git checkout -- Cargo.toml Cargo.lock tests &&
+        cargo test -q &&
+        cargo test -q --test acceptance -- --ignored --exact t21_schedule_lists_accept_ranges &&
+        bash "$(dirname {prompt_file})/../../scripts/style/t21_schedule_lists_accept_ranges.sh"
+    limits:
+      wall_seconds: 900
+    metrics_file: .leb-bench-metrics.json
+  - id: t22_decode_rejects_duplicate_job_ids
+    repo: /private/tmp/engram-regression-20260916/fixture
+    prompt_file: /Users/corwil/Documents/leb-bench-target/tasks/t22_decode_rejects_duplicate_job_ids/prompt.txt
+    agent:
+      command: >-
+        /private/tmp/engram-regression-20260916/agent-claude-hooks.sh {prompt_file}
+    success:
+      command: >-
+        git checkout -- Cargo.toml Cargo.lock tests &&
+        cargo test -q &&
+        cargo test -q --test acceptance -- --ignored --exact t22_decode_rejects_duplicate_job_ids &&
+        bash "$(dirname {prompt_file})/../../scripts/style/t22_decode_rejects_duplicate_job_ids.sh"
+    limits:
+      wall_seconds: 900
+    metrics_file: .leb-bench-metrics.json
+  - id: t23_state_tags_parse_back
+    repo: /private/tmp/engram-regression-20260916/fixture
+    prompt_file: /Users/corwil/Documents/leb-bench-target/tasks/t23_state_tags_parse_back/prompt.txt
+    agent:
+      command: >-
+        /private/tmp/engram-regression-20260916/agent-claude-hooks.sh {prompt_file}
+    success:
+      command: >-
+        git checkout -- Cargo.toml Cargo.lock tests &&
+        cargo test -q &&
+        cargo test -q --test acceptance -- --ignored --exact t23_state_tags_parse_back &&
+        bash "$(dirname {prompt_file})/../../scripts/style/t23_state_tags_parse_back.sh"
+    limits:
+      wall_seconds: 900
+    metrics_file: .leb-bench-metrics.json
+  - id: t24_purge_empties_the_queue
+    repo: /private/tmp/engram-regression-20260916/fixture
+    prompt_file: /Users/corwil/Documents/leb-bench-target/tasks/t24_purge_empties_the_queue/prompt.txt
+    agent:
+      command: >-
+        /private/tmp/engram-regression-20260916/agent-claude-hooks.sh {prompt_file}
+    success:
+      command: >-
+        git checkout -- Cargo.toml Cargo.lock tests &&
+        cargo test -q &&
+        cargo test -q --test acceptance -- --ignored --exact t24_purge_empties_the_queue &&
+        bash "$(dirname {prompt_file})/../../scripts/style/t24_purge_empties_the_queue.sh"
+    limits:
+      wall_seconds: 900
+    metrics_file: .leb-bench-metrics.json

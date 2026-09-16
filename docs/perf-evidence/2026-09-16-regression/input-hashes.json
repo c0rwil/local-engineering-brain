@@ -1,0 +1,17 @@
+{
+  "/Users/corwil/Documents/leb-bench-target/family-g2-snapshot.sqlite": "04ce3a872fa11468d20d56eb61e38ac0f3522ceb4ccac39d4caff072edd7448d",
+  "/private/tmp/engram-regression-20260916/agent-claude-hooks.sh": "25c1041b9dac10091d16a025d91a167a64a5a32765da01a136d9f76d2eb7d672",
+  "/private/tmp/engram-regression-20260916/agent-claude-v2.sh": "a635b79c74205798f37dedfcfaad8554a27925916560f2312c5be7e77c3b3aca",
+  "/private/tmp/engram-regression-20260916/hooks.yaml": "0514b80633caa10d40875bce82e35ebb76df5da73af73e19e7669a0434868a4c",
+  "/private/tmp/engram-regression-20260916/local.yaml": "624cb6a32435afb3a92704fa24b27c2bf1fe397251871b589cabc41401ffb37e",
+  "/Users/corwil/Documents/leb-bench-target/tasks/t20_discard_recovered_resolves_parked_jobs/prompt.txt": "422797a641ad06c4918e2f33b5ed15c2f7841a8494d987d1535c11405ace6d53",
+  "/Users/corwil/Documents/leb-bench-target/tasks/t21_schedule_lists_accept_ranges/prompt.txt": "d7c53693251f96bc816b9c0359e81eb062c9be9e924cc790d205898f992cec3b",
+  "/Users/corwil/Documents/leb-bench-target/tasks/t22_decode_rejects_duplicate_job_ids/prompt.txt": "aab31bb5e8b703bd5111cd9c010963063aec082f015820bf169bee4ddfe6c94a",
+  "/Users/corwil/Documents/leb-bench-target/tasks/t23_state_tags_parse_back/prompt.txt": "6bcd6ad60f4da083b3148bf79d4f6b505c8fe02e637a12e442e1b55e1fcb6558",
+  "/Users/corwil/Documents/leb-bench-target/tasks/t24_purge_empties_the_queue/prompt.txt": "0755a47de83709e8e93ee71d7ac8a17c565e8bda24fa6b7ea6b79d960b9a7038",
+  "/Users/corwil/Documents/leb-bench-target/scripts/style/t20_discard_recovered_resolves_parked_jobs.sh": "7b5bd5a713375927e600aed717fa065a489a79fb241b5a218a46ed588609f137",
+  "/Users/corwil/Documents/leb-bench-target/scripts/style/t21_schedule_lists_accept_ranges.sh": "98f48caae78aa6bcff4f77d6c6b1fe251a70947edde2b371778b563d1e79a4a5",
+  "/Users/corwil/Documents/leb-bench-target/scripts/style/t22_decode_rejects_duplicate_job_ids.sh": "cbf908c4fbfcd9d2e9560eb0f2aa84ec54e645e93420768a661d830ff8a4cdd3",
+  "/Users/corwil/Documents/leb-bench-target/scripts/style/t23_state_tags_parse_back.sh": "5398db055035ef20ffe54e7f6de1cc7a84ab6f243e8dd2e6b9940f2f25ed4375",
+  "/Users/corwil/Documents/leb-bench-target/scripts/style/t24_purge_empties_the_queue.sh": "50a3bb93c879823c89f8a9a974a49c574b3c0456c379f3f6491d68fbd99a568e"
+}

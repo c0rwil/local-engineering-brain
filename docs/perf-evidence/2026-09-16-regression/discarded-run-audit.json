@@ -1,0 +1,48 @@
+{
+  "valid": false,
+  "reason": "Global MCP remained available despite disableAllHooks; the first control received 454 context bytes (114 tokens).",
+  "owned_synthetic_episodes_removed_after_backup": 3,
+  "runs": [
+    {
+      "arm": "000001-t20_discard_recovered_resolves_parked_jobs-off-1",
+      "mcp_calls": [
+        "mcp__leb__engram_project_status",
+        "mcp__leb__engram_recall",
+        "mcp__leb__engram_task_start",
+        "mcp__leb__engram_record_evidence",
+        "mcp__leb__engram_record_attempt",
+        "mcp__leb__engram_mark_outcome",
+        "mcp__leb__engram_learn",
+        "mcp__leb__engram_learn"
+      ],
+      "transcript_sha256": "dac1467f13729e1eecae1fb8d14128f0b078f02394dfc2b9e6a69f9723e9bcbb"
+    },
+    {
+      "arm": "000002-t20_discard_recovered_resolves_parked_jobs-brain-1",
+      "mcp_calls": [
+        "mcp__leb__engram_project_status",
+        "mcp__leb__engram_recall",
+        "mcp__leb__engram_get_past_failures",
+        "mcp__leb__engram_task_start",
+        "mcp__leb__engram_record_attempt",
+        "mcp__leb__engram_record_evidence",
+        "mcp__leb__engram_mark_outcome",
+        "mcp__leb__engram_learn"
+      ],
+      "transcript_sha256": "1f8efc1bce92f40aa66b491f1bfa4e964f215b1169d586e453a4a0aff9e262a1"
+    },
+    {
+      "arm": "000003-t20_discard_recovered_resolves_parked_jobs-brain-2",
+      "mcp_calls": [
+        "mcp__leb__engram_project_status",
+        "mcp__leb__engram_recall",
+        "mcp__leb__engram_task_start",
+        "mcp__leb__engram_record_attempt",
+        "mcp__leb__engram_record_evidence",
+        "mcp__leb__engram_mark_outcome",
+        "mcp__leb__engram_learn"
+      ],
+      "transcript_sha256": "4c236d9b4bc2570e2b36ee5d249bd3bffabca30b5489b9b32da101e39f98dc89"
+    }
+  ]
+}

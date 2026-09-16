@@ -17,7 +17,7 @@ historical recovery replay are reported separately from paired agent trials.
 | Preference distillation (learned conventions, unprompted) | 3/4 | **4/4**, −41% wall | 2026-09-02 |
 | Real-repo recall@1 (production backend, non-verbatim queries) | — | **11/11** | 2026-09-01 |
 | Compact injection (bytes at success parity) | baseline | **−33% injected bytes** | 2026-09-01 |
-| Hook-pipeline fidelity (five injection moments, Opus) | 6/10 | **10/10**, −19% wall | 2026-09-03 |
+| Hook-pipeline fidelity (five injection moments, Opus) | 8/10 | **10/10**, −6.3% wall | [2026-09-16 regression](perf-evidence/2026-09-16-hooks-regression.md) |
 | Operational-lesson replay (historical repair, six real-session probes) | 0/6 before recovery | **1/6** after one evidence-backed recovery | [2026-09-16 capture](perf-evidence/2026-09-16-capture-health.md) |
 
 The capture report also measures conversion and validation latency per session,
@@ -25,6 +25,10 @@ acceptance coverage, and abandoned-task rate. It does not claim prospective
 improvement from one historical recovery. Brief false positives remain unscored
 until actual emitted items have relevance labels; unknown acceptance remains
 unknown.
+
+The [2026-09-03 hook matrix](perf-evidence/2026-09-03-opus-hooks-pipeline.md)
+reported 6/10 versus 10/10 at −19% mean wall. The new row is a fresh paired run;
+differences across dates are not attributed to the capture changes.
 
 ## What the fidelity probes measure
 

@@ -7,7 +7,7 @@
    -p
 --- a/agent-claude-v2.sh
 +++ b/agent-claude-v2.sh
-@@ -17,4 +17,7 @@
+@@ -17,8 +17,13 @@
  fi
 +# This family measures the proxy alone in both arms; global hooks/MCP must not leak in.
 +mkdir -p .claude
@@ -16,3 +16,10 @@
 -/Users/corwil/.local/bin/claude-mtplx --dangerously-skip-permissions --max-turns 60 \
 +/Users/corwil/.local/bin/claude-mtplx --strict-mcp-config --mcp-config '{"mcpServers":{}}' --dangerously-skip-permissions --max-turns 60 \
    --output-format stream-json --verbose -p "$prompt"
+ rc=$?
+-curl -s -m 3 "http://127.0.0.1:${ENGRAM_PROXY_PORT}/leb/metrics" > .leb-proxy-metrics.json 2>/dev/null || true
++metrics_rc=0
++curl --fail --silent --show-error --max-time 3 "http://127.0.0.1:${ENGRAM_PROXY_PORT}/engram/metrics" > .leb-proxy-metrics.json || metrics_rc=$?
+ /Users/corwil/.local/bin/claude-mtplx --stop-brain >/dev/null 2>&1 || true
++[[ "$metrics_rc" -eq 0 ]] || exit 70
+ exit $rc
