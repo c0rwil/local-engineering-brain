@@ -27,6 +27,8 @@ use crate::ids::{ProjectId, TaskId};
 /// invocations of one session agree.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct HookSession {
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub task_id: TaskId,
     pub project_id: ProjectId,
     /// Exit code of the most recent recorded verification, driving the
@@ -43,7 +45,98 @@ pub struct HookSession {
 /// Fingerprint identifying one verification result for double-fire dedupe.
 #[must_use]
 pub fn evidence_fingerprint(command: &str, exit_code: i32) -> String {
-    format!("{exit_code}:{}", command.trim())
+    crate::experience::sha256(format!("{exit_code}:{}", command.trim()).as_bytes())
+}
+
+/// A session can edit several repositories. Each gets a separate episode.
+#[must_use]
+pub fn scoped_session_id(session_id: &str, project_id: &ProjectId) -> String {
+    format!(
+        "{}-{project_id}",
+        &crate::experience::sha256(session_id.as_bytes())[..24]
+    )
+}
+
+/// Load all project episodes for this session, including pre-upgrade sidecars.
+#[must_use]
+pub fn project_sessions(state_dir: &Path, session_id: &str) -> Vec<(String, HookSession)> {
+    let prefix = format!(
+        "{}-",
+        &crate::experience::sha256(session_id.as_bytes())[..24]
+    );
+    let legacy = session_state_path(state_dir, session_id);
+    active_sessions(state_dir)
+        .into_iter()
+        .filter(|(key, _, _)| {
+            key.starts_with(&prefix) || legacy == session_state_path(state_dir, key)
+        })
+        .map(|(key, session, _)| (key, session))
+        .collect()
+}
+
+/// Retain only a bounded, redacted prompt until the first tool use.
+///
+/// # Errors
+/// Returns filesystem errors.
+pub fn save_pending_prompt(
+    state_dir: &Path,
+    session_id: &str,
+    prompt: &str,
+    redactor: &crate::security::Redactor,
+) -> Result<()> {
+    let path = session_state_path(state_dir, session_id).with_extension("pending");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| Error::Config(e.to_string()))?;
+    }
+    // Redact before truncation so the bound cannot split a credential.
+    let prompt: String = redactor.redact_text(prompt).chars().take(8_000).collect();
+    write_private_sidecar(&path, prompt.as_bytes())
+}
+
+#[must_use]
+pub fn pending_prompt(state_dir: &Path, session_id: &str) -> Option<String> {
+    std::fs::read_to_string(session_state_path(state_dir, session_id).with_extension("pending"))
+        .ok()
+}
+
+/// Resolve explicit tool paths before falling back to the session cwd.
+/// A simple leading `cd <path> &&` is recognized; shell code is never executed.
+#[must_use]
+pub fn tool_directory(cwd: &Path, input: &serde_json::Value) -> PathBuf {
+    let explicit = input
+        .get("cwd")
+        .or_else(|| input.get("workdir"))
+        .and_then(serde_json::Value::as_str);
+    let command = input
+        .get("command")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let cd_path = command
+        .trim()
+        .strip_prefix("cd ")
+        .and_then(|s| s.split_once("&&"))
+        .map(|(path, _)| path.trim().trim_matches(['\'', '"']))
+        .filter(|path| !path.contains(['$', '`', ';', '|', '\n']));
+    let file = extract_file_path(input);
+    let raw = explicit.or(cd_path).or(file.as_deref());
+    let Some(raw) = raw else {
+        return cwd.to_path_buf();
+    };
+    let path = PathBuf::from(raw);
+    let mut path = if path.is_absolute() {
+        path
+    } else {
+        cwd.join(path)
+    };
+    if explicit.is_none() && cd_path.is_none() {
+        path.pop();
+    }
+    while !path.is_dir() {
+        if !path.pop() {
+            return cwd.to_path_buf();
+        }
+    }
+    path
 }
 
 /// Pull the file path out of a tool input (Read/Edit/Write shapes).
@@ -78,7 +171,7 @@ pub fn claim_once(state_dir: &Path, session_id: &str, tag: &str) -> bool {
 
 /// Remove a session's claim files (session end).
 pub fn clear_claims(state_dir: &Path, session_id: &str) {
-    for tag in ["brief", "prompt"] {
+    for tag in ["brief", "prompt", "episode", "context"] {
         let path = session_state_path(state_dir, session_id).with_extension(format!("{tag}.claim"));
         let _ = std::fs::remove_file(path);
     }
@@ -325,8 +418,28 @@ pub fn save_session(state_dir: &Path, session_id: &str, session: &HookSession) -
         std::fs::create_dir_all(parent)
             .map_err(|error| Error::Config(format!("hook session dir: {error}")))?;
     }
-    std::fs::write(&path, serde_json::to_string(session)?)
-        .map_err(|error| Error::Config(format!("hook session write: {error}")))
+    write_private_sidecar(&path, &serde_json::to_vec(session)?)
+}
+
+fn write_private_sidecar(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write as _;
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::Config("sidecar needs a parent".to_owned()))?;
+    std::fs::create_dir_all(parent).map_err(|e| Error::Config(e.to_string()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| Error::Config(e.to_string()))?;
+    }
+    let mut file =
+        tempfile::NamedTempFile::new_in(parent).map_err(|e| Error::Config(e.to_string()))?;
+    file.write_all(bytes)
+        .map_err(|e| Error::Config(e.to_string()))?;
+    file.persist(path)
+        .map_err(|e| Error::Config(e.to_string()))?;
+    Ok(())
 }
 
 /// Classify a shell command as a verification run. Returns the evidence
@@ -446,14 +559,14 @@ pub fn extract_artifact(tool_result: &serde_json::Value) -> String {
 
 /// Conservative outcome for an auto-closed session: `success` only when
 /// the last recorded verification passed; `abandoned` otherwise. User
-/// acceptance stays unknown, so auto-closed episodes count toward memory
-/// ROI (wins) but never feed distillation, which requires explicit
-/// acceptance.
+/// acceptance stays unknown. Successful verification enables distillation;
+/// ROI acceptance remains a separate explicit signal.
 #[must_use]
 pub fn auto_close_outcome(last_verification_exit: Option<i32>) -> &'static str {
     match last_verification_exit {
         Some(0) => "success",
-        _ => "abandoned",
+        Some(_) => "failure",
+        None => "abandoned",
     }
 }
 
@@ -605,7 +718,7 @@ mod tests {
     #[test]
     fn auto_close_is_conservative() {
         assert_eq!(auto_close_outcome(Some(0)), "success");
-        assert_eq!(auto_close_outcome(Some(1)), "abandoned");
+        assert_eq!(auto_close_outcome(Some(1)), "failure");
         assert_eq!(auto_close_outcome(None), "abandoned");
     }
 

@@ -1,0 +1,8 @@
+[
+  {"id":"guide-flags","project":"backend","query":"How do task guide synthesis and generation flags interact?","expected_patterns":["synthesize_guides","generate_guides"]},
+  {"id":"agents-cloud-run-pipeline","project":"agents","query":"Cloud Run deployment pipeline build images runtime secrets production","expected_patterns":["Cloud Run","pipeline|deploy"]},
+  {"id":"prod-db-pooler","project":"backend","query":"Cloud SQL pooler session mode production connection incident","expected_patterns":["pooler","session"]},
+  {"id":"org-quota-traffic-pin","project":"backend","query":"Cloud Run traffic pinned revision after org quota deployment","expected_patterns":["traffic","pinned","revision"]},
+  {"id":"request-log-completion","project":"backend","query":"Cloud Run request log start timestamp written at request completion","expected_patterns":["log","completion|complete","timestamp|start"]},
+  {"id":"contract-suite-threads","project":"backend","query":"http_contract contract suite test threads concurrency","expected_patterns":["test-threads=4"]}
+]

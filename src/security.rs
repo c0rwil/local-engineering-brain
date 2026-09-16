@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 const SECRET_MARKERS: &[&str] = &[
     "api_key=",
     "apikey=",
+    "key=",
     "access_token=",
     "auth_token=",
     "token=",
@@ -91,13 +92,20 @@ fn redact_builtin(value: &str) -> String {
     output = assignment_regex()
         .replace_all(&output, "$1$2[REDACTED]")
         .into_owned();
+    // Handle whitespace and headers without a space after the colon before
+    // the generic authorization marker can consume the Bearer scheme.
+    output = bearer_regex()
+        .replace_all(&output, "Bearer [REDACTED]")
+        .into_owned();
     for marker in SECRET_MARKERS {
         output = redact_after_marker(&output, marker);
     }
-    output
-        .split_inclusive(char::is_whitespace)
-        .map(redact_token_prefix)
-        .collect()
+    output = credential_regex()
+        .replace_all(&output, "[REDACTED]")
+        .into_owned();
+    dsn_regex()
+        .replace_all(&output, "$1[REDACTED]@")
+        .into_owned()
 }
 
 /// Recursively redact strings and credential-shaped object fields.
@@ -126,6 +134,7 @@ fn redact_json_with(value: &Value, redactor: &Redactor) -> Value {
                             || key.contains("token")
                             || key.contains("api_key")
                             || key == "authorization"
+                            || key == "key"
                     };
                     (
                         key.clone(),
@@ -155,7 +164,7 @@ fn redact_after_marker(value: &str, marker: &str) -> String {
         let end = output[start..]
             .char_indices()
             .find(|(_, character)| {
-                character.is_whitespace() || matches!(character, ',' | ';' | '"' | '\'')
+                character.is_whitespace() || matches!(character, ',' | ';' | '"' | '\'' | '&' | '#')
             })
             .map_or(output.len(), |(offset, _)| start + offset);
         if end == start {
@@ -168,29 +177,27 @@ fn redact_after_marker(value: &str, marker: &str) -> String {
     output
 }
 
-fn redact_token_prefix(token: &str) -> &str {
-    let trimmed = token.trim_end_matches(char::is_whitespace);
-    let suffix = &token[trimmed.len()..];
-    let looks_secret = (trimmed.starts_with("AKIA") && trimmed.len() >= 20)
-        || trimmed.starts_with("ghp_")
-        || trimmed.starts_with("github_pat_")
-        || trimmed.starts_with("xoxb-")
-        || (trimmed.starts_with("sk-") && trimmed.len() >= 16);
-    if looks_secret {
-        if suffix.is_empty() {
-            "[REDACTED]"
-        } else {
-            // All callers use this only through `map(...).collect::<String>()`;
-            // preserve a single separating space/newline in the common case.
-            if suffix.contains('\n') {
-                "[REDACTED]\n"
-            } else {
-                "[REDACTED] "
-            }
-        }
-    } else {
-        token
-    }
+fn credential_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"\b(?:sk_(?:live|test)_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|AKIA[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]+|sk-[A-Za-z0-9_-]{13,})")
+            .expect("built-in credential regex is valid")
+    })
+}
+
+fn bearer_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r#"(?i)\bbearer[\t ]+[^\s,;'"&]+"#).expect("built-in bearer regex is valid")
+    })
+}
+
+fn dsn_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"([A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]+:)[^\s@/]+@")
+            .expect("built-in DSN regex is valid")
+    })
 }
 
 fn redact_private_keys(value: &str) -> String {
@@ -203,7 +210,7 @@ fn assignment_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(
-            r#"(?i)\b(api[_-]?key|apikey|access[_-]?token|auth[_-]?token|token|password|passwd|secret|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|client[_-]?secret|private[_-]?token)\b(\s*[:=]\s*)(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;]+)"#,
+            r#"(?i)\b(api[_-]?key|apikey|key|access[_-]?token|auth[_-]?token|token|password|passwd|secret|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|client[_-]?secret|private[_-]?token)\b(\s*[:=]\s*)(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;&#]+)"#,
         )
         .expect("built-in assignment redaction regex is valid")
     })
@@ -224,6 +231,41 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn credentials_are_redacted_inside_punctuation_urls_and_unicode_prose() {
+        let examples = [
+            ("clé: `sk_test_fakeStripe123`;", "sk_test_fakeStripe123"),
+            ("\"sk_live_fakeStripe456\"", "sk_live_fakeStripe456"),
+            (
+                "(gho_fakeOauth123), ghp_fakePersonal456",
+                "gho_fakeOauth123",
+            ),
+            ("[AKIA1234567890ABCDEF]", "AKIA1234567890ABCDEF"),
+            ("Authorization: Bearer fakeBearer123", "fakeBearer123"),
+            ("Authorization:Bearer fakeNoSpace123", "fakeNoSpace123"),
+            ("Authorization: Bearer\tfakeTab123", "fakeTab123"),
+            ("postgresql://alice:p%40ssword@db.example/db", "p%40ssword"),
+            (
+                "https://example.test/?key=fakeKey&token=fakeToken#anchor",
+                "fakeKey",
+            ),
+        ];
+        for (input, secret) in examples {
+            let output = redact_text(input);
+            assert!(!output.contains(secret));
+            assert!(output.contains("[REDACTED]"));
+            assert_eq!(redact_text(&output), output);
+        }
+        assert_eq!(
+            redact_text("https://example.test/?key=one&token=two#anchor"),
+            "https://example.test/?key=[REDACTED]&token=[REDACTED]#anchor"
+        );
+        assert_eq!(
+            redact_text("Cloud Run traffic is pinned per revision."),
+            "Cloud Run traffic is pinned per revision."
+        );
+    }
 
     #[test]
     fn redacts_assignments_bearers_tokens_keys_and_nested_json() {

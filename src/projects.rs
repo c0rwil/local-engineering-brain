@@ -97,6 +97,7 @@ pub struct ResolvedProject {
 #[derive(Clone, Debug)]
 pub(crate) struct ProjectObservation {
     root: PathBuf,
+    identity_root: PathBuf,
     metadata: Option<ProjectMetadataFile>,
     component: Option<ComponentRef>,
     git: Option<GitState>,
@@ -156,6 +157,7 @@ impl ProjectRegistry {
             metadata,
             git,
             component: _,
+            identity_root: _,
         } = Self::observe(requested_path)?;
         if let Some(metadata) = &metadata {
             return self.find_by_id(&metadata.project_id);
@@ -191,11 +193,26 @@ impl ProjectRegistry {
             || requested_path.clone(),
             |state| state.repository_root.clone(),
         );
-        let metadata = read_project_metadata(&root)?;
+        let local_metadata = read_project_metadata(&root)?;
+        // Origin-view worktrees intentionally carry a distinct pinned identity.
+        let identity_root = if local_metadata
+            .as_ref()
+            .is_some_and(|m| m.derived_view == Some(true))
+        {
+            root.clone()
+        } else {
+            primary_worktree_root(&root)?.unwrap_or_else(|| root.clone())
+        };
+        let metadata = if identity_root == root {
+            local_metadata
+        } else {
+            read_project_metadata(&identity_root)?.or(local_metadata)
+        };
         let component = discover_component(&requested_path, &root)?;
 
         Ok(ProjectObservation {
             root,
+            identity_root,
             metadata,
             component,
             git,
@@ -216,6 +233,7 @@ impl ProjectRegistry {
     ) -> Result<ResolvedProject> {
         let ProjectObservation {
             root,
+            identity_root,
             metadata,
             component,
             git,
@@ -251,7 +269,7 @@ impl ProjectRegistry {
             self.find_by_remote(remote)?
                 .unwrap_or_else(|| ProjectRecord {
                     id: ProjectId::new(),
-                    name: project_name(&root),
+                    name: project_name(&identity_root),
                     canonical_remote: Some(remote.to_owned()),
                     root_commit: git.as_ref().and_then(|state| state.root_commit.clone()),
                     parent_project_id: requested_parent.cloned(),
@@ -263,7 +281,7 @@ impl ProjectRegistry {
             self.find_by_root_commit_without_remote(root_commit)?
                 .unwrap_or_else(|| ProjectRecord {
                     id: ProjectId::new(),
-                    name: project_name(&root),
+                    name: project_name(&identity_root),
                     canonical_remote: None,
                     root_commit: Some(root_commit.to_owned()),
                     parent_project_id: requested_parent.cloned(),
@@ -300,18 +318,25 @@ impl ProjectRegistry {
             .as_ref()
             .is_some_and(|metadata| metadata.derived_view.unwrap_or(false));
         if !is_derived_view {
-            let alias = root.to_string_lossy().into_owned();
-            if !self.project_has_alias(&project.id, &alias)? {
-                self.events.append(&DomainEvent::ProjectAliasAdded {
-                    project_id: project.id.clone(),
-                    path: alias,
-                })?;
+            for path in [&identity_root, &root] {
+                if git_optional_text(path, &["rev-parse", "--is-bare-repository"])?.as_deref()
+                    == Some("true")
+                {
+                    continue;
+                }
+                let alias = path.to_string_lossy().into_owned();
+                if !self.project_has_alias(&project.id, &alias)? {
+                    self.events.append(&DomainEvent::ProjectAliasAdded {
+                        project_id: project.id.clone(),
+                        path: alias,
+                    })?;
+                }
             }
         }
 
         let metadata_was_persisted = metadata.is_none();
         if metadata_was_persisted {
-            persist_project_metadata(&root, &project)?;
+            persist_project_metadata(&identity_root, &project)?;
         }
         // Persisting `.engram/project.toml` changes the working tree, so the
         // pre-write observation is stale for brand-new projects. Recompute so
@@ -538,23 +563,32 @@ impl ProjectRegistry {
         })
     }
 
-    /// Return a project's recorded checkout paths, most recently observed
-    /// first. Paths may no longer exist; callers must check.
+    /// Return a project's checkout paths in stable registration order,
+    /// preferring primary checkouts to linked worktrees. Callers check existence.
     ///
     /// # Errors
     ///
     /// Returns an error for storage failures.
     pub fn alias_paths(&self, project_id: &ProjectId) -> Result<Vec<PathBuf>> {
-        self.database.with_reader(|connection| {
+        let mut paths = self.database.with_reader(|connection| {
             let mut statement = connection.prepare(
                 "SELECT path FROM project_aliases WHERE project_id = ?1
-                 ORDER BY observed_at_ms DESC",
+                 ORDER BY observed_at_ms ASC, path ASC",
             )?;
             let rows = statement
                 .query_map([project_id.as_str()], |row| row.get::<_, String>(0))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
-            Ok(rows.into_iter().map(PathBuf::from).collect())
-        })
+            Ok(rows.into_iter().map(PathBuf::from).collect::<Vec<_>>())
+        })?;
+        paths.retain(|path| {
+            git_optional_text(path, &["rev-parse", "--is-bare-repository"])
+                .ok()
+                .flatten()
+                .as_deref()
+                != Some("true")
+        });
+        paths.sort_by_key(|path| primary_worktree_root(path).ok().flatten().is_some());
+        Ok(paths)
     }
 
     /// Find one active project by its stable ID.
@@ -770,6 +804,35 @@ pub fn metadata_dir(root: &Path) -> PathBuf {
     }
     let legacy = root.join(".leb");
     if legacy.exists() { legacy } else { current }
+}
+
+/// Find the primary checkout of a linked Git worktree. Submodules have a
+/// separate gitdir too, so compare git-common-dir rather than the .git shape.
+fn primary_worktree_root(root: &Path) -> Result<Option<PathBuf>> {
+    if !root.join(".git").is_file() {
+        return Ok(None);
+    }
+    let Some(common) = git_optional_text(
+        root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?
+    else {
+        return Ok(None);
+    };
+    let gitdir = git_optional_text(root, &["rev-parse", "--absolute-git-dir"])?;
+    if gitdir.as_deref() == Some(common.as_str()) {
+        return Ok(None);
+    }
+    let common = PathBuf::from(common);
+    // Bare parents store metadata in the shared git directory; ordinary
+    // checkouts keep the existing .engram/project.toml beside .git.
+    Ok(Some(
+        if common.file_name().is_some_and(|name| name == ".git") {
+            common.parent().unwrap_or(&common).to_path_buf()
+        } else {
+            common
+        },
+    ))
 }
 
 fn read_project_metadata(root: &Path) -> Result<Option<ProjectMetadataFile>> {
@@ -1410,6 +1473,84 @@ mod tests {
         let first = registry.resolve_or_register(&main).expect("main");
         let second = registry.resolve_or_register(&worktree).expect("worktree");
         assert_eq!(first.project.id, second.project.id);
+        assert!(!worktree.join(".engram").exists());
+        assert_eq!(
+            registry.alias_paths(&first.project.id).expect("aliases")[0],
+            main.canonicalize().expect("canonical")
+        );
+    }
+
+    #[test]
+    fn local_remote_worktree_first_registration_pins_shared_identity() {
+        let temp = TempDir::new().expect("temp dir");
+        let main = temp.path().join("main");
+        let worktree = temp.path().join("worktree");
+        init_repo(&main);
+        run_git(&main, &["remote", "add", "origin", "../template"]);
+        run_git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-qb",
+                "feature",
+                worktree.to_str().unwrap(),
+            ],
+        );
+        let registry = registry(&temp);
+        let first = registry
+            .resolve_or_register(&worktree)
+            .expect("worktree first");
+        let second = registry.resolve_or_register(&main).expect("main");
+        assert_eq!(first.project.id, second.project.id);
+        assert!(main.join(".engram/project.toml").is_file());
+        assert!(!worktree.join(".engram").exists());
+        assert_eq!(
+            registry
+                .lookup(&worktree)
+                .expect("lookup")
+                .expect("registered")
+                .id,
+            second.project.id
+        );
+    }
+
+    #[test]
+    fn bare_parent_is_an_identity_store_but_never_a_checkout_alias() {
+        let temp = TempDir::new().expect("temp dir");
+        let source = temp.path().join("source");
+        let bare = temp.path().join("bare.git");
+        let worktree = temp.path().join("worktree");
+        init_repo(&source);
+        run_git(
+            &source,
+            &[
+                "clone",
+                "--bare",
+                source.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+        run_git(
+            &bare,
+            &[
+                "worktree",
+                "add",
+                "-qb",
+                "feature",
+                worktree.to_str().unwrap(),
+            ],
+        );
+        let registry = registry(&temp);
+        let registered = registry.resolve_or_register(&worktree).expect("worktree");
+        assert!(bare.join(".engram/project.toml").exists());
+        assert!(!worktree.join(".engram").exists());
+        assert_eq!(
+            registry
+                .alias_paths(&registered.project.id)
+                .expect("aliases"),
+            vec![worktree.canonicalize().expect("canonical")]
+        );
     }
 
     #[test]

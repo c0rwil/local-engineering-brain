@@ -1,11 +1,12 @@
 # Engram benchmark results
 
-Every axis of the spec is measured against a true control: the identical
+Injection benchmarks use a true control: the identical
 agent with Engram fully disabled, in isolated repository copies with per-arm
 databases and sockets. The brain-off arm is semantically untouched (spec
 P10). Raw evidence lives in [perf-evidence/](perf-evidence/) with
 date-and-commit filenames; the synthetic `conveyor` fixture and its
-fairness audit live in the benchmark target repo.
+fairness audit live in the benchmark target repo. Capture measurements and
+historical recovery replay are reported separately from paired agent trials.
 
 ## Headline results
 
@@ -17,6 +18,13 @@ fairness audit live in the benchmark target repo.
 | Real-repo recall@1 (production backend, non-verbatim queries) | — | **11/11** | 2026-09-01 |
 | Compact injection (bytes at success parity) | baseline | **−33% injected bytes** | 2026-09-01 |
 | Hook-pipeline fidelity (five injection moments, Opus) | 6/10 | **10/10**, −19% wall | 2026-09-03 |
+| Operational-lesson replay (historical repair, six real-session probes) | 0/6 before recovery | **1/6** after one evidence-backed recovery | [2026-09-16 capture](perf-evidence/2026-09-16-capture-health.md) |
+
+The capture report also measures conversion and validation latency per session,
+acceptance coverage, and abandoned-task rate. It does not claim prospective
+improvement from one historical recovery. Brief false positives remain unscored
+until actual emitted items have relevance labels; unknown acceptance remains
+unknown.
 
 ## What the fidelity probes measure
 

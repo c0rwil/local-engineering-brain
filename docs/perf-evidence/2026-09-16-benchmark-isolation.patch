@@ -1,0 +1,18 @@
+--- a/agent-claude-hooks.sh
++++ b/agent-claude-hooks.sh
+@@ -174,2 +174,4 @@
+ claude_arguments=(
++  --strict-mcp-config
++  --mcp-config '{"mcpServers":{}}'
+   -p
+--- a/agent-claude-v2.sh
++++ b/agent-claude-v2.sh
+@@ -17,4 +17,7 @@
+ fi
++# This family measures the proxy alone in both arms; global hooks/MCP must not leak in.
++mkdir -p .claude
++printf '{"disableAllHooks":true}\n' > .claude/settings.json
+ prompt="$(cat "$prompt_file")"
+-/Users/corwil/.local/bin/claude-mtplx --dangerously-skip-permissions --max-turns 60 \
++/Users/corwil/.local/bin/claude-mtplx --strict-mcp-config --mcp-config '{"mcpServers":{}}' --dangerously-skip-permissions --max-turns 60 \
+   --output-format stream-json --verbose -p "$prompt"

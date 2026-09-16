@@ -126,6 +126,9 @@ impl McpServer {
         let output = match name {
             "engram_project_status" => {
                 let path = required_string(&arguments, "path")?;
+                self.client
+                    .ensure_project_fresh(PathBuf::from(path).as_path(), Vec::new())
+                    .await?;
                 serde_json::to_value(
                     self.client
                         .resolve_project(PathBuf::from(path).as_path())
@@ -207,6 +210,7 @@ impl McpServer {
                 serde_json::to_value(
                     self.client
                         .start_task(&TaskStartRequest {
+                            context_request_id: None,
                             project_id,
                             prompt: required_string(&arguments, "prompt")?.to_owned(),
                             session_id: arguments
@@ -636,19 +640,19 @@ fn tool_catalog() -> Value {
                     "files": {"type": "array", "items": {"type": "string"}}
                 }, "required": ["task_id", "summary", "outcome"], "additionalProperties": false
             })),
-            tool("engram_record_evidence", "Attach verification evidence (a test/build/lint run) to a task. kind: test_result|build_result|lint_result|typecheck_result; strength: deterministic|observational|inferred. Only deterministic exit-0 evidence on successful accepted tasks can later promote memories", &json!({
+            tool("engram_record_evidence", "Attach actual verification output to a task in the same project. Deterministic: test_result|build_result|lint_result|typecheck_result|benchmark_result with command and exit_code=0. Ops: runtime_observation|trace|metric with strength=observational, artifact output, and exit_code=0 or omitted (gcloud describe, logs, curl probes). Record evidence before marking the task success, then pass its id to engram_learn. User acceptance is separate and may be unknown", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"},
                     "task_id": {"type": "string"},
                     "attempt_id": {"type": "string"},
-                    "kind": {"type": "string"},
-                    "strength": {"type": "string"},
+                    "kind": {"type": "string", "description": "test_result, build_result, lint_result, typecheck_result, benchmark_result, runtime_observation, trace, metric, or user_acceptance"},
+                    "strength": {"type": "string", "enum": ["deterministic", "observational", "inferred"]},
                     "command": {"type": "string"},
                     "exit_code": {"type": "integer"},
                     "artifact": {"type": "string", "description": "Bounded output excerpt"}
                 }, "required": ["project_id", "kind", "strength"], "additionalProperties": false
             })),
-            tool("engram_learn", "Distill a finished, evidence-backed task into a candidate memory (kind: lesson|preference). Candidates never inject until promoted through evidence gates", &json!({
+            tool("engram_learn", "Distill a successful task into a candidate (lesson|preference, confidence capped at 0.50). First record deterministic or observational evidence on that same task, then engram_mark_outcome(success), then learn with its task_ids and evidence_ids. No attempt is required. Candidates do not inject; review and Promote in the web UI, or use stepwise evidence-gated CLI promotion.", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"},
                     "claim": {"type": "string", "description": "The reusable rule, phrased for a future engineer"},

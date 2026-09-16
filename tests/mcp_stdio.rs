@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn mcp_binary_autostarts_daemon_and_serves_json_rpc() {
     let temp = TempDir::new().expect("temp");
     let database = temp.path().join("brain.sqlite");
@@ -51,6 +52,52 @@ fn mcp_binary_autostarts_daemon_and_serves_json_rpc() {
         tools["result"]["tools"]
             .as_array()
             .is_some_and(|items| items.len() >= 6)
+    );
+    let project = temp.path().join("ops-project");
+    std::fs::create_dir(&project).expect("project");
+    let mut call = |name: &str, arguments: Value| {
+        write_request(
+            &mut stdin,
+            &json!({"jsonrpc":"2.0", "id":3, "method":"tools/call",
+            "params":{"name":name,"arguments":arguments}}),
+        );
+        read_response(&mut stdout)["result"].clone()
+    };
+    let status = call("engram_project_status", json!({"path":project}));
+    let project_id = status["structuredContent"]["project"]["id"].clone();
+    assert!(project_id.is_string(), "{status}");
+    let task = call(
+        "engram_task_start",
+        json!({"project_id":project_id,"prompt":"verify runtime traffic with sk_test_fakeMcp123"}),
+    );
+    let task_id = task["structuredContent"]["id"].clone();
+    assert!(!task.to_string().contains("sk_test_fakeMcp123"));
+    let evidence = call(
+        "engram_record_evidence",
+        json!({"project_id":project_id,"task_id":task_id,
+        "kind":"runtime_observation","strength":"observational","command":"gcloud run services describe fixture",
+        "exit_code":0,"artifact":"traffic fixture-old=100%; latestReady fixture-new"}),
+    );
+    let evidence_id = evidence["structuredContent"]["id"].clone();
+    let lesson = json!({"project_id":project_id,"task_ids":[task_id],"evidence_ids":[evidence_id],
+        "claim":"Cloud Run traffic remains pinned to a revision until explicitly shifted."});
+    let rejected = call("engram_learn", lesson.clone());
+    assert_eq!(rejected["isError"], true);
+    assert!(rejected.to_string().contains("engram_mark_outcome"));
+    call(
+        "engram_mark_outcome",
+        json!({"task_id":task_id,"outcome":"success"}),
+    );
+    let learned = call("engram_learn", lesson);
+    assert_eq!(
+        learned["structuredContent"]["memory"]["epistemic_state"],
+        "candidate"
+    );
+    assert!(
+        learned["structuredContent"]["next_step"]
+            .as_str()
+            .expect("guidance")
+            .contains("Promote")
     );
     drop(stdin);
     let status = child.wait().expect("MCP exits on EOF");

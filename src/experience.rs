@@ -216,6 +216,20 @@ impl ExperienceStore {
         prompt: &str,
         session_id: Option<&str>,
     ) -> Result<TaskRecord> {
+        self.start_task_with_context(project_id, prompt, session_id, None)
+    }
+
+    /// Start a task and attach an earlier prompt injection from the same project.
+    ///
+    /// # Errors
+    /// Returns validation or storage errors.
+    pub fn start_task_with_context(
+        &self,
+        project_id: &ProjectId,
+        prompt: &str,
+        session_id: Option<&str>,
+        context_request_id: Option<&str>,
+    ) -> Result<TaskRecord> {
         let prompt = self.redactor.redact_text(prompt);
         let prompt = prompt.trim();
         if prompt.is_empty() {
@@ -244,11 +258,61 @@ impl ExperienceStore {
                     now
                 ],
             )?;
+            if let Some(request_id) = context_request_id {
+                transaction.execute(
+                    "INSERT INTO usage_events (id, source_type, source_id, context_run_id, usage_kind, outcome, created_at_ms)
+                     SELECT ?1, 'task', ?2, id, 'context_served', NULL, ?3 FROM context_runs
+                     WHERE project_id = ?4 AND request_id = ?5 AND mode = 'brain'",
+                    params![format!("use_{}", uuid::Uuid::new_v4()), id.as_str(), now, project_id.as_str(), request_id],
+                )?;
+            }
             append_generated_in_transaction(transaction, &event, now)
         })?;
         self.get_task(&id)?.ok_or_else(|| {
             Error::Config("task projection missing after successful commit".to_owned())
         })
+    }
+
+    /// Purge a task prompt without removing evidence or outcome provenance.
+    /// Existing exports and backups must be handled separately.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown task or failed transaction.
+    pub fn purge_task_prompt(&self, task_id: &TaskId) -> Result<()> {
+        let session_id = self.get_task(task_id)?.and_then(|task| task.session_id);
+        let now = unix_time_ms();
+        let prompt = "[PURGED: task prompt removed]";
+        self.database.write_immediate(|transaction| {
+            let (project_id, _) = task_project_and_status(transaction, task_id)?;
+            transaction.execute_batch("PRAGMA secure_delete=ON")?;
+            transaction.execute(
+                "UPDATE tasks SET prompt = ?2, prompt_digest = ?3 WHERE id = ?1",
+                params![task_id.as_str(), prompt, sha256(prompt.as_bytes())],
+            )?;
+            append_generated_in_transaction(
+                transaction,
+                &DomainEvent::TaskPromptPurged {
+                    project_id,
+                    task_id: task_id.clone(),
+                },
+                now,
+            )
+        })?;
+        if let Some(session_id) = session_id {
+            let state_dir = self
+                .database
+                .path()
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let pending = crate::agenthooks::session_state_path(state_dir, &session_id)
+                .with_extension("pending");
+            if let Err(error) = std::fs::remove_file(&pending) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    return Err(crate::error::io_error(&pending, error));
+                }
+            }
+        }
+        self.database.truncate_wal()
     }
 
     /// Record a coherent attempt within an open task.
@@ -882,7 +946,7 @@ fn validate_evidence_scope(
     Ok(())
 }
 
-fn sha256(bytes: &[u8]) -> String {
+pub(crate) fn sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut output = String::with_capacity(digest.len() * 2);
     for byte in digest {
@@ -918,6 +982,100 @@ mod tests {
             .project
             .id;
         (temp, ExperienceStore::new(database), project)
+    }
+
+    #[test]
+    fn captured_prompts_are_redacted_and_prompt_purge_preserves_provenance() {
+        const LEGACY_SECRET: &str = "legacy-credential-sentinel-123";
+        let (_temp, store, project) = store();
+        let task = store
+            .start_task(
+                &project,
+                "use `sk_test_fakeStripe123`",
+                Some("purge-session"),
+            )
+            .expect("task");
+        assert_eq!(task.prompt, "use `[REDACTED]`");
+        store
+            .database
+            .with_reader(|connection| {
+                let stored: String = connection.query_row(
+                    "SELECT prompt FROM tasks WHERE id=?1",
+                    [task.id.as_str()],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(stored, task.prompt);
+                Ok(())
+            })
+            .expect("persisted redaction");
+        store
+            .record_attempt(&task.id, "verify operation", AttemptOutcome::Success, &[])
+            .expect("attempt");
+        store
+            .database
+            .write_immediate(|transaction| {
+                transaction.execute(
+                    "UPDATE tasks SET prompt=?2 WHERE id=?1",
+                    params![task.id.as_str(), LEGACY_SECRET],
+                )?;
+                Ok(())
+            })
+            .expect("legacy prompt fixture");
+        let state_dir = store.database.path().parent().expect("state dir");
+        crate::agenthooks::save_pending_prompt(
+            state_dir,
+            "purge-session",
+            LEGACY_SECRET,
+            &Redactor::default(),
+        )
+        .expect("pending fixture");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let pending = crate::agenthooks::session_state_path(state_dir, "purge-session")
+                .with_extension("pending");
+            assert_eq!(
+                std::fs::metadata(pending)
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        store.purge_task_prompt(&task.id).expect("purge");
+        assert!(crate::agenthooks::pending_prompt(state_dir, "purge-session").is_none());
+        for path in [
+            store.database.path().to_path_buf(),
+            store.database.path().with_extension("sqlite-wal"),
+        ] {
+            let bytes = std::fs::read(path).unwrap_or_default();
+            assert!(
+                !bytes
+                    .windows(LEGACY_SECRET.len())
+                    .any(|window| window == LEGACY_SECRET.as_bytes())
+            );
+        }
+
+        store.purge_task_prompt(&task.id).expect("idempotent purge");
+        let purged = store
+            .get_task(&task.id)
+            .expect("read")
+            .expect("task retained");
+        assert_eq!(purged.prompt, "[PURGED: task prompt removed]");
+        assert_eq!(purged.status, "open");
+        store
+            .database
+            .with_reader(|connection| {
+                let attempts: i64 = connection.query_row(
+                    "SELECT count(*) FROM attempts WHERE task_id=?1",
+                    [task.id.as_str()],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(attempts, 1);
+                Ok(())
+            })
+            .expect("provenance retained");
     }
 
     #[test]

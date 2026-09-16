@@ -1,6 +1,6 @@
 //! Conservative episode-to-memory distillation and exact deduplication.
 
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
@@ -20,6 +20,8 @@ pub struct DistillationRequest {
 pub struct DistillationResult {
     pub memory: MemoryRecord,
     pub reused_existing: bool,
+    /// The candidate still needs review; learning does not enable injection.
+    pub next_step: String,
 }
 
 #[derive(Clone, Debug)]
@@ -77,6 +79,7 @@ impl LearningStore {
             return Ok(DistillationResult {
                 memory,
                 reused_existing: true,
+                next_step: "Review the memory in the web UI; Promote validates it with a recorded human override. Existing validated memories retain their state.".to_owned(),
             });
         }
         let memory = memories.create_candidate(&request.project_id, &draft)?;
@@ -89,6 +92,7 @@ impl LearningStore {
         Ok(DistillationResult {
             memory,
             reused_existing: false,
+            next_step: "Review this candidate in the web UI and click Promote to validate it. It will not inject until validated. Automation can use the stepwise evidence-gated memory promote command.".to_owned(),
         })
     }
 }
@@ -151,26 +155,32 @@ pub fn derive_node_links(
 fn validate_distillation(database: &Database, request: &DistillationRequest) -> Result<()> {
     if request.memory.source_task_ids.is_empty() {
         return Err(Error::Config(
-            "distillation requires at least one source task".to_owned(),
+            "distillation requires at least one source task: call engram_task_start, record evidence on its task_id, then engram_mark_outcome(success) before engram_learn".to_owned(),
         ));
     }
     if request.memory.evidence_ids.is_empty() {
         return Err(Error::Config(
-            "distillation requires independent evidence".to_owned(),
+            "distillation requires independent evidence: call engram_record_evidence with this project_id and source task_id; use deterministic test_result/build_result/lint_result/typecheck_result with command and exit_code=0, or observational runtime_observation/trace/metric with the observed output; then mark the task success and pass the returned evidence_id to engram_learn".to_owned(),
         ));
     }
     database.with_reader(|connection| {
         for task_id in &request.memory.source_task_ids {
-            let valid: i64 = connection.query_row(
-                "SELECT COUNT(*) FROM tasks
-                 WHERE id = ?1 AND project_id = ?2 AND status = 'success'",
+            let status: Option<String> = connection.query_row(
+                "SELECT status FROM tasks WHERE id = ?1 AND project_id = ?2",
                 params![task_id.as_str(), request.project_id.as_str()],
                 |row| row.get(0),
-            )?;
-            if valid != 1 {
-                return Err(Error::Config(format!(
-                    "source task `{task_id}` is not a successful task in this project"
-                )));
+            ).optional()?;
+            match status.as_deref() {
+                Some("success") => {},
+                Some("open") => return Err(Error::Config(format!(
+                    "source task `{task_id}` is still open: record evidence on this task, then call engram_mark_outcome with task_id={task_id} and outcome=success before retrying engram_learn; accepted_by_user may remain unknown"
+                ))),
+                Some(status) => return Err(Error::Config(format!(
+                    "source task `{task_id}` ended as {status}; only successful episodes can be distilled. Use a successful task with its own supporting evidence; do not relabel a failed episode"
+                ))),
+                None => return Err(Error::Config(format!(
+                    "source task `{task_id}` does not belong to this project: resolve the repository being edited with engram_project_status and use its project_id and task_id"
+                ))),
             }
         }
         let task_ids = serde_json::to_string(
@@ -191,7 +201,7 @@ fn validate_distillation(database: &Database, request: &DistillationRequest) -> 
             )?;
             if valid != 1 {
                 return Err(Error::Config(format!(
-                    "evidence `{evidence_id}` is not Tier A/B evidence from a source task"
+                    "evidence `{evidence_id}` is not qualifying evidence from these source tasks: use the same project_id and task_id, a successful attempt (or omit attempt_id), and matching commit. Deterministic kinds require command and exit_code=0; ops observations use kind=runtime_observation|trace|metric, strength=observational, and exit_code=0 or omitted. Record the actual output, mark the source task success, then retry engram_learn"
                 )));
             }
         }
@@ -207,6 +217,90 @@ mod tests {
     use super::*;
     use crate::experience::{EvidenceStrength, ExperienceStore, TaskOutcome};
     use crate::projects::ProjectRegistry;
+
+    #[test]
+    fn ops_observation_requires_correct_scope_then_learns_and_validates() {
+        let temp = TempDir::new().expect("temp");
+        let root = temp.path().join("project");
+        std::fs::create_dir(&root).expect("root");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let project = ProjectRegistry::new(database.clone())
+            .resolve_or_register(&root)
+            .expect("project")
+            .project
+            .id;
+        let experience = ExperienceStore::new(database.clone());
+        let task = experience
+            .start_task(&project, "verify Cloud Run traffic", None)
+            .expect("task");
+        let evidence = experience.record_evidence(&project, Some(&task.id), None,
+            "runtime_observation", EvidenceStrength::Observational, None,
+            Some("gcloud run services describe fixture-service --format=json"), Some(0),
+            br#"{"traffic":[{"revisionName":"fixture-old","percent":100}],"latestReadyRevisionName":"fixture-new"}"#,
+            &json!({"fixture":true})).expect("observation");
+        let mut request = DistillationRequest {
+            project_id: project.clone(),
+            memory: MemoryDraft {
+                scope_type: "project".to_owned(),
+                scope_id: project.to_string(),
+                kind: "lesson".to_owned(),
+                claim: "Cloud Run traffic is pinned per revision; verify traffic after deploying."
+                    .to_owned(),
+                rationale: "Observed traffic stays on the old revision.".to_owned(),
+                confidence: 0.5,
+                importance: 0.8,
+                tags: vec!["traffic".to_owned()],
+                valid_from_commit: None,
+                valid_to_commit: None,
+                trust_source: "agent_inference".to_owned(),
+                evidence_ids: vec![evidence.id],
+                source_task_ids: vec![task.id.clone()],
+                node_ids: vec![],
+            },
+        };
+        let learning = LearningStore::new(database.clone());
+        assert!(
+            learning
+                .distill(&request)
+                .expect_err("still open")
+                .to_string()
+                .contains("engram_mark_outcome")
+        );
+        experience
+            .finish_task(&task.id, TaskOutcome::Success, None, None)
+            .expect("success without acceptance");
+        let result = learning.distill(&request).expect("learn observation");
+        assert_eq!(
+            result.memory.epistemic_state,
+            crate::memory::EpistemicState::Candidate
+        );
+        assert!((result.memory.confidence - 0.5).abs() < f64::EPSILON);
+        assert!(result.next_step.contains("Promote"));
+        let memories = MemoryStore::new(database.clone());
+        for state in [
+            crate::memory::EpistemicState::Observed,
+            crate::memory::EpistemicState::Supported,
+            crate::memory::EpistemicState::Validated,
+        ] {
+            memories
+                .promote(&result.memory.id, state, false)
+                .expect("evidence-gated promotion");
+        }
+        let other = experience
+            .start_task(&project, "unrelated success", None)
+            .expect("other");
+        experience
+            .finish_task(&other.id, TaskOutcome::Success, None, None)
+            .expect("finish");
+        request.memory.source_task_ids = vec![other.id];
+        assert!(
+            learning
+                .distill(&request)
+                .expect_err("wrong task")
+                .to_string()
+                .contains("same project_id and task_id")
+        );
+    }
 
     #[test]
     fn distilled_lessons_are_anchored_to_touched_symbols_and_drift_invalidated() {

@@ -292,6 +292,24 @@ impl Database {
         Ok(())
     }
 
+    /// Remove obsolete WAL frames after an explicit content purge.
+    ///
+    /// # Errors
+    /// Returns an error if a reader keeps the WAL pinned; callers may retry.
+    pub fn truncate_wal(&self) -> Result<()> {
+        let writer = self
+            .inner
+            .writer
+            .lock()
+            .map_err(|_| Error::StorageLockPoisoned)?;
+        let busy: i64 =
+            writer.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))?;
+        if busy != 0 {
+            return Err(Error::Config("content removed, but a reader holds the WAL; retry the purge after readers finish to remove old WAL frames".to_owned()));
+        }
+        Ok(())
+    }
+
     pub(crate) fn write_immediate<T>(
         &self,
         operation: impl FnOnce(&Transaction<'_>) -> Result<T>,

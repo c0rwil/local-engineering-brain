@@ -90,6 +90,10 @@ pub enum DomainEvent {
         strength: String,
         artifact_digest: String,
     },
+    TaskPromptPurged {
+        project_id: ProjectId,
+        task_id: TaskId,
+    },
     TaskFinished {
         project_id: ProjectId,
         task_id: TaskId,
@@ -146,6 +150,7 @@ impl DomainEvent {
             Self::TaskStarted { .. } => "TASK_STARTED",
             Self::AttemptRecorded { .. } => "ATTEMPT_RECORDED",
             Self::EvidenceObserved { .. } => "EVIDENCE_OBSERVED",
+            Self::TaskPromptPurged { .. } => "TASK_PROMPT_PURGED",
             Self::TaskFinished { .. } => "TASK_FINISHED",
             Self::MemoryCreated { .. } => "MEMORY_CREATED",
             Self::MemoryStateChanged { .. } => "MEMORY_STATE_CHANGED",
@@ -170,6 +175,7 @@ impl DomainEvent {
             | Self::TaskStarted { project_id, .. }
             | Self::AttemptRecorded { project_id, .. }
             | Self::EvidenceObserved { project_id, .. }
+            | Self::TaskPromptPurged { project_id, .. }
             | Self::TaskFinished { project_id, .. }
             | Self::MemoryCreated { project_id, .. }
             | Self::MemoryStateChanged { project_id, .. }
@@ -202,6 +208,7 @@ impl DomainEvent {
             | "TASK_STARTED"
             | "ATTEMPT_RECORDED"
             | "EVIDENCE_OBSERVED"
+            | "TASK_PROMPT_PURGED"
             | "TASK_FINISHED"
             | "MEMORY_CREATED"
             | "MEMORY_STATE_CHANGED"
@@ -500,6 +507,7 @@ impl EventStore {
                 | DomainEvent::TaskStarted { .. }
                 | DomainEvent::AttemptRecorded { .. }
                 | DomainEvent::EvidenceObserved { .. }
+                | DomainEvent::TaskPromptPurged { .. }
                 | DomainEvent::TaskFinished { .. }
                 | DomainEvent::MemoryCreated { .. }
                 | DomainEvent::MemoryStateChanged { .. }
@@ -557,6 +565,7 @@ fn raw_event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawEvent> {
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn apply_project_projection(
     transaction: &Transaction<'_>,
     event: &DomainEvent,
@@ -654,6 +663,7 @@ fn apply_project_projection(
         | DomainEvent::TaskStarted { .. }
         | DomainEvent::AttemptRecorded { .. }
         | DomainEvent::EvidenceObserved { .. }
+        | DomainEvent::TaskPromptPurged { .. }
         | DomainEvent::TaskFinished { .. }
         | DomainEvent::MemoryCreated { .. }
         | DomainEvent::MemoryStateChanged { .. }

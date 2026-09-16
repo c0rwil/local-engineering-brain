@@ -83,8 +83,9 @@ protection), so bump-and-reinstall order matters: build, install, restart
   whose local edits were reverted while other files stayed dirty. It is
   persisted in `structural_scans.changed_paths_json` (NULL ⇒ conservative full
   rescan). Do not "optimize" the plan back to fingerprint-only comparison.
-- Registration writes `.engram/project.toml` into the target repo, which dirties
-  the working tree; first-registration Git state is recomputed after that
+- Registration writes `.engram/project.toml` into the primary checkout, which
+  dirties its working tree; linked worktrees share that identity without new
+  metadata directories. First-registration Git state is recomputed after the
   write on purpose. `.engram`/`.git` paths are excluded from changed-path
   planning but DO affect the porcelain-based diff fingerprint.
 - `wait_for_mutation` responses must stay after cache-generation bumps in

@@ -200,3 +200,88 @@ Never copy `brain.sqlite` with `cp` — WAL contents are lost. Backups only.
 - **A memory looks wrong** — Forget it in the browser or via MCP
   `engram_forget`; if it was drift (the code changed under it), it is already
   quarantined automatically.
+
+## Capturing operations lessons
+
+Operations checks are evidence too. For `gcloud ... describe`, log queries, curl
+probes, and runtime measurements, record `runtime_observation`, `trace`, or
+`metric` with `strength=observational` and the actual bounded output. Use the
+same project and task for evidence and learning. A successful process can use
+`exit_code=0`; observations without a process may omit it. Do not label an ops
+observation `test_result` or `build_result`: those kinds require deterministic
+verification.
+
+The shortest explicit MCP sequence after resolving the edited repository is:
+
+1. `engram_task_start` with a short task summary.
+2. `engram_record_evidence` with that task ID and the observed output.
+3. `engram_mark_outcome` with `outcome=success` when the task succeeded.
+4. `engram_learn` with that task ID and the returned evidence ID.
+
+An attempt is optional. Acceptance may remain unknown; it is separate from
+successful verification and remains a separate ROI signal. Learning returns a
+candidate at confidence 0.50 plus the next review step. Review it in the local
+web UI and click **Promote** to record human validation, or use the existing
+stepwise, evidence-gated `engram memory promote` commands. Candidates never
+inject automatically. Failure messages identify the missing step, wrong task
+scope, or invalid evidence classification.
+
+Hooks retain a bounded redacted prompt until a file tool or recognized
+verification first touches a registered repository. Each repository touched
+gets its own task, and SessionEnd closes all of them from their last recorded
+verification. A prompt-only session creates no episode. Passing verification
+does not imply user acceptance. Abandoned episodes are excluded from the
+"last completed episode" brief.
+
+Linked Git worktrees share the primary checkout's project identity. Registration
+stores metadata at the shared primary checkout rather than creating a new
+`.engram/` directory in the linked checkout. A worktree does not replace the
+workspace's primary path. MCP project status refreshes the requested checkout;
+`index_matches_checkout` reports whether its shared structural index matches
+that checkout's HEAD and working-tree fingerprint.
+
+## Removing a captured prompt
+
+Task prompts, attempt summaries, evidence text, and authored memories pass
+through credential redaction before storage. This covers Stripe test/live keys,
+GitHub tokens, AWS access keys, Bearer credentials, DSN passwords, and credential
+query parameters, plus configured custom patterns. Review what you paste even
+when redaction is enabled: arbitrary secrets cannot be recognized by shape.
+
+```sh
+engram task purge-prompt tsk_<uuid> --json
+```
+
+This removes the canonical prompt and its pending hook copy, keeps task outcome
+and evidence provenance, records a purge event, and truncates obsolete WAL
+frames. If a reader pins the WAL, the command reports the incomplete checkpoint;
+retry after that reader finishes. Existing backups, exports, and independently
+captured copies in other tasks are separate and are not rewritten. Use
+`engram backup create` for a consistent post-purge snapshot.
+
+## Measuring capture and replay
+
+`scripts/capture_eval.py` reports per-session candidate-to-validated conversion,
+time to first validated memory, acceptance coverage, and abandoned-task rate.
+Session conversion uses the original distillation's source tasks; later reuse
+does not count as creation, even when sessions overlap. Memories lacking that
+creation provenance are reported separately. Multi-session source attribution
+must not be summed to obtain a unique-memory total.
+Tasks without session IDs are reported as individual episodes. Brief false
+positives require an explicit JSON array of `{ "relevant": true|false }` labels
+via `--brief-labels`; absent labels produce **unknown**, never a fabricated zero.
+
+```sh
+engram backup create /tmp/capture-baseline.sqlite
+python3 scripts/capture_eval.py --db /tmp/capture-baseline.sqlite --output /tmp/capture.json
+python3 scripts/capture_eval.py --db ~/.engram/brain.sqlite --socket ~/.engram/engramd.sock \
+  --replay fixtures/capture-replay.json --project backend=<registered-name> \
+  --project agents=<registered-name> --output /tmp/replay.json
+```
+
+Replay uses the production context compiler with the actual checkout HEAD and
+counts a lesson only if its expected content appears in delivered text. It
+separately records matching memories retrieved before compact truncation. The
+replay database must match the daemon's database; for a frozen replay, start an
+isolated daemon serving the snapshot. Reports omit raw prompts, evidence
+artifacts, and repository source, and make no model or cloud calls.

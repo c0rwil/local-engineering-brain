@@ -386,6 +386,8 @@ pub struct ProjectStatus {
     pub project_event_count: i64,
     pub local_only: bool,
     pub structural_index: Option<StructuralIndexStatus>,
+    /// Whether the shared index represents this checkout's HEAD and dirty state.
+    pub index_matches_checkout: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -665,6 +667,8 @@ pub struct ContextExplainRequest {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TaskStartRequest {
+    #[serde(default)]
+    pub context_request_id: Option<String>,
     pub project_id: ProjectId,
     pub prompt: String,
     pub session_id: Option<String>,
@@ -1185,6 +1189,20 @@ impl DaemonClient {
     /// # Errors
     ///
     /// Returns transport, validation, overload, or storage errors.
+    pub async fn purge_task_prompt(&self, task_id: &TaskId) -> Result<()> {
+        self.request::<serde_json::Value, serde_json::Value>(
+            hyper::Method::DELETE,
+            &format!("{API_TASKS}/{task_id}/prompt"),
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Start an episode after redacting its prompt.
+    ///
+    /// # Errors
+    /// Returns transport or storage errors.
     pub async fn start_task(&self, request: &TaskStartRequest) -> Result<TaskRecord> {
         self.request(hyper::Method::POST, API_TASKS, Some(request))
             .await
@@ -1780,6 +1798,10 @@ where
         .route("/api/v1/memories/{id}/promote", post(promote_memory))
         .route("/api/v1/memories/{id}/forget", post(forget_memory))
         .route(API_TASKS, post(start_task))
+        .route(
+            "/api/v1/tasks/{id}/prompt",
+            axum::routing::delete(purge_task_prompt),
+        )
         .route("/api/v1/tasks/{id}/attempts", post(record_attempt))
         .route("/api/v1/tasks/{id}/finish", post(finish_task))
         .route(API_EVIDENCE, post(record_evidence))
@@ -2267,7 +2289,7 @@ async fn tasks_brief(
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             let mut statement = connection.prepare(
                 "SELECT id, prompt, status, started_at_ms, completed_at_ms FROM tasks
-                 WHERE project_id = ?1 AND status != 'open'
+                 WHERE project_id = ?1 AND status IN ('success','partial','failure')
                  ORDER BY completed_at_ms DESC LIMIT 1",
             )?;
             let last_completed = statement
@@ -2330,6 +2352,11 @@ async fn resolve_project(
     })
     .await?;
 
+    let index_matches_checkout = structural_index.as_ref().is_some_and(|index| {
+        resolved.git.as_ref().is_some_and(|git| {
+            index.head == git.head && index.diff_fingerprint == git.diff_fingerprint
+        })
+    });
     Ok(Json(ProjectStatus {
         resolved,
         database: database_path,
@@ -2337,6 +2364,7 @@ async fn resolve_project(
         project_event_count: event_count,
         local_only,
         structural_index,
+        index_matches_checkout,
     }))
 }
 
@@ -3623,6 +3651,25 @@ async fn forget_memory(
     Ok(Json(wait_for_mutation(&state, handle).await?))
 }
 
+async fn purge_task_prompt(
+    State(state): State<DaemonState>,
+    AxumPath(id): AxumPath<String>,
+) -> std::result::Result<Json<serde_json::Value>, ApiError> {
+    let task_id = TaskId::parse(&id).map_err(|error| ApiError::from_core(&error))?;
+    let store = ExperienceStore::new(state.database.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::CorrectnessCritical, move || {
+            store.purge_task_prompt(&task_id)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    wait_for_mutation(&state, handle).await?;
+    Ok(Json(
+        serde_json::json!({"purged": true, "scope": "task_prompt",
+        "backup_limitation": "existing backups and exports are not modified"}),
+    ))
+}
+
 async fn start_task(
     State(state): State<DaemonState>,
     Json(request): Json<TaskStartRequest>,
@@ -3631,10 +3678,11 @@ async fn start_task(
     let handle = state
         .scheduler
         .submit(MutationPriority::Interactive, move || {
-            store.start_task(
+            store.start_task_with_context(
                 &request.project_id,
                 &request.prompt,
                 request.session_id.as_deref(),
+                request.context_request_id.as_deref(),
             )
         })
         .map_err(|error| ApiError::from_core(&error))?;
@@ -4539,6 +4587,7 @@ mod tests {
 
         let task = client
             .start_task(&TaskStartRequest {
+                context_request_id: None,
                 project_id: project_id.clone(),
                 prompt: "wire the engine into the scheduler".to_owned(),
                 session_id: None,
@@ -4611,6 +4660,7 @@ mod tests {
 
         let task = client
             .start_task(&TaskStartRequest {
+                context_request_id: None,
                 project_id: status.resolved.project.id.clone(),
                 prompt: "fix engine cleanup".to_owned(),
                 session_id: Some("daemon-test-session".to_owned()),
@@ -5126,6 +5176,7 @@ mod tests {
         for ordinal in 0..3 {
             let task = client
                 .start_task(&TaskStartRequest {
+                    context_request_id: None,
                     project_id: status.resolved.project.id.clone(),
                     prompt: format!("auto synthesis episode {ordinal}"),
                     session_id: None,
@@ -5207,6 +5258,7 @@ mod tests {
         for ordinal in 0..3 {
             let task = client
                 .start_task(&TaskStartRequest {
+                    context_request_id: None,
                     project_id: status.resolved.project.id.clone(),
                     prompt: format!("fix worker lifecycle timeout {ordinal}"),
                     session_id: None,
@@ -5392,6 +5444,7 @@ mod tests {
         for ordinal in 0..3 {
             let task = client
                 .start_task(&TaskStartRequest {
+                    context_request_id: None,
                     project_id: project_id.clone(),
                     prompt: format!("stage rollout {ordinal}"),
                     session_id: None,
@@ -5475,6 +5528,7 @@ mod tests {
         for ordinal in 0..3 {
             let task = client
                 .start_task(&TaskStartRequest {
+                    context_request_id: None,
                     project_id: project_id.clone(),
                     prompt: format!("apply staged rollout {ordinal}"),
                     session_id: None,

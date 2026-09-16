@@ -35,12 +35,13 @@ SOURCE_HASH=$(
     | awk '{print $1}'
 )
 
+echo "Building Engram release ${SOURCE_HASH}..." >&2
+(cd "${PROJECT_ROOT}" && ENGRAM_BUILD_ID="${SOURCE_HASH}" cargo build --release --locked)
+
+# Keep the running daemon available until the new build has succeeded.
 if [ -x "${INSTALL_BIN_DIR}/engram" ]; then
   "${INSTALL_BIN_DIR}/engram" daemon stop >/dev/null 2>&1 || true
 fi
-
-echo "Building Engram release ${SOURCE_HASH}..." >&2
-(cd "${PROJECT_ROOT}" && ENGRAM_BUILD_ID="${SOURCE_HASH}" cargo build --release --locked)
 
 RELEASE_DIR="${INSTALL_STATE_DIR}/releases/${SOURCE_HASH}"
 STAGING_DIR="${INSTALL_STATE_DIR}/releases/.${SOURCE_HASH}.staging.$$"
