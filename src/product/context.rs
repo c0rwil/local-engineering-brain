@@ -152,6 +152,7 @@ impl ProductStore {
             }
         }
         let mut reached = direct.keys().cloned().collect::<BTreeSet<_>>();
+        let mut possible = BTreeMap::new();
         if !paths.is_empty() {
             reached.insert(format!("repo:{}", request.project_id));
         }
@@ -159,15 +160,20 @@ impl ProductStore {
         // membership alone cannot assert that a consumer's behavior changed.
         for record in &snapshot.records {
             if direct.contains_key(&record.id) {
-                match &record.item {
-                    Item::Section(s) => {
-                        reached.insert(s.entity_id.clone());
+                let owners = match &record.item {
+                    Item::Section(s) => vec![s.entity_id.clone()],
+                    Item::Dependency(d) => vec![d.source_id.clone(), d.target_id.clone()],
+                    _ => Vec::new(),
+                };
+                for id in owners {
+                    if !direct.contains_key(&id) {
+                        possible.entry(id.clone()).or_insert_with(|| ImpactItem {
+                            id: id.clone(),
+                            reason: "A connected contract or document intersects the changed source; review this entity.".to_owned(),
+                            via: vec![record.id.clone()],
+                        });
                     }
-                    Item::Dependency(d) => {
-                        reached.insert(d.source_id.clone());
-                        reached.insert(d.target_id.clone());
-                    }
-                    _ => {}
+                    reached.insert(id);
                 }
             }
             if matches_environment(&snapshot, record, request.environment.as_deref())
@@ -175,10 +181,16 @@ impl ProductStore {
                 && e.project_id.as_ref() == Some(&request.project_id)
                 && !paths.is_empty()
             {
+                if !direct.contains_key(&record.id) {
+                    possible.entry(record.id.clone()).or_insert_with(|| ImpactItem {
+                        id: record.id.clone(),
+                        reason: "Changed files belong to this entity's implementation repository; no exact source intersection is recorded.".to_owned(),
+                        via: vec![format!("repo:{}", request.project_id)],
+                    });
+                }
                 reached.insert(record.id.clone());
             }
         }
-        let mut possible = BTreeMap::new();
         for _ in 0..4 {
             let prior = reached.clone();
             for record in &snapshot.records {

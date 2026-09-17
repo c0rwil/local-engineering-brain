@@ -75,13 +75,16 @@ auto = "off"
             entity("worker", "service", parent_id="jobs", project_id=projects["worker"], anchors=[anchor("worker")])
             entity("queue", "queue", parent_id="jobs")
             entity("unrelated", "service", parent_id="product")
+            entity("unanchored-worker", "service", parent_id="jobs")
+            save("unanchored-consume", "dependency", {"source_id": "unanchored-worker", "target_id": "queue",
+                 "relation": "consumes", "contract": "job.created.v1", "environment": "production"})
             for key, source, relation, environment in [
                 ("publish", "api", "publishes", "production"),
                 ("consume", "worker", "consumes", "production"),
                 ("stage", "unrelated", "consumes", "staging"),
             ]:
                 save(key, "dependency", {"source_id": source, "target_id": "queue", "relation": relation,
-                     "contract": "job.created.v1", "environment": environment})
+                     "contract": "job.created.v1", "environment": environment, "anchors": [anchor("api")]})
             entity("flow", "flow", parent_id="jobs", steps=[
                 {"entity_id": "api", "title": "Publish job", "anchors": [anchor("api")]},
                 {"entity_id": "worker", "title": "Consume job", "anchors": [anchor("worker")]},
@@ -103,6 +106,7 @@ auto = "off"
             impact = query("impact", project_id=projects["api"], diff="--- a/lib.rs\n+++ b/lib.rs\n", environment="production")
             check("changed_service_direct", "api" in [r["id"] for r in impact["direct"]])
             check("consumer_possible_not_proven", "worker" in [r["id"] for r in impact["possible"]] and bool(impact["gaps"]))
+            check("unanchored_consumer_reached_by_traversal", "unanchored-worker" in [r["id"] for r in impact["possible"]])
             check("staging_impact_excluded", "unrelated" not in [r["id"] for r in impact["possible"]])
             source = query("source", anchor=anchor("api"))
             check("inspectable_source", "publish" in json.dumps(source))

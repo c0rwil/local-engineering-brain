@@ -175,10 +175,13 @@ fn known_drift_wins_over_an_unknown_anchor() {
     let f = Fixture::new();
     f.entity("service", "service");
     f.save("section",0,json!({"type":"section","value":{"entity_id":"service","title":"Mixed sources","reviewed":true,"anchors":[f.path("missing.rs"),f.path("lib.rs")]}})).unwrap();
+    f.save("inferred",0,json!({"type":"section","value":{"entity_id":"service","title":"Inferred explanation","basis":"inferred","anchors":[f.path("lib.rs")]}})).unwrap();
+    assert_eq!(f.freshness("inferred"), Freshness::Inferred);
     assert_eq!(f.freshness("section"), Freshness::Unknown);
     std::fs::write(f.project.root.join("lib.rs"), "pub fn changed() {}\n").unwrap();
     f.index();
     assert_eq!(f.freshness("section"), Freshness::NeedsReview);
+    assert_eq!(f.freshness("inferred"), Freshness::NeedsReview);
 }
 
 #[test]
@@ -250,13 +253,15 @@ fn impact_traverses_queue_consumers_and_environment_filter_precedes_expansion() 
     f.save("producer",0,json!({"type":"entity","value":{"kind":"service","name":"producer","project_id":f.project.project.id,"anchors":[f.path("lib.rs")]}})).unwrap();
     f.entity("queue", "queue");
     f.entity("consumer", "service");
+    f.entity("unanchored-consumer", "service");
+    f.save("unanchored-consume",0,json!({"type":"dependency","value":{"source_id":"unanchored-consumer","target_id":"queue","relation":"consumes","contract":"event.created","environment":"production"}})).unwrap();
     f.entity("staging-only", "service");
     for (id, source, target, relation, env) in [
         ("publish", "producer", "queue", "publishes", "production"),
         ("consume", "consumer", "queue", "consumes", "production"),
         ("stage", "producer", "staging-only", "calls", "staging"),
     ] {
-        f.save(id,0,json!({"type":"dependency","value":{"source_id":source,"target_id":target,"relation":relation,"contract":"event.created","environment":env}})).unwrap();
+        f.save(id,0,json!({"type":"dependency","value":{"source_id":source,"target_id":target,"relation":relation,"contract":"event.created","environment":env,"anchors":[f.path("lib.rs")]}})).unwrap();
     }
     let impact = f
         .store
@@ -269,6 +274,12 @@ fn impact_traverses_queue_consumers_and_environment_filter_precedes_expansion() 
         .unwrap();
     assert!(impact.direct.iter().any(|i| i.id == "producer"));
     assert!(impact.possible.iter().any(|i| i.id == "consumer"));
+    assert!(
+        impact
+            .possible
+            .iter()
+            .any(|i| i.id == "unanchored-consumer")
+    );
     assert!(!impact.possible.iter().any(|i| i.id == "staging-only"));
     let bundle = f
         .store

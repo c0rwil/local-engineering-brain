@@ -742,11 +742,13 @@ fn capture(c: &Connection, anchor: &Anchor, enforce_revision: bool) -> Result<So
     })
 }
 fn freshness(c: &Connection, record: &Record) -> Result<Freshness> {
-    if record.item.basis() == Basis::Inferred {
-        return Ok(Freshness::Inferred);
-    }
+    let inferred = record.item.basis() == Basis::Inferred;
     if record.stamps.is_empty() {
-        return Ok(Freshness::Unknown);
+        return Ok(if inferred {
+            Freshness::Inferred
+        } else {
+            Freshness::Unknown
+        });
     }
     let mut unknown = false;
     for stamp in &record.stamps {
@@ -761,6 +763,9 @@ fn freshness(c: &Connection, record: &Record) -> Result<Freshness> {
         if stamp.digest.is_none() || current.digest.is_none() {
             unknown = true;
         }
+    }
+    if inferred {
+        return Ok(Freshness::Inferred);
     }
     if unknown {
         return Ok(Freshness::Unknown);
