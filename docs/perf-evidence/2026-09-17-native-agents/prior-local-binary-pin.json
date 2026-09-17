@@ -1,0 +1,16 @@
+{
+  "pinned_at_utc": "2026-09-17T18:28:38.617414+00:00",
+  "reason": "Freeze the existing release before native integration installation. Model, prompts, harness and control semantics unchanged. Original input hash is retained; this adapter path-only change is disclosed separately.",
+  "release_dir": "/Users/corwil/.local/share/engram/releases/79e96819a4f43b74bacd20c8b9be6e17405d8494688402db77d13676899e6b01/bin",
+  "source_commit": "3b6586868f6ee6b604c14251097c1b1e0f1e96cf",
+  "adapter_sha256_before": "517beb251060d329cf8bceba43b8213e9cafdf13ee5012c4c25dd4f9973f601a",
+  "adapter_sha256_after": "0c82f50a1731423c9957d951fc43b7890bccce8bb367f6862e52348167adcc60",
+  "completed_trials_at_pin": [
+    "000001-t20_discard_recovered_resolves_parked_jobs-off-2",
+    "000002-t20_discard_recovered_resolves_parked_jobs-brain-2",
+    "000003-t20_discard_recovered_resolves_parked_jobs-brain-3"
+  ],
+  "active_trials_at_pin": [
+    "000004-t20_discard_recovered_resolves_parked_jobs-off-3"
+  ]
+}

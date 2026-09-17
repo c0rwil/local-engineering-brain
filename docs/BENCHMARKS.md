@@ -32,6 +32,12 @@ captured, one awaits review and one is quarantined for historical source drift.
 The remaining lesson injects. Refreshing all three relevant repositories did not
 close that historical evidence gap.
 
+The [native-agent integration check](perf-evidence/2026-09-17-native-agents.md)
+verifies five Codex hook definitions, 23 MCP tools and 270 passing tests on
+`280ef5c`. Codex hook execution still requires operator trust. Its hook regression
+is running and its local matrix is queued; neither has a published score yet.
+The headline injection results above remain tied to their earlier builds.
+
 The capture report also measures conversion and validation latency per session,
 acceptance coverage, and abandoned-task rate. It does not claim prospective
 improvement from one historical recovery. Brief false positives remain unscored

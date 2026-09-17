@@ -1,0 +1,26 @@
+{
+  "source_commit": "280ef5c",
+  "source_hash": "ce72844791f6e70d8a42558d67fc9f63f176421654f333c9f943ec4628a81048",
+  "binary_sha256": {
+    "engram": "9a35956b8fb6fe9ac0af955c14683f38bf52815654fd29a9e4d7cca60789e922",
+    "engramd": "e8f0f65acc8a0d776538e1aa9f325695eea04cdba0c8b776c2ab6f6ec87ef61e",
+    "engram-proxy": "6389311e92a5baf609daa3c766d8c4bd883818d0e87931aaec75db77e6a19cea",
+    "engram-mcp": "30df67ceb340c369c253f72090f424cc5413d47f2d27a09285a1e26239fe3242",
+    "claude-mtplx": "d811bfa0ba0b64886a16409d3598ee49391e80f903729f501c7547b45efa4445",
+    "claude-mtplx-quality": "11e4d29a68fa887d225193ff6f2acea768f157670ef991fdf2e22a4d6910bf7c"
+  },
+  "hook_seeds": [
+    1,
+    2
+  ],
+  "local_seeds": [
+    2,
+    3
+  ],
+  "local_walls_seconds": 2700,
+  "local_model": "mtplx-qwen38-27b-optimized-speed",
+  "local_model_port": 8013,
+  "local_serialization": "Wait for origin-refresh matrix before restarting and warming the dedicated model server.",
+  "sampling_caveat": "Seeds label repetitions; adapters do not forward RNG seeds. YAML sampling settings are descriptive.",
+  "prepared_at_utc": "2026-09-17T18:37:01.169485+00:00"
+}

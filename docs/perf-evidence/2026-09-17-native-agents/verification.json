@@ -1,0 +1,89 @@
+{
+  "codex_hook_parse_errors": 0,
+  "codex_engram_hooks": [
+    {
+      "eventName": "preToolUse",
+      "handlerType": "command",
+      "enabled": true,
+      "trustStatus": "untrusted",
+      "timeoutSec": 10,
+      "matcher": "Read|Edit|Write|Bash",
+      "source": "user"
+    },
+    {
+      "eventName": "postToolUse",
+      "handlerType": "command",
+      "enabled": true,
+      "trustStatus": "untrusted",
+      "timeoutSec": 15,
+      "matcher": "Bash|shell",
+      "source": "user"
+    },
+    {
+      "eventName": "sessionStart",
+      "handlerType": "command",
+      "enabled": true,
+      "trustStatus": "untrusted",
+      "timeoutSec": 15,
+      "matcher": null,
+      "source": "user"
+    },
+    {
+      "eventName": "sessionEnd",
+      "handlerType": "command",
+      "enabled": true,
+      "trustStatus": "untrusted",
+      "timeoutSec": 3,
+      "matcher": null,
+      "source": "user"
+    },
+    {
+      "eventName": "userPromptSubmit",
+      "handlerType": "command",
+      "enabled": true,
+      "trustStatus": "untrusted",
+      "timeoutSec": 30,
+      "matcher": null,
+      "source": "user"
+    }
+  ],
+  "codex_hook_trust_was_not_modified": true,
+  "mcp_server": {
+    "name": "engram-mcp",
+    "version": "0.1.0"
+  },
+  "mcp_tool_count": 23,
+  "mcp_agent_instructions": true,
+  "repository_count": 8,
+  "mcp_tools": [
+    "engram_project_status",
+    "engram_query_world",
+    "engram_recall",
+    "engram_explain_context",
+    "engram_get_past_failures",
+    "engram_get_memory",
+    "engram_record_human_decision",
+    "engram_get_skill",
+    "engram_task_start",
+    "engram_record_attempt",
+    "engram_record_evidence",
+    "engram_learn",
+    "engram_complete_task",
+    "engram_review_lesson",
+    "engram_product",
+    "engram_product_edit",
+    "engram_workspace",
+    "engram_symbol_search",
+    "engram_architecture_guide",
+    "engram_mark_outcome",
+    "engram_get_invariants",
+    "engram_get_impact",
+    "engram_forget"
+  ],
+  "implementation_commit": "280ef5c",
+  "build_id": "ce72844791f6e70d8a42558d67fc9f63f176421654f333c9f943ec4628a81048",
+  "codex_cli": "0.154.0-alpha.6.2",
+  "codex_mcp_registered": true,
+  "ui_native_agent_copy_verified": true,
+  "global_claude_settings_modified": false
+}
