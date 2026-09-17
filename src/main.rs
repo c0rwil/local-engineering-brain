@@ -81,10 +81,10 @@ enum Commands {
     Index {
         #[arg(default_value = ".")]
         path: PathBuf,
-        #[arg(long, value_name = "PATH")]
+        #[arg(long, value_name = "PATH", conflicts_with = "origin")]
         changed: Vec<PathBuf>,
         /// Import a bounded Graphify JSON export instead of native tree-sitter.
-        #[arg(long, value_name = "JSON")]
+        #[arg(long, value_name = "JSON", conflicts_with = "origin")]
         graphify: Option<PathBuf>,
         /// Index fetched `origin/<default>` (shared truth) in a throwaway
         /// worktree instead of this checkout. Documentation surfaces default
@@ -633,6 +633,15 @@ enum MemoryAction {
         #[arg(long)]
         json: bool,
     },
+    /// Undo a specific symbol-drift quarantine only if every source digest matches again.
+    RestoreDrift {
+        id: String,
+        /// Sequence of the last `MEMORY_STATE_CHANGED` event that quarantined this memory.
+        #[arg(long)]
+        event: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// Logically forget a memory while retaining its audit record.
     Forget {
         id: String,
@@ -942,26 +951,7 @@ fn run(cli: Cli) -> Result<bool> {
             json,
         } => {
             if origin {
-                let config_root = discover_project_root(&path)?;
-                let config = Config::load_for(Some(&config_root), &overrides)?;
-                let state_dir = config
-                    .storage
-                    .db_path
-                    .parent()
-                    .unwrap_or_else(|| Path::new("."))
-                    .join("worktrees");
-                let worktree = engram::gitref::checkout_origin_default(&path, &state_dir)?;
-                println!("Indexing {} (shared truth) …", worktree.reference);
-                let result = run_index(
-                    &overrides,
-                    socket_override.as_deref(),
-                    worktree.path(),
-                    &changed,
-                    graphify.as_deref(),
-                    json,
-                );
-                drop(worktree);
-                result
+                run_origin_index(&overrides, socket_override.as_deref(), &path, json)
             } else {
                 run_index(
                     &overrides,
@@ -1480,6 +1470,29 @@ fn run_index(
     Ok(true)
 }
 
+fn run_origin_index(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    path: &Path,
+    json: bool,
+) -> Result<bool> {
+    let root = discover_project_root(path)?;
+    let config = load_daemon_config(overrides, socket, Some(&root))?;
+    let client = DaemonClient::new(&config.daemon.socket_path, Duration::from_secs(600));
+    let project = block_on(client.resolve_project(&root))?.resolved.project;
+    let response = block_on(
+        client.origin_refresh(&engram::daemon::OriginRefreshRequest {
+            project_id: project.id,
+        }),
+    )?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    } else {
+        println!("Indexed {} in the separate origin view", response.reference);
+    }
+    Ok(true)
+}
+
 fn run_graph(
     overrides: &ConfigOverrides,
     socket: Option<&Path>,
@@ -1746,6 +1759,15 @@ fn run_memory(
             } else {
                 println!("Forgot {id}");
             }
+        }
+        MemoryAction::RestoreDrift { id, event, json } => {
+            let memory = block_on(client.restore_memory_drift(
+                &MemoryId::parse(id)?,
+                &engram::daemon::MemoryRestoreDriftRequest {
+                    expected_event_sequence: *event,
+                },
+            ))?;
+            print_memory(&memory, *json)?;
         }
         MemoryAction::Purge { id, json } => {
             let id = MemoryId::parse(id)?;

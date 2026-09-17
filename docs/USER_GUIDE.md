@@ -240,6 +240,19 @@ workspace's primary path. MCP project status refreshes the requested checkout;
 `index_matches_checkout` reports whether its shared structural index matches
 that checkout's HEAD and working-tree fingerprint.
 
+`engram index --origin` uses the same separate origin project as the browser. It
+does not replace the local checkout's graph or invalidate that checkout's lessons.
+Relative paths resolve in the CLI's working directory. `--origin` cannot be
+combined with `--changed` or `--graphify`; its JSON result contains `reference`.
+
+If a wrong source view previously caused a symbol-drift quarantine, reindex the
+intended local checkout and inspect the memory's provenance. An operator can run
+`engram memory restore-drift MEMORY_ID --event EVENT_SEQUENCE --json`. This only
+restores the exact latest `referenced_symbol_changed` quarantine when every
+original source digest matches again. It rejects missing anchors, other causes,
+stale event IDs and archived memories. Validation state and confidence do not
+change; this cannot validate a candidate or remove a real source mismatch.
+
 ## Removing a captured prompt
 
 Task prompts, attempt summaries, evidence text, and authored memories pass

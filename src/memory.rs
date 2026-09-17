@@ -424,6 +424,56 @@ impl MemoryStore {
         self.change_state(id, current.epistemic_state, status, reason)
     }
 
+    /// Undo one explicitly identified symbol-drift quarantine after all anchors recover.
+    /// This preserves the evidence state and confidence; it never promotes a lesson.
+    ///
+    /// # Errors
+    /// Rejects stale event IDs, other quarantine causes, absent anchors, or changed sources.
+    pub fn restore_symbol_drift(
+        &self,
+        id: &MemoryId,
+        expected_event_sequence: u64,
+    ) -> Result<MemoryRecord> {
+        let expected_event_sequence = i64::try_from(expected_event_sequence).map_err(|_| {
+            Error::Config("quarantine event sequence exceeds SQLite range".to_owned())
+        })?;
+        let now = unix_time_ms();
+        self.database.write_immediate(|tx| {
+            let (project_id, epistemic_state, status) = memory_state(tx, id)?;
+            let latest: Option<(i64, String)> = tx.query_row(
+                "SELECT sequence, json_extract(payload_json, '$.data.reason') FROM events
+                 WHERE event_type='MEMORY_STATE_CHANGED'
+                   AND json_extract(payload_json, '$.data.memory_id')=?1
+                 ORDER BY sequence DESC LIMIT 1",
+                [id.as_str()], |r| Ok((r.get(0)?, r.get(1)?)),
+            ).optional()?;
+            if status != MemoryStatus::Suspect
+                || epistemic_state == EpistemicState::Rejected
+                || latest != Some((expected_event_sequence, "referenced_symbol_changed".to_owned()))
+            {
+                return Err(Error::Config("restore-drift requires the latest symbol-drift quarantine event; other states and causes cannot be restored".to_owned()));
+            }
+            let (anchors, mismatches): (i64, i64) = tx.query_row(
+                "SELECT count(*), coalesce(sum(n.id IS NULL OR n.current_digest <> mn.observed_digest),0)
+                 FROM memory_nodes mn LEFT JOIN nodes n
+                   ON n.id=mn.node_id AND n.tombstoned_at_ms IS NULL
+                 WHERE mn.memory_id=?1",
+                [id.as_str()], |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if anchors == 0 || mismatches != 0 {
+                return Err(Error::Config("restore-drift requires every original source digest to match the current index; reindex the intended checkout first".to_owned()));
+            }
+            tx.execute("UPDATE memories SET status='active',known_to_ms=NULL,updated_at_ms=?2 WHERE id=?1", params![id.as_str(),now])?;
+            crate::semantic::sync_memory_vector(tx,id,true,now)?;
+            append_generated_in_transaction(tx,&DomainEvent::MemoryStateChanged {
+                project_id,memory_id:id.clone(),epistemic_state:epistemic_state.as_str().to_owned(),
+                status:"active".to_owned(),reason:format!("source_digests_restored:quarantine_event={expected_event_sequence}"),
+            },now)
+        })?;
+        self.get(id)?
+            .ok_or_else(|| Error::Config(format!("unknown memory `{id}`")))
+    }
+
     /// Exclude time-bounded knowledge after its explicitly recorded expiry.
     /// # Errors
     /// Returns storage or invalid id errors.
@@ -1723,6 +1773,33 @@ mod tests {
             .promote(&supported.id, EpistemicState::Validated, false)
             .expect("validated");
         assert_eq!(validated.epistemic_state, EpistemicState::Validated);
+    }
+
+    #[test]
+    fn drift_restore_rejects_other_causes_and_unanchored_memories() {
+        let (_temp, database, project) = fixture();
+        let memories = MemoryStore::new(database.clone());
+        for reason in ["manual_review", "referenced_symbol_changed"] {
+            let memory = memories
+                .create_candidate(&project, &draft(&project, Vec::new()))
+                .unwrap();
+            memories
+                .mark_status(&memory.id, MemoryStatus::Suspect, reason)
+                .unwrap();
+            let event: i64 = database.with_reader(|c| Ok(c.query_row(
+                "SELECT max(sequence) FROM events WHERE event_type='MEMORY_STATE_CHANGED' AND json_extract(payload_json,'$.data.memory_id')=?1",
+                [memory.id.as_str()], |r| r.get(0),
+            )?)).unwrap();
+            assert!(
+                memories
+                    .restore_symbol_drift(&memory.id, u64::try_from(event).unwrap())
+                    .is_err()
+            );
+            assert_eq!(
+                memories.get(&memory.id).unwrap().unwrap().status,
+                MemoryStatus::Suspect
+            );
+        }
     }
 
     #[test]

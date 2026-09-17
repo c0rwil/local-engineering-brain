@@ -653,6 +653,11 @@ pub struct MemoryPromoteRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MemoryRestoreDriftRequest {
+    pub expected_event_sequence: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MemoryListRequest {
     pub project_id: ProjectId,
     pub kind: Option<String>,
@@ -1151,6 +1156,22 @@ impl DaemonClient {
         self.request(
             hyper::Method::POST,
             &format!("{API_MEMORY_CREATE}/{id}/promote"),
+            Some(request),
+        )
+        .await
+    }
+
+    /// Restore only an identified drift quarantine whose source digests match again.
+    /// # Errors
+    /// Returns stale event, source mismatch, transport, or storage errors.
+    pub async fn restore_memory_drift(
+        &self,
+        id: &MemoryId,
+        request: &MemoryRestoreDriftRequest,
+    ) -> Result<MemoryRecord> {
+        self.request(
+            hyper::Method::POST,
+            &format!("{API_MEMORY_CREATE}/{id}/restore-drift"),
             Some(request),
         )
         .await
@@ -1874,6 +1895,10 @@ where
         )
         .route("/api/v1/memories/{id}/promote", post(promote_memory))
         .route("/api/v1/memories/{id}/forget", post(forget_memory))
+        .route(
+            "/api/v1/memories/{id}/restore-drift",
+            post(restore_memory_drift),
+        )
         .route(API_TASKS, post(start_task))
         .route(
             "/api/v1/tasks/{id}/prompt",
@@ -3729,6 +3754,22 @@ async fn forget_memory(
         .scheduler
         .submit(MutationPriority::CorrectnessCritical, move || {
             store.mark_status(&id, crate::memory::MemoryStatus::Archived, "user_forget")
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
+async fn restore_memory_drift(
+    State(state): State<DaemonState>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<MemoryRestoreDriftRequest>,
+) -> std::result::Result<Json<MemoryRecord>, ApiError> {
+    let id = MemoryId::parse(&id).map_err(|error| ApiError::from_core(&error))?;
+    let store = MemoryStore::with_redactor(state.database.clone(), state.redactor.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::CorrectnessCritical, move || {
+            store.restore_symbol_drift(&id, request.expected_event_sequence)
         })
         .map_err(|error| ApiError::from_core(&error))?;
     Ok(Json(wait_for_mutation(&state, handle).await?))
