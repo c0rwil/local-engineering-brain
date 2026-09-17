@@ -41,6 +41,12 @@ fn mcp_binary_autostarts_daemon_and_serves_json_rpc() {
     let initialized = read_response(&mut stdout);
     assert_eq!(initialized["id"], 1);
     assert_eq!(initialized["result"]["serverInfo"]["name"], "engram-mcp");
+    assert!(
+        initialized["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("engram_complete_task")
+    );
 
     write_request(
         &mut stdin,

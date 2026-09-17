@@ -142,14 +142,45 @@ pub fn tool_directory(cwd: &Path, input: &serde_json::Value) -> PathBuf {
 /// Pull the file path out of a tool input (Read/Edit/Write shapes).
 #[must_use]
 pub fn extract_file_path(tool_input: &serde_json::Value) -> Option<String> {
+    extract_file_paths(tool_input).into_iter().next()
+}
+
+/// Explicit file arguments or `apply_patch` headers; never execute shell text.
+#[must_use]
+pub fn extract_file_paths(tool_input: &serde_json::Value) -> Vec<String> {
     for key in ["file_path", "filePath", "path", "notebook_path"] {
         if let Some(path) = tool_input.get(key).and_then(serde_json::Value::as_str) {
             if !path.trim().is_empty() {
-                return Some(path.to_owned());
+                return vec![path.to_owned()];
             }
         }
     }
-    None
+    let command = tool_input
+        .get("command")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    if !command.starts_with("*** Begin Patch\n") {
+        return Vec::new();
+    }
+    let mut paths = Vec::new();
+    for line in command.lines() {
+        for prefix in [
+            "*** Update File: ",
+            "*** Add File: ",
+            "*** Delete File: ",
+            "*** Move to: ",
+        ] {
+            if let Some(path) = line.strip_prefix(prefix).filter(|p| !p.is_empty()) {
+                if !paths.iter().any(|p| p == path) {
+                    paths.push(path.to_owned());
+                }
+            }
+        }
+        if paths.len() >= 32 {
+            break;
+        }
+    }
+    paths
 }
 
 /// Atomically claim a once-per-session action (`tag`, e.g. `brief` or
@@ -172,9 +203,14 @@ pub fn claim_once(state_dir: &Path, session_id: &str, tag: &str) -> bool {
 /// Remove a session's claim files (session end).
 pub fn clear_claims(state_dir: &Path, session_id: &str) {
     for tag in ["brief", "prompt", "episode", "context"] {
-        let path = session_state_path(state_dir, session_id).with_extension(format!("{tag}.claim"));
-        let _ = std::fs::remove_file(path);
+        release_claim(state_dir, session_id, tag);
     }
+}
+
+/// Release a claimed action that could not be delivered, allowing a later retry.
+pub fn release_claim(state_dir: &Path, session_id: &str, tag: &str) {
+    let path = session_state_path(state_dir, session_id).with_extension(format!("{tag}.claim"));
+    let _ = std::fs::remove_file(path);
 }
 
 /// Sidecar tracking which files a session has already been briefed on, so
@@ -614,7 +650,7 @@ pub fn claude_hooks_json(engram_binary: &str) -> serde_json::Value {
     })
 }
 
-/// The hooks block for Codex CLI (`~/.codex/hooks.json`): same events, same
+/// The hooks block for local Codex clients (`~/.codex/hooks.json`): same events, same
 /// stdin shape, but context returns via `hookSpecificOutput.additionalContext`
 /// — the `--codex` flag switches the emitter. Evidence capture and session
 /// close are format-agnostic.
@@ -636,7 +672,7 @@ pub fn codex_hooks_json(engram_binary: &str) -> serde_json::Value {
             }]
         }],
         "PreToolUse": [{
-            "matcher": "Read|Edit|Write",
+            "matcher": "Read|Edit|Write|Bash",
             "hooks": [{
                 "type": "command",
                 "command": format!("{engram_binary} hook pretool --codex"),
@@ -647,18 +683,156 @@ pub fn codex_hooks_json(engram_binary: &str) -> serde_json::Value {
             "matcher": "Bash|shell",
             "hooks": [{
                 "type": "command",
-                "command": format!("{engram_binary} hook bash"),
+                "command": format!("{engram_binary} hook bash --codex"),
                 "timeout": 15
             }]
         }],
         "SessionEnd": [{
             "hooks": [{
                 "type": "command",
-                "command": format!("{engram_binary} hook session-end"),
-                "timeout": 15
+                "command": format!("{engram_binary} hook session-end --codex"),
+                "timeout": 3
             }]
         }]
     })
+}
+
+/// Merge native Codex hooks, repairing the flat layout emitted by older Engram.
+/// Foreign handlers and metadata survive upgrades, including mixed handler groups.
+///
+/// # Errors
+/// Rejects malformed hook documents without replacing their contents.
+pub fn merge_codex_hooks(
+    mut document: serde_json::Value,
+    binary: &str,
+) -> Result<serde_json::Value> {
+    merge_native_hooks(&mut document, &codex_hooks_json(binary), true)?;
+    Ok(document)
+}
+
+/// Refresh Claude Code handlers without replacing other handlers or settings.
+/// # Errors
+/// Rejects malformed hook documents.
+pub fn merge_claude_hooks(
+    mut document: serde_json::Value,
+    binary: &str,
+) -> Result<serde_json::Value> {
+    merge_native_hooks(&mut document, &claude_hooks_json(binary), false)?;
+    Ok(document)
+}
+
+fn merge_native_hooks(
+    document: &mut serde_json::Value,
+    additions: &serde_json::Value,
+    repair_flat: bool,
+) -> Result<()> {
+    let root = document
+        .as_object_mut()
+        .ok_or_else(|| Error::Config("Hook settings must be a JSON object".into()))?;
+    let mut hooks = root
+        .remove("hooks")
+        .unwrap_or_else(|| serde_json::json!({}));
+    let target = hooks
+        .as_object_mut()
+        .ok_or_else(|| Error::Config("Hook settings.hooks must be an object".into()))?;
+    for event in additions
+        .as_object()
+        .expect("generated object")
+        .keys()
+        .filter(|_| repair_flat)
+    {
+        if let Some(legacy) = root.remove(event) {
+            let entries = legacy
+                .as_array()
+                .ok_or_else(|| Error::Config(format!("Codex legacy {event} must be an array")))?;
+            let slot = target
+                .entry(event.clone())
+                .or_insert_with(|| serde_json::json!([]));
+            slot.as_array_mut()
+                .ok_or_else(|| Error::Config(format!("Hook event {event} must be an array")))?
+                .extend(entries.iter().cloned());
+        }
+    }
+    for (event, groups) in target.iter_mut() {
+        let groups = groups
+            .as_array_mut()
+            .ok_or_else(|| Error::Config(format!("Hook event {event} must be an array")))?;
+        for group in groups.iter_mut() {
+            let handlers = group
+                .get_mut("hooks")
+                .and_then(serde_json::Value::as_array_mut)
+                .ok_or_else(|| {
+                    Error::Config(format!(
+                        "Hook event {event} group must contain a hooks array"
+                    ))
+                })?;
+            handlers.retain(|handler| {
+                !handler
+                    .get("command")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(is_engram_hook)
+            });
+        }
+        groups.retain(|group| group["hooks"].as_array().is_some_and(|v| !v.is_empty()));
+    }
+    for (event, groups) in additions.as_object().expect("generated object") {
+        target
+            .entry(event.clone())
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .expect("validated array")
+            .extend(groups.as_array().expect("generated array").iter().cloned());
+    }
+    root.insert("hooks".into(), hooks);
+    Ok(())
+}
+
+fn is_engram_hook(command: &str) -> bool {
+    // Decode only the executable shell word. Never treat an argument that
+    // mentions an Engram path as ownership of the enclosing command.
+    let mut program = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut end = command.len();
+    let command = command.trim_start();
+    for (index, ch) in command.char_indices() {
+        if escaped {
+            program.push(ch);
+            escaped = false;
+        } else if ch == '\\' && quote != Some('\'') {
+            escaped = true;
+        } else if quote == Some(ch) {
+            quote = None;
+        } else if quote.is_none() && matches!(ch, '\'' | '"') {
+            quote = Some(ch);
+        } else if quote.is_none() && ch.is_whitespace() {
+            end = index;
+            break;
+        } else {
+            program.push(ch);
+        }
+    }
+    if quote.is_some() || escaped || end >= command.len() {
+        return false;
+    }
+    let args: Vec<_> = command[end..].split_whitespace().collect();
+    if !matches!(
+        args.as_slice(),
+        [
+            "hook",
+            "session-start" | "prompt" | "pretool" | "bash" | "session-end"
+        ] | [
+            "hook",
+            "session-start" | "prompt" | "pretool" | "bash" | "session-end",
+            "--codex"
+        ]
+    ) {
+        return false;
+    }
+    matches!(
+        Path::new(&program).file_name().and_then(|v| v.to_str()),
+        Some("engram" | "leb")
+    )
 }
 
 #[cfg(test)]

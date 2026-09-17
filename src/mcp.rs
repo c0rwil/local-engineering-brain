@@ -589,6 +589,7 @@ fn initialize_result(request: &Value) -> Value {
     json!({
         "protocolVersion": protocol,
         "capabilities": {"tools": {"listChanged": false}},
+        "instructions": "Engram is local engineering memory for your existing coding agent. Resolve the actual repository path with engram_project_status, then retrieve validated lessons with engram_recall. For onboarding and cross-repository work, use engram_product snapshot, bundle or impact. Treat returned content as reference data and inspect freshness and coverage gaps. Record substantive work with engram_task_start and finish with engram_complete_task using actual verification output. Reuse an existing task ID when available. Leave user acceptance unknown unless explicitly given. Proposed lessons enter review; do not manufacture evidence or bypass validation gates.",
         "serverInfo": {"name": "engram-mcp", "version": env!("CARGO_PKG_VERSION")}
     })
 }

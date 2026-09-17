@@ -78,28 +78,51 @@ While the daemon runs, http://127.0.0.1:11436 serves the workspace browser:
   re-synthesizes automatically when the workspace actually drifts
   (`[architect] auto = "claude"` in config).
 
-An Obsidian vault mirror (notes + mermaid diagrams) exports continuously to
-`~/.engram/vault`.
+An optional Obsidian vault mirror exports to `~/.engram/vault` when enabled.
+The workspace UI and canonical documentation do not depend on it.
 
 ## 5. Connect your agents (once, machine-wide)
+
+Use your existing Claude Code or Codex client and its chosen model/provider.
+Engram attaches through native hooks and MCP. No replacement launcher or local
+model is required. `claude-mtplx` is only the optional MTPLX/local-model path.
 
 ```bash
 engram hooks install --global   # Claude Code: ~/.claude/settings.json
 engram agent-md --global        # the agent tool loop: ~/.claude/CLAUDE.md
-engram hooks codex              # Codex: MCP server + AGENTS.md instructions
+claude mcp add --scope user engram -- "$HOME/.local/bin/engram-mcp"
+codex mcp add engram -- "$HOME/.local/bin/engram-mcp"
+engram hooks codex --install    # Codex native hooks; review them with /hooks
 ```
 
-Codex gets the same automatic loop: `engram hooks codex --install` writes
-`~/.codex/hooks.json`, where context returns through
-`hookSpecificOutput.additionalContext`.
+These commands assume the default Engram install location. Keep an existing
+working `leb-mcp` connection rather than adding a duplicate server after a rename.
+Codex's hook installer writes `$CODEX_HOME/hooks.json` (normally
+`~/.codex/hooks.json`), repairs the old flat layout, preserves other hooks, and
+uses an absolute executable path for GUI sessions. Open `/hooks` to review and
+trust the installed definitions; newly installed or changed hooks do not run
+until trusted. Start a new local session after connecting MCP.
+
+| Client | Native connection |
+|---|---|
+| Claude Code CLI, IDE and local Code sessions in Claude Desktop | Shared Claude Code hooks and MCP settings |
+| Codex CLI, desktop app and IDE on the same host | Shared Codex hooks and MCP configuration, subject to hook trust |
+| Other GUI clients with local stdio MCP support | Register the absolute `engram-mcp` executable; tools are available, but MCP alone does not guarantee automatic capture |
+| Remote/cloud agent sessions | Configure Engram on the execution host; local machine settings and localhost do not automatically follow |
+
+Claude Desktop's ordinary Chat tab is separate from its Code sessions. Configure
+its supported MCP integration separately; do not assume it runs coding hooks.
+See the official [Claude Code desktop configuration](https://code.claude.com/docs/en/desktop#coming-from-the-cli),
+[Codex hooks](https://learn.chatgpt.com/docs/hooks) and
+[shared Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 What the hooks do, invisibly, in every session — five injection moments:
 
 | Hook | When | Effect |
 |---|---|---|
 | session-start | session opens | standing brief: open episodes from earlier sessions (resume or close), last completed outcome. In an untracked git repo: a one-line enrollment hint, nothing else |
-| prompt | first prompt of a session | opens a task episode, compiles brain context for that exact task, injects it |
-| pretool | before Read/Edit/Write | the file's graph shape — symbols it defines, who calls into it from elsewhere, imports — lands before the content does; once per file per session |
+| prompt | first prompt of a session | compiles task context and retains a redacted prompt; the first relevant tool use opens the episode |
+| pretool | before file tools, Codex patches or Codex shell calls | repo-scoped task context; file graph shapes when explicit paths are available. Multi-file patches route to their edited repositories |
 | bash | after each Bash tool call | recognizable verifications (test/build/lint/typecheck) recorded as deterministic evidence with exit codes — failures included |
 | session-end | session closes | episode auto-closed conservatively (success only if the last verification passed) |
 
@@ -108,13 +131,14 @@ already registered in the brain and silently no-op everywhere else — a
 repo joins the brain only when you `engram index` it. Every hook fails open;
 a broken brain can never break a coding session.
 
-Other front ends: GUI clients get the full episode lifecycle over MCP
-(`engram-mcp`); local models get transparent injection through the proxy
-(`engram-proxy` on 127.0.0.1:11435, `x-engram-mode: off` for a true control).
+MCP exposes the episode lifecycle to agents; clients without native hooks must
+call those tools to capture it. Optional local-model proxy injection runs through
+`engram-proxy` on 127.0.0.1:11435 (`x-engram-mode: off` is a true control).
 
 ## 6. Day to day: what's automatic vs. what you do
 
-**Automatic:** context injection, evidence capture, episode bookkeeping,
+**Automatic with active native hooks:** context injection, evidence capture and
+episode bookkeeping. The daemon also handles
 re-indexing on commits and branch switches, origin refresh, guide regen,
 vault export, daily backups (7 kept), link discovery, drift quarantine.
 

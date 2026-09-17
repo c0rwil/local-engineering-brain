@@ -2424,90 +2424,131 @@ fn run_hook_event(
         }
         "pretool" => {
             let tool_input = payload.get("tool_input").cloned().unwrap_or_default();
-            let Some(file_path) = engram::agenthooks::extract_file_path(&tool_input) else {
-                return Ok(true);
-            };
-            let Ok(lookup) = block_on(client.lookup_project(&target_dir)) else {
-                return Ok(true);
-            };
-            let Some(project) = lookup.project else {
-                return Ok(true);
-            };
-            let Some((scope, session)) =
-                hook_episode(&client, &state_dir, &session_id, &project.id)
-            else {
-                return Ok(true);
+            let files = engram::agenthooks::extract_file_paths(&tool_input);
+            let files = if files.is_empty() {
+                vec![None]
+            } else {
+                files.into_iter().map(Some).collect()
             };
             let mut pretool_context = String::new();
-            if engram::agenthooks::claim_once(&state_dir, &scope, "context") {
-                let prompt =
-                    engram::agenthooks::pending_prompt(&state_dir, &session_id).unwrap_or_default();
-                let Ok(resolved) = block_on(client.resolve_project(&target_dir)) else {
-                    return Ok(true);
-                };
-                if let Ok(context) = block_on(client.compile_context(&ContextCompileRequest {
-                    request_id: format!("hook_{scope}"),
-                    project_id: project.id.clone(),
-                    task_text: prompt,
-                    current_paths: Vec::new(),
-                    token_budget: config.context.max_injected_tokens,
-                    mode: ContextMode::Brain,
-                    repository_root: Some(resolved.resolved.root),
-                    head: resolved.resolved.git.and_then(|git| git.head),
-                    task_id: Some(session.task_id),
-                    framing: None,
-                })) {
-                    let text = format!("{}{}", context.stable_prefix, context.dynamic_context);
-                    pretool_context.push_str(&text);
-                }
-            }
-            // Repo-relative path: the graph stores paths relative to the
-            // root. Canonicalize BOTH sides before stripping — the root
-            // comes back canonicalized, and a tool path through a symlink
-            // (macOS /tmp, notably) otherwise never matches it.
-            let absolute = if Path::new(&file_path).is_absolute() {
-                PathBuf::from(&file_path)
+            let byte_limit = if codex {
+                usize::try_from(config.context.max_injected_tokens.saturating_mul(4))
+                    .unwrap_or(usize::MAX)
             } else {
-                cwd.join(&file_path)
+                usize::MAX
             };
-            let absolute = absolute.canonicalize().unwrap_or(absolute);
-            let Ok(root) = discover_project_root(&target_dir) else {
-                return Ok(true);
-            };
-            let root = root.canonicalize().unwrap_or(root);
-            let Ok(relative) = absolute.strip_prefix(&root) else {
-                return Ok(true); // outside the repo: nothing to know
-            };
-            let relative = relative.to_string_lossy().into_owned();
-            if !engram::agenthooks::mark_file_briefed(&state_dir, &scope, &relative) {
-                if !pretool_context.trim().is_empty() {
-                    emit("PreToolUse", &pretool_context);
+            for file_path in files {
+                let target_dir = file_path.as_ref().map_or_else(
+                    || target_dir.clone(),
+                    |path| {
+                        engram::agenthooks::tool_directory(
+                            &cwd,
+                            &serde_json::json!({"file_path":path}),
+                        )
+                    },
+                );
+                let Ok(lookup) = block_on(client.lookup_project(&target_dir)) else {
+                    continue;
+                };
+                let Some(project) = lookup.project else {
+                    continue;
+                };
+                let Some((scope, session)) =
+                    hook_episode(&client, &state_dir, &session_id, &project.id)
+                else {
+                    continue;
+                };
+                // Capture every edited repository even when earlier context filled
+                // the output budget. Claims only survive delivery of a whole block.
+                let remaining_tokens = if codex {
+                    u32::try_from(byte_limit.saturating_sub(pretool_context.len()) / 4)
+                        .unwrap_or(u32::MAX)
+                } else {
+                    config.context.max_injected_tokens
+                };
+                if remaining_tokens > 0
+                    && engram::agenthooks::claim_once(&state_dir, &scope, "context")
+                {
+                    let prompt = engram::agenthooks::pending_prompt(&state_dir, &session_id)
+                        .unwrap_or_default();
+                    let Ok(resolved) = block_on(client.resolve_project(&target_dir)) else {
+                        engram::agenthooks::release_claim(&state_dir, &scope, "context");
+                        continue;
+                    };
+                    let mut delivered = false;
+                    if let Ok(context) = block_on(client.compile_context(&ContextCompileRequest {
+                        request_id: format!("hook_{scope}"),
+                        project_id: project.id.clone(),
+                        task_text: prompt,
+                        current_paths: Vec::new(),
+                        token_budget: remaining_tokens,
+                        mode: ContextMode::Brain,
+                        repository_root: Some(resolved.resolved.root),
+                        head: resolved.resolved.git.and_then(|git| git.head),
+                        task_id: Some(session.task_id),
+                        framing: None,
+                    })) {
+                        let text = format!("{}{}", context.stable_prefix, context.dynamic_context);
+                        if !text.is_empty()
+                            && text.len() <= byte_limit.saturating_sub(pretool_context.len())
+                        {
+                            pretool_context.push_str(&text);
+                            delivered = true;
+                        }
+                    }
+                    if !delivered {
+                        engram::agenthooks::release_claim(&state_dir, &scope, "context");
+                    }
                 }
-                return Ok(true); // already briefed this session
-            }
-            let Ok(shape) = block_on(client.file_shape(&engram::daemon::FileShapeRequest {
-                project_id: project.id,
-                file_path: relative.clone(),
-            })) else {
-                if !pretool_context.trim().is_empty() {
-                    emit("PreToolUse", &pretool_context);
+                let Some(file_path) = file_path else {
+                    continue;
+                };
+                // Repo-relative path: the graph stores paths relative to the
+                // root. Canonicalize BOTH sides before stripping — the root
+                // comes back canonicalized, and a tool path through a symlink
+                // (macOS /tmp, notably) otherwise never matches it.
+                let absolute = if Path::new(&file_path).is_absolute() {
+                    PathBuf::from(&file_path)
+                } else {
+                    cwd.join(&file_path)
+                };
+                let absolute = absolute.canonicalize().unwrap_or(absolute);
+                let Ok(root) = discover_project_root(&target_dir) else {
+                    continue;
+                };
+                let root = root.canonicalize().unwrap_or(root);
+                let Ok(relative) = absolute.strip_prefix(&root) else {
+                    continue; // outside the repo: nothing to know
+                };
+                let relative = relative.to_string_lossy().into_owned();
+                let Ok(shape) = block_on(client.file_shape(&engram::daemon::FileShapeRequest {
+                    project_id: project.id,
+                    file_path: relative.clone(),
+                })) else {
+                    continue;
+                };
+                let symbols: Vec<(String, String)> = shape
+                    .symbols
+                    .iter()
+                    .map(|symbol| (symbol.kind.clone(), symbol.label.clone()))
+                    .collect();
+                let callers: Vec<(String, String)> = shape
+                    .callers
+                    .iter()
+                    .map(|caller| (caller.label.clone(), caller.file_path.clone()))
+                    .collect();
+                if let Some(text) = engram::agenthooks::render_file_shape(
+                    &relative,
+                    &symbols,
+                    &callers,
+                    &shape.imports,
+                ) {
+                    if text.len() <= byte_limit.saturating_sub(pretool_context.len())
+                        && engram::agenthooks::mark_file_briefed(&state_dir, &scope, &relative)
+                    {
+                        pretool_context.push_str(&text);
+                    }
                 }
-                return Ok(true);
-            };
-            let symbols: Vec<(String, String)> = shape
-                .symbols
-                .iter()
-                .map(|symbol| (symbol.kind.clone(), symbol.label.clone()))
-                .collect();
-            let callers: Vec<(String, String)> = shape
-                .callers
-                .iter()
-                .map(|caller| (caller.label.clone(), caller.file_path.clone()))
-                .collect();
-            if let Some(text) =
-                engram::agenthooks::render_file_shape(&relative, &symbols, &callers, &shape.imports)
-            {
-                pretool_context.push_str(&text);
             }
             if !pretool_context.trim().is_empty() {
                 emit("PreToolUse", &pretool_context);
@@ -2590,7 +2631,7 @@ fn run_hook_event(
                 command: Some(command.chars().take(500).collect()),
                 exit_code: Some(exit_code),
                 artifact_text: engram::agenthooks::extract_artifact(tool_result),
-                metadata: serde_json::json!({"source": "claude-code-hook"}),
+                metadata: serde_json::json!({"source": if codex { "codex-hook" } else { "claude-code-hook" }}),
             }))
             .is_err()
             {
@@ -3036,35 +3077,47 @@ fn run_skills_action(action: &SkillsAction) -> Result<bool> {
     Ok(true)
 }
 
+fn native_hook_command() -> Result<String> {
+    let stable = dirs_home().join(".local/bin/engram");
+    let executable = if stable.is_file() {
+        stable
+    } else {
+        std::env::current_exe().map_err(|e| engram::Error::Config(e.to_string()))?
+    };
+    let binary = format!("'{}'", executable.to_string_lossy().replace('\'', "'\\''"));
+    Ok(binary)
+}
+
 fn install_codex_hooks() -> Result<()> {
-    let hooks_path = dirs_home().join(".codex").join("hooks.json");
-    let mut document = std::fs::read_to_string(&hooks_path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    let hooks = engram::agenthooks::codex_hooks_json("engram");
-    if let (Some(object), Some(new_hooks)) = (document.as_object_mut(), hooks.as_object()) {
-        for (event, value) in new_hooks {
-            object.insert(event.clone(), value.clone());
-        }
-    }
-    if let Some(parent) = hooks_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| engram::error::Error::Config(format!("codex dir: {error}")))?;
-    }
-    std::fs::write(&hooks_path, serde_json::to_string_pretty(&document)?)
-        .map_err(|error| engram::error::Error::Config(format!("codex hooks: {error}")))?;
+    use std::io::Write as _;
+    let config_dir =
+        std::env::var_os("CODEX_HOME").map_or_else(|| dirs_home().join(".codex"), PathBuf::from);
+    let hooks_path = config_dir.join("hooks.json");
+    let document = match std::fs::read_to_string(&hooks_path) {
+        Ok(content) => serde_json::from_str(&content)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(error) => return Err(engram::Error::Config(format!("read Codex hooks: {error}"))),
+    };
+    let binary = native_hook_command()?;
+    let document = engram::agenthooks::merge_codex_hooks(document, &binary)?;
+    std::fs::create_dir_all(&config_dir).map_err(|e| engram::Error::Config(e.to_string()))?;
+    let mut file = tempfile::NamedTempFile::new_in(&config_dir)
+        .map_err(|e| engram::Error::Config(e.to_string()))?;
+    file.write_all(serde_json::to_string_pretty(&document)?.as_bytes())
+        .map_err(|e| engram::Error::Config(e.to_string()))?;
+    file.persist(&hooks_path)
+        .map_err(|e| engram::Error::Config(e.to_string()))?;
     println!(
-        "Wrote {} — Codex sessions now get the full automatic loop \
-         (session brief, context injection, file shapes, evidence capture, \
-         auto-close) via hookSpecificOutput.additionalContext.",
+        "Wrote {}. Open /hooks in Codex to review and trust these definitions, then start a new local session. Hooks do not change your model or provider.",
         hooks_path.display()
     );
     Ok(())
 }
 
 fn run_hooks_action(action: &HooksAction) -> Result<bool> {
-    let hooks = engram::agenthooks::claude_hooks_json("engram");
+    use std::io::Write as _;
+    let binary = native_hook_command()?;
+    let hooks = engram::agenthooks::claude_hooks_json(&binary);
     match action {
         HooksAction::Show => {
             println!("{}", serde_json::to_string_pretty(&hooks)?);
@@ -3078,60 +3131,22 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
             std::fs::create_dir_all(&settings_dir)
                 .map_err(|error| engram::Error::Config(format!("settings dir: {error}")))?;
             let settings_path = settings_dir.join("settings.json");
-            let mut settings: serde_json::Value = std::fs::read_to_string(&settings_path)
-                .ok()
-                .and_then(|content| serde_json::from_str(&content).ok())
-                .unwrap_or_else(|| serde_json::json!({}));
-            let existing = settings
-                .get("hooks")
-                .map(std::string::ToString::to_string)
-                .unwrap_or_default();
-            let refreshed = existing.contains("engram hook") || existing.contains("leb hook");
-            {
-                let hooks_slot = settings
-                    .as_object_mut()
-                    .ok_or_else(|| {
-                        engram::Error::Config("settings.json is not a JSON object".to_owned())
-                    })?
-                    .entry("hooks")
-                    .or_insert_with(|| serde_json::json!({}));
-                let hooks_object = hooks_slot.as_object_mut().ok_or_else(|| {
-                    engram::Error::Config("settings.json hooks is not an object".to_owned())
-                })?;
-                // Refresh in place: drop previously installed engram entries so
-                // upgrades ship new hook events, then add the current set.
-                // Foreign (non-engram) hook entries are preserved untouched.
-                for slot in hooks_object.values_mut() {
-                    if let Some(entries) = slot.as_array_mut() {
-                        entries.retain(|entry| {
-                            let text = entry.to_string();
-                            !text.contains("engram hook") && !text.contains("leb hook")
-                        });
-                    }
-                }
-                for (event, entries) in hooks.as_object().into_iter().flatten() {
-                    let slot = hooks_object
-                        .entry(event.clone())
-                        .or_insert_with(|| serde_json::json!([]));
-                    if let (Some(target), Some(additions)) =
-                        (slot.as_array_mut(), entries.as_array())
-                    {
-                        target.extend(additions.iter().cloned());
-                    }
-                }
-                hooks_object.retain(|_, slot| slot.as_array().is_none_or(|a| !a.is_empty()));
-                std::fs::write(
-                    &settings_path,
-                    serde_json::to_string_pretty(&settings)
-                        .map_err(|error| engram::Error::Config(error.to_string()))?,
-                )
-                .map_err(|error| engram::Error::Config(format!("settings write: {error}")))?;
-                println!(
-                    "{}: hooks {}",
-                    settings_path.display(),
-                    if refreshed { "refreshed" } else { "installed" }
-                );
-            }
+            let settings = match std::fs::read_to_string(&settings_path) {
+                Ok(content) => serde_json::from_str(&content)?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+                Err(error) => return Err(engram::Error::Config(error.to_string())),
+            };
+            let settings = engram::agenthooks::merge_claude_hooks(settings, &binary)?;
+            let mut file = tempfile::NamedTempFile::new_in(&settings_dir)
+                .map_err(|e| engram::Error::Config(e.to_string()))?;
+            file.write_all(serde_json::to_string_pretty(&settings)?.as_bytes())
+                .map_err(|e| engram::Error::Config(e.to_string()))?;
+            file.persist(&settings_path)
+                .map_err(|e| engram::Error::Config(e.to_string()))?;
+            println!(
+                "{}: Engram hooks installed/refreshed; other hooks preserved",
+                settings_path.display()
+            );
             if *global {
                 println!(
                     "Universal: every Claude session in every REGISTERED repo now gets \
@@ -3152,8 +3167,8 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
                 install_codex_hooks()?;
             }
             println!(
-                "Codex setup:\n\n1. MCP server (once, in ~/.codex/config.toml):\n\n\
-                 [mcp_servers.engram]\ncommand = \"engram-mcp\"\n\n\
+                "Codex setup:\n\n1. Connect MCP once for the local CLI, app and IDE:\n\n\
+                 codex mcp add engram -- /absolute/path/to/engram-mcp\n\n\
                  2. Per repo, install the agent loop instructions into AGENTS.md:\n\n\
                  engram agent-md --install <repo> --file AGENTS.md\n\n\
                  3. Automatic hooks (recommended): engram hooks codex --install\n\n\

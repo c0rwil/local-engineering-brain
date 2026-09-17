@@ -306,7 +306,7 @@
     <p>This view reflects the last indexed source. Check the revision and refresh before relying on it. To work with the brain from a terminal or agent:</p>
     <ol>
       <li><strong>See what the brain knows about a task</strong>: <code>engram context "&lt;task&gt;" --path &lt;repo&gt;</code> prints the exact context it would inject, with a why for every item.</li>
-      <li><strong>Code with injected memory</strong>: launch <code>claude-mtplx</code> (Claude Code through the Engram proxy) — validated lessons, team standards, and linked-repo knowledge inject automatically. The <code>engram</code> MCP server adds recall, impact, and outcome tools.</li>
+      <li><strong>Use your usual coding agent</strong>: connect native hooks and the <code>engram-mcp</code> server once, then use Claude Code or Codex in your terminal, local desktop session or IDE with your chosen model. Hooks inject context and capture verification; MCP adds product maps, recall, impact and lesson review. Other MCP clients can use those tools without automatic lifecycle capture. <code>claude-mtplx</code> is an optional local-model launcher.</li>
       <li><strong>Teach it</strong>: after finishing real work, <code>engram learn "&lt;lesson&gt;" --task … --evidence …</code>; only evidence-backed lessons ever inject. Record deployment facts with <code>engram fact set</code>.</li>
       <li><strong>Keep everything fresh</strong>: the refresh buttons below index fetched <code>origin/main</code> (shared truth — your checkout is never touched); tick “from local checkout” or run plain <code>engram index</code> to see your branch instead. Agent context always follows the local tree you are editing.</li>
     </ol>

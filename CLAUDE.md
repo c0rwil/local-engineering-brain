@@ -29,7 +29,8 @@ path, ever.
 | Ask the workspace | `engram ask "<question>" --path <repo> --claude` (retrieval over memories/facts/symbols/doc sections, cited synthesis; `--dry-run` prints the evidence pack) |
 | Session relay | `engram relay board` / `engram relay send <session\|all> "msg"` — delivery at recipient's next prompt via hooks |
 | Self-update | `engram update` (pulls the recorded source checkout, atomic reinstall; `--check` reports only) |
-| Codex automatic loop | `engram hooks codex --install` writes `~/.codex/hooks.json` (context via `hookSpecificOutput.additionalContext`) |
+| Native coding agents | Use ordinary Claude Code or Codex (CLI, local desktop, IDE) with hooks + `engram-mcp`; no local model or launcher required |
+| Codex automatic loop | `engram hooks codex --install` writes `$CODEX_HOME/hooks.json` (default `~/.codex`); review/trust definitions with `/hooks`. Register MCP separately with `codex mcp add engram -- /absolute/path/to/engram-mcp` |
 | Skill packs (agent-native skills) | `engram skills add <git-url>` fetches into `~/.engram/skillpacks/` and installs each `SKILL.md` skill into every detected agent (`~/.claude/skills`, `~/.codex/skills`); `list` / `update` / `install` / `remove`. Engram-installed skills carry a `.engram-skillpack` marker — hand-written skills are never clobbered |
 
 Tests are hermetic: no network, no live model, no pre-existing daemon needed.
@@ -51,7 +52,7 @@ selects under a hard token budget and explains every injected item. The proxy
 and injects compiled context; `x-engram-mode: off` is a true zero-injection
 control path used as the benchmark control.
 
-## Model launchers (installed)
+## Optional local-model launchers (installed)
 
 - `claude-mtplx` — Claude Code against MTPLX Optimized-Speed (Q4) through the
   Engram proxy. `ENGRAM_MODE=off` disables injection; `ENGRAM_TOKEN_BUDGET` overrides.
