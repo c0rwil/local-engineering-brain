@@ -17,8 +17,14 @@ historical recovery replay are reported separately from paired agent trials.
 | Preference distillation (learned conventions, unprompted) | 3/4 | **4/4**, −41% wall | 2026-09-02 |
 | Real-repo recall@1 (production backend, non-verbatim queries) | — | **11/11** | 2026-09-01 |
 | Compact injection (bytes at success parity) | baseline | **−33% injected bytes** | 2026-09-01 |
-| Hook-pipeline fidelity (five injection moments, Opus) | 8/10 | **10/10**, −6.3% wall | [2026-09-16 regression](perf-evidence/2026-09-16-hooks-regression.md) |
+| Hook-pipeline fidelity (five injection moments, Opus) | 7/10 | **10/10** | [2026-09-17 final-build regression](perf-evidence/2026-09-17-hooks-product-regression.md) |
+| Living product / onboarding contracts (synthetic correctness checks) | — | **21/21**; no human speed claim | [2026-09-17 product evaluation](perf-evidence/2026-09-17-living-product.md) |
 | Operational-lesson replay (historical repair, six real-session probes) | 0/6 before recovery | **1/6** after one evidence-backed recovery | [2026-09-16 capture](perf-evidence/2026-09-16-capture-health.md) |
+
+The [living-product report](perf-evidence/2026-09-17-living-product.md) adds a
+source-linked real-flow check and identifies internal documentation synthesis as
+a source of historical abandoned episodes. The unchanged six-case replay remains
+1/6; prospective capture and onboarding gains are not yet established.
 
 The capture report also measures conversion and validation latency per session,
 acceptance coverage, and abandoned-task rate. It does not claim prospective
@@ -27,14 +33,18 @@ until actual emitted items have relevance labels; unknown acceptance remains
 unknown.
 
 The [2026-09-03 hook matrix](perf-evidence/2026-09-03-opus-hooks-pipeline.md)
-reported 6/10 versus 10/10 at −19% mean wall. The new row is a fresh paired run;
+reported 6/10 versus 10/10 at −19% mean wall. The September 16 rerun was 8/10
+versus 10/10. The final-build row is 7/10 versus 10/10; its mean wall is 2.8%
+lower but its median is higher, so no general speedup is claimed. These are fresh paired runs;
 differences across dates are not attributed to the capture changes.
 
 The [2026-09-01 local matrix](perf-evidence/2026-09-01-local-multiseed-wall-calibrated.md)
 reported 7/10 versus 10/10 at −33% mean wall. The latest local rerun had twelve
 API cancellations/stream-idle errors and four wall timeouts. It shows no success
 gain and does not support a speedup claim; runtime reliability must be resolved
-before drawing an injection-quality comparison.
+before drawing an injection-quality comparison. The [September 17 final-build
+local attempt](perf-evidence/2026-09-17-local-product-runtime-blocked.md) is blocked
+before warmup by the local Metal/MLX runtime and has no score.
 
 ## What the fidelity probes measure
 
@@ -61,8 +71,9 @@ exactly the part Engram captures.
 - Per-arm brains restored from a frozen snapshot; project identity pinned
   via `.engram/project.toml` (clone-identity fracture silently blanked early
   matrices — documented, regression-tested).
-- Injected-bytes telemetry archived per run; a brain arm that injects
-  nothing is a broken arm, not a data point.
+- Per-run context telemetry with measurement scope stated in each report; the
+  hook collector measures compiled prefix/context bytes, excluding additional
+  hook payloads. A zero-context brain arm is a broken arm, not a data point.
 - Frontier runs go through the operator's own `claude` login; local runs
   are wall-calibrated (≥2700 s) with a warmed model server.
 

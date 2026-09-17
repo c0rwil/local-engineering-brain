@@ -1,0 +1,30 @@
+{
+  "matching_prompt_prefix": "Engram architect synthesis_prompt exact introductory instruction",
+  "snapshots": [
+    {
+      "name": "2026-09-15-capture-after.sqlite",
+      "sha256": "9d12680dca7ca51817e48fbb030a666ae2a289f84d360d73145d6bf419a0cf40",
+      "abandoned_count": 70,
+      "matching_count": 13
+    },
+    {
+      "name": "2026-09-17-product-installed.sqlite",
+      "sha256": "78d86baa435717ee893000e232a9f0fe43df20ed42b788028a307c9c8183a46e",
+      "abandoned_count": 107,
+      "matching_count": 50
+    }
+  ],
+  "groups": [
+    {
+      "status": "abandoned",
+      "count": 50,
+      "first_started_ms": 1788400713167,
+      "last_started_ms": 1789624482492
+    }
+  ],
+  "newly_abandoned_ids": 37,
+  "newly_abandoned_matching": 37,
+  "newly_abandoned_first_started_ms": 1789527288551,
+  "newly_abandoned_last_started_ms": 1789624482492,
+  "classification": "Exact internal prompt-template match; delta is the set difference of abandoned task IDs across the named snapshots. No task IDs, prompts or dossier contents exported. Historical rows preserved."
+}

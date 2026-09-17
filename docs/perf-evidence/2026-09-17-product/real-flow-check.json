@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-09-17T06:44:55.596454+00:00",
+  "catalog_records_excluding_legacy_guide": 23,
+  "registered_local_repositories": 4,
+  "ordered_flows": 2,
+  "documentation_sections_awaiting_review": 4,
+  "bundle_tokens": 3992,
+  "bundle_budget": 4000,
+  "source_anchor_count": 57,
+  "direct_impact_records": 10,
+  "possible_impact_records": 7,
+  "cross_repo_consumers_reported": 3,
+  "limitations": [
+    "Private source, prose and repository topology remain in the local brain; only counts exported.",
+    "Source contracts do not establish deployed behavior.",
+    "Generated onboarding sections await explicit review.",
+    "A single observed bundle latency is not an onboarding speed measurement."
+  ]
+}

@@ -17,8 +17,12 @@ compiler remain authoritative.
   citations, explicit possible impacts and knowledge gaps.
 - [x] Consolidated episode completion and lesson review, duplicate/conflict
   handling, expiration and separate verification/merge/acceptance signals.
-- [ ] Hermetic end-to-end tests, independent review, UI verification, installation,
-  representative real flow, capture evaluation and honest regression evidence.
+- [x] Hermetic end-to-end tests, independent review, UI verification, installation,
+  representative real flow and capture evaluation.
+- [x] Complete and publish final-build hook regression (7/10 control, 10/10 brain).
+- [x] Publish capture/replay, product evaluator and local-runtime diagnostic evidence.
+- [ ] Complete final-build local regression after the Metal/MLX runtime recovers;
+  the corrected run could not reach warmup and has no score.
 - [ ] Publish main to origin and mirror; restore the company GitHub identity.
 
 ## Acceptance rules

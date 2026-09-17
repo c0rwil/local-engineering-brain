@@ -1,0 +1,44 @@
+{
+  "implementation_commit": "040b666",
+  "status": "blocked_before_warmup",
+  "planned_cells": 20,
+  "completed_valid_cells": 0,
+  "wall_seconds_per_trial": 2700,
+  "dedicated_model_port": 8013,
+  "model_startup_elapsed_seconds_observed": 1090,
+  "readiness_checks_limit": 180,
+  "seconds_between_checks": 5,
+  "samples": [
+    {
+      "file": "model-startup-sample.txt",
+      "sha256": "f300396e8cdf1c7cd904a5e4d2f511ed1ee6150068af9adcfc90ac4f4dc4fe10",
+      "metal_shared_event_wait": true,
+      "iogpu_submission_wait": true,
+      "mlx_array_evaluation": true,
+      "sample_date": "2026-09-16 23:58:32.973 -0700"
+    },
+    {
+      "file": "model-startup-sample-late.txt",
+      "sha256": "fbb48471d0bd87af79ed9dc23e4549190ee86c5aca8117c6c0c16c2ecf9ae569",
+      "metal_shared_event_wait": true,
+      "iogpu_submission_wait": true,
+      "mlx_array_evaluation": true,
+      "sample_date": "2026-09-17 00:12:06.522 -0700"
+    }
+  ],
+  "diagnosis": "Both samples show MLX evaluation waiting on a Metal shared event and Metal command submission inside IOGPU. Root cause unproven. Required healthy model and warmup were unavailable.",
+  "raw_diagnostic_sha256": {
+    "frozen-diagnostics/local-startup-timeout.log": "ab0d0990d9cd187403c74c01a1d3423ede9f4875327a1db1a1f063c1241b1122",
+    "frozen-diagnostics/local-runtime-blocked.txt": "7982b76ab9e33a06445adb903a0ee0882c09068f500c9538e6ea3bfe483d8f7c",
+    "frozen-diagnostics/local-resume-launch.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "frozen-diagnostics/model-logs/claude-code-mtplx-qwen38-27b-optimized-speed.log": "8470c98cae5c2cf4095492ab0d525df4d76745a813c2fcf6e639c4407ecb381c",
+    "frozen-diagnostics/model-startup-sample.txt": "f300396e8cdf1c7cd904a5e4d2f511ed1ee6150068af9adcfc90ac4f4dc4fe10",
+    "frozen-diagnostics/model-startup-sample-late.txt": "fbb48471d0bd87af79ed9dc23e4549190ee86c5aca8117c6c0c16c2ecf9ae569"
+  },
+  "unrelated_applications_changed": false,
+  "reboot_attempted": false,
+  "model_quality_score": null,
+  "latency_comparison": null,
+  "diagnostics_frozen_at_ms": 1789629441442,
+  "diagnostics_note": "Hashes refer to frozen local snapshots taken after benchmark cleanup. Original live log could append during shutdown."
+}

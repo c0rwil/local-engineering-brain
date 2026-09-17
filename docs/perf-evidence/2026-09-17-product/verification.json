@@ -1,0 +1,80 @@
+{
+  "rust_tests_passed": 263,
+  "all_targets": true,
+  "all_features": true,
+  "clippy_warnings_denied": true,
+  "formatter": "cargo fmt --all -- --check",
+  "ui_checks": [
+    "Desktop and 375x812 viewport; no horizontal overflow",
+    "Create product, ordered flow and source-anchored section",
+    "Inspect indexed symbols and raw evidence",
+    "Compile a bounded task bundle",
+    "Accept a synthetic observational lesson in isolated preview",
+    "Analyze changed paths and inspect knowledge history",
+    "No browser errors during final isolated review and impact flows"
+  ],
+  "independent_review": "All reported correctness issues addressed; final reviewer found no actionable production issue.",
+  "installed_doctor": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "configuration",
+        "status": "pass"
+      },
+      {
+        "name": "local_only",
+        "status": "pass"
+      },
+      {
+        "name": "workspace_browser",
+        "status": "pass"
+      },
+      {
+        "name": "commit_watcher",
+        "status": "pass"
+      },
+      {
+        "name": "vault_export",
+        "status": "pass"
+      },
+      {
+        "name": "brain_sync",
+        "status": "pass"
+      },
+      {
+        "name": "sqlite_integrity",
+        "status": "pass"
+      },
+      {
+        "name": "sqlite_wal",
+        "status": "pass"
+      },
+      {
+        "name": "sqlite_foreign_keys",
+        "status": "pass"
+      },
+      {
+        "name": "schema",
+        "status": "pass"
+      },
+      {
+        "name": "blob_store",
+        "status": "pass"
+      }
+    ]
+  },
+  "installed_status_sample": {
+    "build_id": "5b77dd18e9454212d34f3254e0ecf56c28c78284adc264298ad0a7112fc41417",
+    "uptime_ms": 1157269,
+    "scheduler": {
+      "queue_capacity": 4096,
+      "queued": 0,
+      "submitted": 248,
+      "completed": 248,
+      "failed": 0,
+      "rejected": 0
+    },
+    "memory_pressure": "normal"
+  },
+  "global_hook_compatibility": "Existing leb hook commands resolve to the same installed binary as engram. Settings were not edited."
+}

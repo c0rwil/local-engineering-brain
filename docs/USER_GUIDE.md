@@ -57,8 +57,8 @@ engram fact set role "public REST API for the mobile app" --path ~/code/my-api
 ```
 
 Facts lead every compiled context, drive hostname-based link inference
-(declaring another repo's hostname in your code creates a `calls-api-of`
-link with file evidence), and render in the encyclopedia.
+(a hostname match proposes a `calls-api-of`
+link for review; it is not enough to auto-apply a dependency), and render in the encyclopedia.
 
 ## 4. The living encyclopedia
 
