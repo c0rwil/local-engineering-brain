@@ -17,7 +17,7 @@ historical recovery replay are reported separately from paired agent trials.
 | Preference distillation (learned conventions, unprompted) | 3/4 | **4/4**, −41% wall | 2026-09-02 |
 | Real-repo recall@1 (production backend, non-verbatim queries) | — | **11/11** | 2026-09-01 |
 | Compact injection (bytes at success parity) | baseline | **−33% injected bytes** | 2026-09-01 |
-| Hook-pipeline fidelity (five injection moments, Opus) | 7/10 | **10/10** | [2026-09-17 final-build regression](perf-evidence/2026-09-17-hooks-product-regression.md) |
+| Hook-pipeline fidelity (five injection moments, Opus) | 8/10 | **10/10** | [2026-09-17 origin-refresh regression](perf-evidence/2026-09-17-hooks-origin-refresh.md) |
 | Living product / onboarding contracts (synthetic correctness checks) | — | **21/21**; no human speed claim | [2026-09-17 product evaluation](perf-evidence/2026-09-17-living-product.md) |
 | Operational-lesson replay (historical repair, six real-session probes) | 0/6 before recovery | **1/6**, unchanged after repository refresh | [2026-09-17 diagnosis](perf-evidence/2026-09-17-repository-refresh.md) |
 
@@ -40,8 +40,9 @@ unknown.
 
 The [2026-09-03 hook matrix](perf-evidence/2026-09-03-opus-hooks-pipeline.md)
 reported 6/10 versus 10/10 at −19% mean wall. The September 16 rerun was 8/10
-versus 10/10. The final-build row is 7/10 versus 10/10; its mean wall is 2.8%
-lower but its median is higher, so no general speedup is claimed. These are fresh paired runs;
+versus 10/10. The product-build rerun was 7/10 versus 10/10; the subsequent
+origin-refresh fix rerun is 8/10 versus 10/10. Its mean wall is lower but its
+median is slightly higher, so no general speedup is claimed. These are fresh paired runs;
 differences across dates are not attributed to the capture changes.
 
 The [2026-09-01 local matrix](perf-evidence/2026-09-01-local-multiseed-wall-calibrated.md)

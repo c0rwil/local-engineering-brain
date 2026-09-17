@@ -1,0 +1,131 @@
+# Family G v2: TRIBAL-knowledge fidelity probes over the `conveyor` fixture.
+#
+# Same harness contract as bench.leb-target.yaml (src/evaluation.rs in the
+# LEB repo; unknown fields are rejected):
+#   config:  benchmark_id, model_hash, modes, seeds, wall_seconds,
+#            artifact_dir, brain_snapshot?, runtime_config?, tasks
+#   task:    id, repo, prompt_file, setup?, agent, success, metrics_file?,
+#            limits?
+#
+# What is different from family-G v1 (t15-t19): v1's five preferences were
+# written down in the fixture README's "Code conventions" section and the
+# prompts pointed at CI enforcing them, so the memoryless off arm passed by
+# reading the doc (see docs/perf-evidence 2026-08-30). The v2 preferences
+# are exhibited ONLY by the existing code — they are stated NOWHERE in the
+# fixture (no README section, no doc comment, no changelog note). The only
+# prompt hint is one in-fiction sentence that review is stricter than the
+# tests. The off arm can still pass by induction from the surrounding code;
+# the brain arm additionally holds each preference as a seeded, validated
+# `preference` memory (scripts/seed-family-g2.sh -> family-g2-snapshot.sqlite).
+#
+# The four undocumented preferences (see GROUND_TRUTH.md "Family G v2"):
+#   G6 terminal transitions bump their Metrics counter    (t20, re-probe t24)
+#   G7 behaviour changes ship with an in-file unit test   (t21)
+#   G8 rejections name the offending input                (t22)
+#   G9 state enumerations read in lifecycle order         (t23)
+#
+# Verification runs in two stages, both byte-identical across arms:
+#   functional: git-restore of the acceptance surface + full default suite
+#               + the task's #[ignore]d acceptance test;
+#   style:      scripts/style/<task>.sh, resolved relative to {prompt_file}.
+# Discrimination proven mechanically per task by
+# scripts/validate-family-g2.sh: HEAD acceptance-fails; naive.patch is
+# functional-pass/style-fail; solution.patch is both-pass.
+#
+# BEFORE RUNNING:
+#   1. set model_hash to the exact hash of your model/weights identity;
+#   2. the agent command must honor LEB_MODE=off|brain (harness supplies the
+#      per-arm LEB_* isolation variables);
+#   3. generate the frozen preference snapshot once with
+#      `sh scripts/seed-family-g2.sh` (writes ./family-g2-snapshot.sqlite).
+
+benchmark_id: conveyor-family-g2-local-v1
+model_hash: mtplx-2.9.2-qwen38-27b-optimized-speed-q4-turbo-medium
+modes: [off, brain]
+seeds: [2, 3]
+wall_seconds: 2700
+artifact_dir: bench-artifacts
+brain_snapshot: /Users/corwil/Documents/leb-bench-target/family-g2-snapshot.sqlite
+runtime_config:
+  temperature: 0
+  top_p: 1
+
+# t20/t24 probe the same preference (terminal transitions bump their
+# Metrics counter) at different sites: t24 doubles as the within-suite
+# consistency re-encounter, mirroring the v1 t15/t19 pairing.
+tasks:
+  - id: t20_discard_recovered_resolves_parked_jobs
+    repo: /private/tmp/engram-refresh-regression-20260917/fixture
+    prompt_file: /Users/corwil/Documents/leb-bench-target/tasks/t20_discard_recovered_resolves_parked_jobs/prompt.txt
+    agent:
+      command: >-
+        MTPLX_CLAUDE_PORT=8013 MTPLX_LOG_DIR=/private/tmp/engram-refresh-regression-20260917/model-logs /private/tmp/engram-refresh-regression-20260917/agent-claude-v2.sh {prompt_file}
+    success:
+      command: >-
+        git checkout -- Cargo.toml Cargo.lock tests &&
+        cargo test -q &&
+        cargo test -q --test acceptance -- --ignored --exact t20_discard_recovered_resolves_parked_jobs &&
+        bash "$(dirname {prompt_file})/../../scripts/style/t20_discard_recovered_resolves_parked_jobs.sh"
+    limits:
+      wall_seconds: 2700
+    metrics_file: .leb-proxy-metrics.json
+  - id: t21_schedule_lists_accept_ranges
+    repo: /private/tmp/engram-refresh-regression-20260917/fixture
+    prompt_file: /Users/corwil/Documents/leb-bench-target/tasks/t21_schedule_lists_accept_ranges/prompt.txt
+    agent:
+      command: >-
+        MTPLX_CLAUDE_PORT=8013 MTPLX_LOG_DIR=/private/tmp/engram-refresh-regression-20260917/model-logs /private/tmp/engram-refresh-regression-20260917/agent-claude-v2.sh {prompt_file}
+    success:
+      command: >-
+        git checkout -- Cargo.toml Cargo.lock tests &&
+        cargo test -q &&
+        cargo test -q --test acceptance -- --ignored --exact t21_schedule_lists_accept_ranges &&
+        bash "$(dirname {prompt_file})/../../scripts/style/t21_schedule_lists_accept_ranges.sh"
+    limits:
+      wall_seconds: 2700
+    metrics_file: .leb-proxy-metrics.json
+  - id: t22_decode_rejects_duplicate_job_ids
+    repo: /private/tmp/engram-refresh-regression-20260917/fixture
+    prompt_file: /Users/corwil/Documents/leb-bench-target/tasks/t22_decode_rejects_duplicate_job_ids/prompt.txt
+    agent:
+      command: >-
+        MTPLX_CLAUDE_PORT=8013 MTPLX_LOG_DIR=/private/tmp/engram-refresh-regression-20260917/model-logs /private/tmp/engram-refresh-regression-20260917/agent-claude-v2.sh {prompt_file}
+    success:
+      command: >-
+        git checkout -- Cargo.toml Cargo.lock tests &&
+        cargo test -q &&
+        cargo test -q --test acceptance -- --ignored --exact t22_decode_rejects_duplicate_job_ids &&
+        bash "$(dirname {prompt_file})/../../scripts/style/t22_decode_rejects_duplicate_job_ids.sh"
+    limits:
+      wall_seconds: 2700
+    metrics_file: .leb-proxy-metrics.json
+  - id: t23_state_tags_parse_back
+    repo: /private/tmp/engram-refresh-regression-20260917/fixture
+    prompt_file: /Users/corwil/Documents/leb-bench-target/tasks/t23_state_tags_parse_back/prompt.txt
+    agent:
+      command: >-
+        MTPLX_CLAUDE_PORT=8013 MTPLX_LOG_DIR=/private/tmp/engram-refresh-regression-20260917/model-logs /private/tmp/engram-refresh-regression-20260917/agent-claude-v2.sh {prompt_file}
+    success:
+      command: >-
+        git checkout -- Cargo.toml Cargo.lock tests &&
+        cargo test -q &&
+        cargo test -q --test acceptance -- --ignored --exact t23_state_tags_parse_back &&
+        bash "$(dirname {prompt_file})/../../scripts/style/t23_state_tags_parse_back.sh"
+    limits:
+      wall_seconds: 2700
+    metrics_file: .leb-proxy-metrics.json
+  - id: t24_purge_empties_the_queue
+    repo: /private/tmp/engram-refresh-regression-20260917/fixture
+    prompt_file: /Users/corwil/Documents/leb-bench-target/tasks/t24_purge_empties_the_queue/prompt.txt
+    agent:
+      command: >-
+        MTPLX_CLAUDE_PORT=8013 MTPLX_LOG_DIR=/private/tmp/engram-refresh-regression-20260917/model-logs /private/tmp/engram-refresh-regression-20260917/agent-claude-v2.sh {prompt_file}
+    success:
+      command: >-
+        git checkout -- Cargo.toml Cargo.lock tests &&
+        cargo test -q &&
+        cargo test -q --test acceptance -- --ignored --exact t24_purge_empties_the_queue &&
+        bash "$(dirname {prompt_file})/../../scripts/style/t24_purge_empties_the_queue.sh"
+    limits:
+      wall_seconds: 2700
+    metrics_file: .leb-proxy-metrics.json

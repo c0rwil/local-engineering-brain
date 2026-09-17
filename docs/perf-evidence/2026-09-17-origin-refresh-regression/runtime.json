@@ -1,0 +1,23 @@
+{
+  "source_commit": "3b6586868f6ee6b604c14251097c1b1e0f1e96cf",
+  "source_hash": "79e96819a4f43b74bacd20c8b9be6e17405d8494688402db77d13676899e6b01",
+  "binary_sha256": {
+    "engram": "7f92a8359f5f80fd8cac0f5b2034f16eb29f1e3ed5a6bce8b19d1e88ec1045d1",
+    "engramd": "c3402831949072586882caaadb8d49022710067a81bce33b4dfb751a6f891b66",
+    "engram-proxy": "690ef37d5ca6f000df35d82f9529d5d6088c9622a926b1e3c37bb7042636e2cd",
+    "engram-mcp": "571386f2644a311f36b001bd09e6695020928b8fe76577bf67bd28496acd07c3"
+  },
+  "hook_seeds": [
+    1,
+    2
+  ],
+  "sampling_caveat": "YAML sampling settings are descriptive, not enforced. Seeds identify paired repetitions; adapters do not forward them as model RNG seeds.",
+  "local_model": "mtplx-qwen38-27b-optimized-speed",
+  "local_model_port": 8013,
+  "local_walls_seconds": 2700,
+  "local_seeds": [
+    2,
+    3
+  ],
+  "model_file_manifest_sha256": "ae8ebf26dfb0cc726f9980d8c96613e51e877d9995d99ef4dcfabd221b3b43e5"
+}

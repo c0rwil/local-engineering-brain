@@ -1,0 +1,21 @@
+{
+  "/private/tmp/engram-refresh-regression-20260917/hooks.yaml": "db220e5e561f9c0bf291e55f4d98601ee6350be52d075cb0e453d5366fee82ea",
+  "/private/tmp/engram-refresh-regression-20260917/agent-claude-hooks.sh": "25c1041b9dac10091d16a025d91a167a64a5a32765da01a136d9f76d2eb7d672",
+  "/private/tmp/engram-refresh-regression-20260917/.synthetic-ack": "872de87bb74012ff9f172b8d843c1d2bf9a7afb251e6f2a4fb009e9b188f825c",
+  "/Users/corwil/Documents/leb-bench-target/family-g2-snapshot.sqlite": "04ce3a872fa11468d20d56eb61e38ac0f3522ceb4ccac39d4caff072edd7448d",
+  "/Users/corwil/Documents/leb-bench-target/tasks/t20_discard_recovered_resolves_parked_jobs/prompt.txt": "422797a641ad06c4918e2f33b5ed15c2f7841a8494d987d1535c11405ace6d53",
+  "/Users/corwil/Documents/leb-bench-target/tasks/t21_schedule_lists_accept_ranges/prompt.txt": "d7c53693251f96bc816b9c0359e81eb062c9be9e924cc790d205898f992cec3b",
+  "/Users/corwil/Documents/leb-bench-target/tasks/t22_decode_rejects_duplicate_job_ids/prompt.txt": "aab31bb5e8b703bd5111cd9c010963063aec082f015820bf169bee4ddfe6c94a",
+  "/Users/corwil/Documents/leb-bench-target/tasks/t23_state_tags_parse_back/prompt.txt": "6bcd6ad60f4da083b3148bf79d4f6b505c8fe02e637a12e442e1b55e1fcb6558",
+  "/Users/corwil/Documents/leb-bench-target/tasks/t24_purge_empties_the_queue/prompt.txt": "0755a47de83709e8e93ee71d7ac8a17c565e8bda24fa6b7ea6b79d960b9a7038",
+  "/Users/corwil/Documents/leb-bench-target/scripts/style/t20_discard_recovered_resolves_parked_jobs.sh": "7b5bd5a713375927e600aed717fa065a489a79fb241b5a218a46ed588609f137",
+  "/Users/corwil/Documents/leb-bench-target/scripts/style/t21_schedule_lists_accept_ranges.sh": "98f48caae78aa6bcff4f77d6c6b1fe251a70947edde2b371778b563d1e79a4a5",
+  "/Users/corwil/Documents/leb-bench-target/scripts/style/t22_decode_rejects_duplicate_job_ids.sh": "cbf908c4fbfcd9d2e9560eb0f2aa84ec54e645e93420768a661d830ff8a4cdd3",
+  "/Users/corwil/Documents/leb-bench-target/scripts/style/t23_state_tags_parse_back.sh": "5398db055035ef20ffe54e7f6de1cc7a84ab6f243e8dd2e6b9940f2f25ed4375",
+  "/Users/corwil/Documents/leb-bench-target/scripts/style/t24_purge_empties_the_queue.sh": "50a3bb93c879823c89f8a9a974a49c574b3c0456c379f3f6491d68fbd99a568e",
+  "/private/tmp/engram-refresh-regression-20260917/local.yaml": "0aafeecdb36d6ddf2bc1bbf21647b07d4b5609119f846716f22d1ca3c5d38325",
+  "/private/tmp/engram-refresh-regression-20260917/run-local.zsh": "09ca0bda847a4c3e4aa2ceb65cce05a1ec108759353e779d901418fc9bcaef18",
+  "/private/tmp/engram-refresh-regression-20260917/agent-claude-v2.sh": "517beb251060d329cf8bceba43b8213e9cafdf13ee5012c4c25dd4f9973f601a",
+  "/private/tmp/engram-refresh-regression-20260917/model-manifest.json": "ae8ebf26dfb0cc726f9980d8c96613e51e877d9995d99ef4dcfabd221b3b43e5",
+  "/private/tmp/engram-refresh-regression-20260917/run-hooks.zsh": "400103911e33b3594f7d087d7ab0d2c50e1235ba458d2c27a5d6c862ab4afabc"
+}

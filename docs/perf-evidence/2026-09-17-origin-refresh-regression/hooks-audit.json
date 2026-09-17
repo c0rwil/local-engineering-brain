@@ -1,0 +1,449 @@
+{
+  "implementation_commit": "3b65868",
+  "runtime": {
+    "source_commit": "3b6586868f6ee6b604c14251097c1b1e0f1e96cf",
+    "source_hash": "79e96819a4f43b74bacd20c8b9be6e17405d8494688402db77d13676899e6b01",
+    "binary_sha256": {
+      "engram": "7f92a8359f5f80fd8cac0f5b2034f16eb29f1e3ed5a6bce8b19d1e88ec1045d1",
+      "engramd": "c3402831949072586882caaadb8d49022710067a81bce33b4dfb751a6f891b66",
+      "engram-proxy": "690ef37d5ca6f000df35d82f9529d5d6088c9622a926b1e3c37bb7042636e2cd",
+      "engram-mcp": "571386f2644a311f36b001bd09e6695020928b8fe76577bf67bd28496acd07c3"
+    },
+    "hook_seeds": [
+      1,
+      2
+    ],
+    "sampling_caveat": "YAML sampling settings are descriptive, not enforced. Seeds identify paired repetitions; adapters do not forward them as model RNG seeds.",
+    "local_model": "mtplx-qwen38-27b-optimized-speed",
+    "local_model_port": 8013,
+    "local_walls_seconds": 2700,
+    "local_seeds": [
+      2,
+      3
+    ],
+    "model_file_manifest_sha256": "ae8ebf26dfb0cc726f9980d8c96613e51e877d9995d99ef4dcfabd221b3b43e5"
+  },
+  "family": "hooks",
+  "cells": [
+    {
+      "task_id": "t20_discard_recovered_resolves_parked_jobs",
+      "mode": "off",
+      "seed": 1,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 65444,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 0,
+      "context_tokens": 0,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 12,
+      "artifact_sha256": {
+        "validation.stdout": "f1db8ff354c71a0c685062d5769d8833a3c8b34f35c57b9a94a7c925414ede69",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "98133893c711273ca8e6a8840c1167b29426d94c6709cfc28989976ee89f6911"
+      }
+    },
+    {
+      "task_id": "t20_discard_recovered_resolves_parked_jobs",
+      "mode": "brain",
+      "seed": 1,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 127901,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 2222,
+      "context_tokens": 556,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 16,
+      "artifact_sha256": {
+        "validation.stdout": "50b26c09be95d28d501c29319907f38ecb59293da67c4552bb36e7a9a1988c83",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "b430c28750c02aac1eaa009eb30fdb1da7649ed6ba184094a7f31c8723421a45"
+      }
+    },
+    {
+      "task_id": "t20_discard_recovered_resolves_parked_jobs",
+      "mode": "brain",
+      "seed": 2,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 84770,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 2222,
+      "context_tokens": 556,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 13,
+      "artifact_sha256": {
+        "validation.stdout": "50b26c09be95d28d501c29319907f38ecb59293da67c4552bb36e7a9a1988c83",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "a93859158e0baf98ebcdc1b7cb305a504d9b56598ca0710c75efc83fd7049ed3"
+      }
+    },
+    {
+      "task_id": "t20_discard_recovered_resolves_parked_jobs",
+      "mode": "off",
+      "seed": 2,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 68534,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 0,
+      "context_tokens": 0,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 12,
+      "artifact_sha256": {
+        "validation.stdout": "f1db8ff354c71a0c685062d5769d8833a3c8b34f35c57b9a94a7c925414ede69",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "79c3e5d4099e5b042b8d9dfbc470bcefb263b008baed49cd0bc9985eb84717e2"
+      }
+    },
+    {
+      "task_id": "t21_schedule_lists_accept_ranges",
+      "mode": "brain",
+      "seed": 1,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 75981,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 2222,
+      "context_tokens": 556,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 7,
+      "artifact_sha256": {
+        "validation.stdout": "6423242ecebff6e00c051e94dad9f5d1f256bc23c524ff73d24a69e6cc21491e",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "3e3076fc313d20a42868a796d0d8ec1a1e310935885d4db2e52b03a8a6a8ad42"
+      }
+    },
+    {
+      "task_id": "t21_schedule_lists_accept_ranges",
+      "mode": "off",
+      "seed": 1,
+      "success": false,
+      "timed_out": false,
+      "wall_ms": 87640,
+      "agent_exit_code": 0,
+      "validation_exit_code": 1,
+      "context_bytes": 0,
+      "context_tokens": 0,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 9,
+      "artifact_sha256": {
+        "validation.stdout": "b856ce8fca85fce332a110030ad722c3fc4c8a8d3ff13f5a813c76f782158eab",
+        "validation.stderr": "425d10e1774934ca880f31c022ec43081692bedd9477f522a9f27d31b2185259",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "cd8b0b410c50237253bca0c2814862878fc5c1e8584688e6bdfcedbc203ec790"
+      }
+    },
+    {
+      "task_id": "t21_schedule_lists_accept_ranges",
+      "mode": "off",
+      "seed": 2,
+      "success": false,
+      "timed_out": false,
+      "wall_ms": 125664,
+      "agent_exit_code": 0,
+      "validation_exit_code": 1,
+      "context_bytes": 0,
+      "context_tokens": 0,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 12,
+      "artifact_sha256": {
+        "validation.stdout": "b856ce8fca85fce332a110030ad722c3fc4c8a8d3ff13f5a813c76f782158eab",
+        "validation.stderr": "425d10e1774934ca880f31c022ec43081692bedd9477f522a9f27d31b2185259",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "ae142e9f2b4cc727b18b9f0fbc5165eed4f14ef82a94deca5c1a2e2588b048bc"
+      }
+    },
+    {
+      "task_id": "t21_schedule_lists_accept_ranges",
+      "mode": "brain",
+      "seed": 2,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 125063,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 2222,
+      "context_tokens": 556,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 8,
+      "artifact_sha256": {
+        "validation.stdout": "90e7613e97d57b5b2aa0d58e404d0371bd64fbc0a4d8c7e5e8e50fdda01bd2ce",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "b276b4fc28140352b096a7baca8e1e9e4b39c8d78bb84dd85a41865d636830df"
+      }
+    },
+    {
+      "task_id": "t22_decode_rejects_duplicate_job_ids",
+      "mode": "off",
+      "seed": 1,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 101598,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 0,
+      "context_tokens": 0,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 13,
+      "artifact_sha256": {
+        "validation.stdout": "7abfef7f6b4f331ccdf0f0faa80fcb1f9b50e2661b8c373a62f3bc6deee50c62",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "e9e30b01a7acec1f2dcfc01ed1910d170b542f4bb213ce13255f0ec2bc592c9b"
+      }
+    },
+    {
+      "task_id": "t22_decode_rejects_duplicate_job_ids",
+      "mode": "brain",
+      "seed": 1,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 47500,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 2222,
+      "context_tokens": 556,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 7,
+      "artifact_sha256": {
+        "validation.stdout": "d33ce40c3361b2849f38092c36da11e3b59eea5baa0d8caf227da9ff2fade9fd",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "ae125a130ac3ea719a1419faec21192d8b9d654c74c94572415f5eac9e11bcab"
+      }
+    },
+    {
+      "task_id": "t22_decode_rejects_duplicate_job_ids",
+      "mode": "brain",
+      "seed": 2,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 58472,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 2222,
+      "context_tokens": 556,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 8,
+      "artifact_sha256": {
+        "validation.stdout": "d33ce40c3361b2849f38092c36da11e3b59eea5baa0d8caf227da9ff2fade9fd",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "eaa1c229525be66625b14231127012874d7977f3162cf69f10ea34c03cd0e14d"
+      }
+    },
+    {
+      "task_id": "t22_decode_rejects_duplicate_job_ids",
+      "mode": "off",
+      "seed": 2,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 82745,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 0,
+      "context_tokens": 0,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 12,
+      "artifact_sha256": {
+        "validation.stdout": "7abfef7f6b4f331ccdf0f0faa80fcb1f9b50e2661b8c373a62f3bc6deee50c62",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "972d3c4e8d3ec1d9afd01e64eaf4e1afcb519079e247f1cca6f4eb52c54933e5"
+      }
+    },
+    {
+      "task_id": "t23_state_tags_parse_back",
+      "mode": "brain",
+      "seed": 1,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 95915,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 2222,
+      "context_tokens": 556,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 10,
+      "artifact_sha256": {
+        "validation.stdout": "1bec01c4e3463e7d6b32aba87fce1681cb6aeae76a781572c8585f16f58a3e1a",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "5237a5de2353aaac163c11ffcefadb29038d8b51d9743d0b09a7f461808c9867"
+      }
+    },
+    {
+      "task_id": "t23_state_tags_parse_back",
+      "mode": "off",
+      "seed": 1,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 222007,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 0,
+      "context_tokens": 0,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 20,
+      "artifact_sha256": {
+        "validation.stdout": "ca1c9c19d8635892e4cb43e4efbb71a4f240560020a955108d102e654a45ff10",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "c28c64f50bcd8bbf714699ba7803b9a59bbbc3a5558cc05a9473f54bd4881cad"
+      }
+    },
+    {
+      "task_id": "t23_state_tags_parse_back",
+      "mode": "off",
+      "seed": 2,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 120115,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 0,
+      "context_tokens": 0,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 10,
+      "artifact_sha256": {
+        "validation.stdout": "ca1c9c19d8635892e4cb43e4efbb71a4f240560020a955108d102e654a45ff10",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "a563ee44b323e7c06729b9fb5080d5346956dd85eae6eadd59bc3ee93a37ec16"
+      }
+    },
+    {
+      "task_id": "t23_state_tags_parse_back",
+      "mode": "brain",
+      "seed": 2,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 77490,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 2222,
+      "context_tokens": 556,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 8,
+      "artifact_sha256": {
+        "validation.stdout": "1bec01c4e3463e7d6b32aba87fce1681cb6aeae76a781572c8585f16f58a3e1a",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "055fb39b3c863bbef0c3eb60c0953f59dc7282ab9ae43580f0ef6d18a21b09a7"
+      }
+    },
+    {
+      "task_id": "t24_purge_empties_the_queue",
+      "mode": "off",
+      "seed": 1,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 82662,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 0,
+      "context_tokens": 0,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 13,
+      "artifact_sha256": {
+        "validation.stdout": "7e485ce4cba791efd562d944f7e9e976f089989d210b36cd2ccedd6f071095d7",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "dbabf8926d8552127ad8eb3cb659a78ca34dffbda3c67f7cabe3156965951c80"
+      }
+    },
+    {
+      "task_id": "t24_purge_empties_the_queue",
+      "mode": "brain",
+      "seed": 1,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 100760,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 2222,
+      "context_tokens": 556,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 13,
+      "artifact_sha256": {
+        "validation.stdout": "4c539cb001037871099772994aae15f1008835ae8a33cee804d90177c535e625",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "b5a1d0a009cd51c3ad7d7f35f66d1aae38a52d1214ee25426907375de2260253"
+      }
+    },
+    {
+      "task_id": "t24_purge_empties_the_queue",
+      "mode": "brain",
+      "seed": 2,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 93689,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 2222,
+      "context_tokens": 556,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 13,
+      "artifact_sha256": {
+        "validation.stdout": "4c539cb001037871099772994aae15f1008835ae8a33cee804d90177c535e625",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "44d57d5be0aae748f09f01b53ebc6ab98dce4327c80ea66e8889aa176a2c1591"
+      }
+    },
+    {
+      "task_id": "t24_purge_empties_the_queue",
+      "mode": "off",
+      "seed": 2,
+      "success": true,
+      "timed_out": false,
+      "wall_ms": 90159,
+      "agent_exit_code": 0,
+      "validation_exit_code": 0,
+      "context_bytes": 0,
+      "context_tokens": 0,
+      "mcp_calls": 0,
+      "engram_cli_calls": 0,
+      "tool_calls": 14,
+      "artifact_sha256": {
+        "validation.stdout": "7e485ce4cba791efd562d944f7e9e976f089989d210b36cd2ccedd6f071095d7",
+        "validation.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "agent.stdout": "049b80ba6bb241e2277040eaa5076e2d4fcd36e1c790e50b9d1a589c9cc2a2cd"
+      }
+    }
+  ]
+}
