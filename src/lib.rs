@@ -26,6 +26,7 @@ pub mod linkscan;
 pub mod mcp;
 pub mod memory;
 pub mod metrics;
+pub mod product;
 pub mod projects;
 pub mod proxy;
 pub mod retrieval;

@@ -424,6 +424,35 @@ impl MemoryStore {
         self.change_state(id, current.epistemic_state, status, reason)
     }
 
+    /// Exclude time-bounded knowledge after its explicitly recorded expiry.
+    /// # Errors
+    /// Returns storage or invalid id errors.
+    pub(crate) fn expired_ids(
+        &self,
+        project_id: &ProjectId,
+    ) -> Result<std::collections::BTreeSet<MemoryId>> {
+        self.database.with_reader(|c| {
+            let mut s=c.prepare("SELECT m.id FROM memories m JOIN memory_expiry e ON e.memory_id=m.id WHERE m.project_id=?1 AND e.expires_at_ms<=?2")?;
+            let ids=s.query_map(params![project_id.as_str(),unix_time_ms()],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+            ids.iter().map(|id|MemoryId::parse(id)).collect()
+        })
+    }
+
+    /// Record an explicit same-project contradiction and quarantine the old claim.
+    /// # Errors
+    /// Returns invalid scope/state or storage errors.
+    pub fn mark_contradicted(&self, id: &MemoryId, replacement: &MemoryId) -> Result<()> {
+        let now = unix_time_ms();
+        self.database.write_immediate(|tx| {
+            let (project_id, state, _) = memory_state(tx,id)?;
+            let (replacement_project,replacement_state,replacement_status) = memory_state(tx,replacement)?;
+            if id==replacement || replacement_project!=project_id || replacement_state!=EpistemicState::Validated || replacement_status!=MemoryStatus::Active { return Err(Error::Config("contradiction requires a different validated memory in the same project".to_owned())); }
+            tx.execute("UPDATE memories SET status='contradicted',contradicted_by=?2,known_to_ms=?3,updated_at_ms=?3 WHERE id=?1",params![id.as_str(),replacement.as_str(),now])?;
+            crate::semantic::delete_memory_vector(tx,id)?;
+            append_generated_in_transaction(tx,&DomainEvent::MemoryStateChanged {project_id,memory_id:id.clone(),epistemic_state:state.as_str().to_owned(),status:"contradicted".to_owned(),reason:format!("explicit_review_contradiction:{replacement}")},now)
+        })
+    }
+
     /// Detect symbol digest drift and quarantine affected active memories.
     ///
     /// The report distinguishes memories that had already been compiled into
@@ -596,8 +625,8 @@ impl MemoryStore {
                     orphaned.push(digest);
                 }
             }
-            let deleted =
-                transaction.execute("DELETE FROM memories WHERE id = ?1", [id.as_str()])?;
+            transaction.execute("UPDATE lesson_reviews SET claim='[PURGED]',normalized_claim='[PURGED]:' || id,rationale='',evidence_ids_json='[]',memory_id=NULL,status='rejected' WHERE memory_id=?1",[id.as_str()])?;
+            let deleted = transaction.execute("DELETE FROM memories WHERE id = ?1", [id.as_str()])?;
             if deleted != 1 {
                 return Err(Error::Config(format!("unknown memory `{id}`")));
             }

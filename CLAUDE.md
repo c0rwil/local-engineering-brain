@@ -23,7 +23,8 @@ path, ever.
 | Graph views | web defaults to fetched origin/main (shadow projects, `derived_view` metadata); local-checkout view via header toggle; agent context always local |
 | Architecture facts (hosting, storage, role) | `engram fact set hosting.base_url api.example.com --path <repo>` / `engram fact list` — facts lead the stable prefix, feed hostname link inference, render in the vault |
 | Workspace encyclopedia (browser UI) | always on at http://127.0.0.1:11436 while the daemon runs (`[web]` config); `engram web` for a custom port. Refresh buttons index origin/main by default |
-| Architecture guide (LLM synthesis) | `engram architect --claude` (opus via claude CLI) or `--model <m>` (local runtime); guide staleness tracked by dossier digest |
+| Living product and flows | `engram product show` / `schema` / `bundle ENTITY TASK` / `impact PROJECT --file PATH`; browser Product, Flows, Changes and Knowledge tabs |
+| Architecture guide (LLM synthesis) | `engram architect --claude` (opus via claude CLI) or `--model <m>` (local runtime); SQLite-backed guide; staleness includes indexed source-content digests |
 | Link repos (cross-repo context) | `engram link add <target> --path <repo> --relation uses` / `engram link list` / auto-discovery: `engram link scan [--apply]` (definitive manifest deps auto-link on every `engram index`) |
 | Ask the workspace | `engram ask "<question>" --path <repo> --claude` (retrieval over memories/facts/symbols/doc sections, cited synthesis; `--dry-run` prints the evidence pack) |
 | Session relay | `engram relay board` / `engram relay send <session\|all> "msg"` — delivery at recipient's next prompt via hooks |
@@ -123,6 +124,6 @@ and score it as failure (wall-calibration evidence 2026-08-31).
 Brain-off mode is the control group and must remain semantically untouched
 (spec P10). The evaluation harness (`src/evaluation.rs`, `engram eval run`)
 executes paired off/brain trials in isolated repo copies with per-arm
-databases and sockets. Only fixture smoke runs exist so far — no real-model
-benchmark has been recorded yet. When one is, commit the evidence under
-`docs/perf-evidence/` with date-and-commit filenames.
+databases and sockets. Published results and limitations are in `docs/BENCHMARKS.md`. Commit new evidence
+under `docs/perf-evidence/` with dated inputs, isolation checks and failed trials
+retained in the denominators.

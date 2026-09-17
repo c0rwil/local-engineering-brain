@@ -408,7 +408,7 @@ fn normalize_host(value: &str) -> Option<String> {
 
 /// Search the repo's tracked-looking text files for other services'
 /// declared hostnames. A source literal naming another service's domain is
-/// the repo declaring that it calls that service — definitive evidence.
+/// only a discovery hint: documentation and examples can contain the same host.
 fn scan_hostnames(root: &Path, known: &[KnownProject], candidates: &mut Vec<LinkCandidate>) {
     const MAX_FILES: usize = 3_000;
     const MAX_FILE_BYTES: u64 = 262_144;
@@ -472,7 +472,7 @@ fn scan_hostnames(root: &Path, known: &[KnownProject], candidates: &mut Vec<Link
                     "references host `{}` in {count} file(s), e.g. `{example}`",
                     project.hosts.join("`/`")
                 ),
-                definitive: true,
+                definitive: false,
             });
         }
     }
@@ -622,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn hostname_facts_yield_definitive_api_links() {
+    fn hostname_facts_propose_api_links_without_auto_applying() {
         let temp = TempDir::new().expect("temp");
         let database = Database::open(temp.path().join("brain.sqlite")).expect("db");
         let registry = ProjectRegistry::new(database.clone());
@@ -647,7 +647,12 @@ mod tests {
 
         let candidates = scan(&database, &client, &root_client).expect("scan");
         assert_eq!(candidates.len(), 1, "{candidates:?}");
-        assert!(candidates[0].definitive);
+        assert!(!candidates[0].definitive);
+        assert!(
+            apply_definitive(&database, &client, &candidates)
+                .expect("apply")
+                .is_empty()
+        );
         assert_eq!(candidates[0].relation, "calls-api-of");
         assert_eq!(candidates[0].target_project_id, backend);
         assert!(candidates[0].evidence.contains("androidagent.example.tech"));

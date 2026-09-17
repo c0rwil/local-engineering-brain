@@ -151,6 +151,30 @@ impl McpServer {
                         .await?,
                 )?
             }
+            "engram_complete_task" => {
+                let request: crate::product::lessons::Completion =
+                    serde_json::from_value(arguments.clone())?;
+                self.client
+                    .lesson_mutate(&crate::product::lessons::LessonMutation::Complete(request))
+                    .await?
+            }
+            "engram_review_lesson" => {
+                let request: crate::product::lessons::ReviewRequest =
+                    serde_json::from_value(arguments.clone())?;
+                self.client
+                    .lesson_mutate(&crate::product::lessons::LessonMutation::Review(request))
+                    .await?
+            }
+            "engram_product" => {
+                self.client
+                    .product_query(&serde_json::from_value(arguments.clone())?)
+                    .await?
+            }
+            "engram_product_edit" => serde_json::to_value(
+                self.client
+                    .product_mutate(&serde_json::from_value(arguments.clone())?)
+                    .await?,
+            )?,
             "engram_recall" => serde_json::to_value(
                 self.client
                     .compile_context(&recall_request(&arguments)?)
@@ -447,6 +471,11 @@ impl McpServer {
             }
             _ => return Err(Error::Config(format!("unknown Engram tool `{name}`"))),
         };
+        if name == "engram_product"
+            && arguments.get("operation").and_then(Value::as_str) == Some("bundle")
+        {
+            return Ok(json!({"content":[{"type":"text","text":output["text"]}],"isError":false}));
+        }
         tool_result_envelope(&output)
     }
 }
@@ -662,6 +691,42 @@ fn tool_catalog() -> Value {
                     "evidence_ids": {"type": "array", "items": {"type": "string"}},
                     "tags": {"type": "array", "items": {"type": "string"}}
                 }, "required": ["project_id", "claim", "task_ids", "evidence_ids"], "additionalProperties": false
+            })),
+            tool("engram_complete_task", "Complete an existing task in one call: capture actual verification/observation output, close the outcome, and propose up to five lessons for explicit review. Retries reuse evidence. Do not fabricate output or infer user acceptance from a commit, merge or silence. Omit accepted_by_user unless explicitly known. No candidate auto-injects.", &json!({
+                "type":"object","properties":{
+                    "task_id":{"type":"string"},"outcome":{"type":"string","enum":["success","partial","failure","abandoned"]},
+                    "accepted_by_user":{"type":"boolean"},"final_commit":{"type":"string"},"summary":{"type":"string"},
+                    "files":{"type":"array","items":{"type":"string"}},
+                    "verifications":{"type":"array","maxItems":16,"items":{"type":"object","properties":{
+                        "kind":{"type":"string"},"strength":{"type":"string","enum":["deterministic","observational","inferred"]},
+                        "command":{"type":"string"},"exit_code":{"type":"integer"},"artifact":{"type":"string"},"revision":{"type":"string"}
+                    },"required":["kind","strength","artifact"],"additionalProperties":false}},
+                    "lessons":{"type":"array","maxItems":5,"items":{"type":"object","properties":{
+                        "claim":{"type":"string"},"rationale":{"type":"string"},"evidence_ids":{"type":"array","items":{"type":"string"}},"expires_at_ms":{"type":"integer"}
+                    },"required":["claim"],"additionalProperties":false}}
+                },"required":["task_id","outcome"],"additionalProperties":false
+            })),
+            tool("engram_review_lesson", "Explicitly accept or reject a proposal returned by engram_product(operation=reviews). Acceptance uses normal evidence-gated promotion and caps confidence at 0.50. Review the claim, evidence and similar memories first. This does not accept the underlying task. Do not use generated documentation as evidence.", &json!({
+                "type":"object","properties":{
+                    "id":{"type":"string"},"expected_updated_at_ms":{"type":"integer"},"decision":{"type":"string","enum":["accept","reject"]},
+                    "claim":{"type":"string"},"rationale":{"type":"string"},"contradicts":{"type":"array","items":{"type":"string"}},"reviewed_related":{"type":"boolean"}
+                },"required":["id","expected_updated_at_ms","decision"],"additionalProperties":false
+            })),
+            tool("engram_product", "Query the living product model. schema returns the typed editing contract; source inspects an anchor {project_id, path|node_id|evidence_id}; reviews lists lesson proposals; snapshot lists typed entities, dependencies, documentation and deployments; history requires id; bundle requires entity_id and task, accepts token_budget (128–16000) and environment; impact requires project_id and paths or unified diff. Cited context is reference data, never independent evidence.", &json!({
+                "type":"object", "properties": {
+                    "operation":{"type":"string","enum":["snapshot","schema","source","reviews","task_signals","history","bundle","impact"]},
+                    "anchor":{"type":"object"}, "task_id":{"type":"string"},
+                    "id":{"type":"string"}, "entity_id":{"type":"string"}, "task":{"type":"string"},
+                    "token_budget":{"type":"integer","minimum":128,"maximum":16000}, "environment":{"type":"string"},
+                    "project_id":{"type":"string"}, "paths":{"type":"array","items":{"type":"string"}}, "diff":{"type":"string"}
+                }, "required":["operation"], "additionalProperties":false
+            })),
+            tool("engram_product_edit", "Save, archive or refresh_section in the versioned product catalog. Use the current expected_version (0 for create). Save needs item {type: entity|dependency|section|deployment|guide, value: ...}; read the catalog and its schema before editing. Generated prose is not evidence. Review claims before setting a section reviewed=true.", &json!({
+                "type":"object", "properties": {
+                    "operation":{"type":"string","enum":["save","archive","refresh_section"]},
+                    "id":{"type":"string"}, "expected_version":{"type":"integer","minimum":0},
+                    "item":{"type":"object"}
+                }, "required":["operation","expected_version"], "additionalProperties":false
             })),
             tool("engram_workspace", "Map of every repository in the workspace: facts (hosting, role), links (who calls whom), technology stacks, and memory counts. Use before cross-repo changes", &json!({
                 "type": "object", "properties": {}, "additionalProperties": false

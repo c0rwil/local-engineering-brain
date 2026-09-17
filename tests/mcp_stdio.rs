@@ -99,6 +99,34 @@ fn mcp_binary_autostarts_daemon_and_serves_json_rpc() {
             .expect("guidance")
             .contains("Promote")
     );
+    let catalog = call("engram_product", json!({"operation":"snapshot"}));
+    assert!(catalog["structuredContent"]["repositories"].is_array());
+    let schema = call("engram_product", json!({"operation":"schema"}));
+    assert!(schema["structuredContent"]["oneOf"].is_array());
+    let entity = call(
+        "engram_product_edit",
+        json!({"operation":"save","id":"fixture-product","expected_version":0,"item":{"type":"entity","value":{"kind":"product","name":"Fixture","project_id":project_id}}}),
+    );
+    assert_eq!(entity["structuredContent"]["version"], 1);
+    let bundle = call(
+        "engram_product",
+        json!({"operation":"bundle","entity_id":"fixture-product","task":"inspect traffic","token_budget":256}),
+    );
+    assert!(
+        engram::context::estimate_tokens(bundle["content"][0]["text"].as_str().unwrap()) <= 256
+    );
+    assert!(
+        bundle.get("structuredContent").is_none(),
+        "do not duplicate context or emit unbudgeted metadata to the agent"
+    );
+    let completion = call(
+        "engram_complete_task",
+        json!({"task_id":task_id,"outcome":"success","lessons":[{"claim":"Traffic allocation must be checked after a deployment","evidence_ids":[evidence_id]}]}),
+    );
+    assert_eq!(
+        completion["structuredContent"]["reviews"][0]["status"],
+        "pending"
+    );
     drop(stdin);
     let status = child.wait().expect("MCP exits on EOF");
     assert!(status.success());

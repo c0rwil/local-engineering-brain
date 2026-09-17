@@ -848,7 +848,11 @@ fn parse_strength(value: &str) -> Result<EvidenceStrength> {
 }
 
 /// Reject malformed evidence kinds and command results missing provenance.
-fn validate_evidence_kind(kind: &str, command: Option<&str>, exit_code: Option<i32>) -> Result<()> {
+pub(crate) fn validate_evidence_kind(
+    kind: &str,
+    command: Option<&str>,
+    exit_code: Option<i32>,
+) -> Result<()> {
     if kind.is_empty()
         || kind.len() > 64
         || !kind

@@ -204,11 +204,17 @@ enum Commands {
         /// through your authenticated Claude session.
         #[arg(long)]
         claude: bool,
-        /// Write here instead of `<vault root>/ARCHITECTURE.md`.
+        /// Also export the SQLite-backed guide to this Markdown file.
         #[arg(long)]
         out: Option<PathBuf>,
         #[arg(long)]
         json: bool,
+    },
+
+    /// Product catalog, living documentation, task bundles and lesson review.
+    Product {
+        #[command(subcommand)]
+        action: ProductAction,
     },
 
     /// Curated per-project architecture facts (hosting, storage, role).
@@ -370,6 +376,44 @@ enum Commands {
     InternalCrashTransaction {
         #[arg(long)]
         ready: PathBuf,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum ProductAction {
+    /// Print the typed catalog editing schema.
+    Schema,
+    /// Read verification, delivery and acceptance signals for a task.
+    Signals { task_id: String },
+    /// Show the catalog or lesson inbox as JSON.
+    Show {
+        #[arg(long)]
+        reviews: bool,
+    },
+    /// Apply a versioned catalog mutation from a JSON file.
+    Apply { file: PathBuf },
+    /// Complete a task, review a lesson or record a delivery signal from JSON.
+    Lesson { file: PathBuf },
+    /// List immutable revisions of one record.
+    History { id: String },
+    /// Compile a bounded context bundle for a product entity or flow.
+    Bundle {
+        entity: String,
+        task: String,
+        #[arg(long, default_value_t = 2000)]
+        budget: u32,
+        #[arg(long)]
+        environment: Option<String>,
+    },
+    /// Analyze changed paths or a unified diff without executing it.
+    Impact {
+        project: String,
+        #[arg(long)]
+        file: Vec<String>,
+        #[arg(long)]
+        diff: Option<PathBuf>,
+        #[arg(long)]
+        environment: Option<String>,
     },
 }
 
@@ -758,6 +802,9 @@ fn run(cli: Cli) -> Result<bool> {
     };
     let socket_override = cli.socket;
     match cli.command {
+        Commands::Product { action } => {
+            run_product(&overrides, socket_override.as_deref(), &action)
+        }
         Commands::Doctor { json } => run_doctor(&overrides, socket_override.as_deref(), json),
         Commands::Status { path, json } => {
             run_status(&overrides, socket_override.as_deref(), &path, json)
@@ -2011,17 +2058,21 @@ fn run_architect(
         ))?;
         model
     };
-    let destination = out.map_or_else(
-        || config.vault.root.join("ARCHITECTURE.md"),
-        Path::to_path_buf,
-    );
-    if let Some(parent) = destination.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| engram::Error::Config(format!("architecture output dir: {error}")))?;
-    }
     let document = engram::architect::guide_document(&model, &dossier, &synthesized);
-    std::fs::write(&destination, &document)
-        .map_err(|error| engram::Error::Config(format!("architecture output: {error}")))?;
+    save_product_guide(&client(&config), &model, &dossier, &document)?;
+    let destination = out.map_or_else(|| config.storage.db_path.clone(), Path::to_path_buf);
+    if let Some(out) = out {
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| engram::Error::Config(e.to_string()))?;
+        }
+        std::fs::write(out, &document).map_err(|e| engram::Error::Config(e.to_string()))?;
+    }
+    if config.vault.enabled {
+        std::fs::create_dir_all(&config.vault.root)
+            .map_err(|e| engram::Error::Config(e.to_string()))?;
+        std::fs::write(config.vault.root.join("ARCHITECTURE.md"), &document)
+            .map_err(|e| engram::Error::Config(e.to_string()))?;
+    }
     if json {
         println!(
             "{}",
@@ -2142,10 +2193,22 @@ While working (substantive tasks, not trivial edits):
 3. When tests/builds/lints run, `engram_record_evidence` with the command and
    exit code (kind `test_result`/`lint_result`..., strength `deterministic`).
    Record FAILING runs too - fail-then-pass pairs teach conventions.
-4. On completion, `engram_mark_outcome` (outcome + whether the user accepted).
+4. On completion, prefer `engram_complete_task`: supply actual test/build or
+   operational output, the outcome, touched files and up to five reusable lessons.
+   This captures evidence, closes the task and queues one review inbox. Omit
+   `accepted_by_user` unless the user explicitly accepted; passing tests, a commit,
+   a PR merge and silence are separate signals.
 
-After accepted work that surfaced a durable rule:
-- `engram_learn` with a claim phrased for a future engineer, linking the task
+For product context and cross-repository work:
+- `engram_product` with operation `snapshot` shows capabilities, services, flows
+  and contracts. Operation `bundle` compiles a cited, token-bounded task context;
+  operation `impact` accepts changed paths or a unified diff and distinguishes
+  direct source intersections from possible downstream impact.
+- Product intent and generated documentation are reference data, never evidence.
+
+After successful work that surfaced a durable rule:
+- Review proposed lessons in the web Knowledge inbox, or use the stepwise
+  `engram_learn` with a claim phrased for a future engineer, linking the task
   and its passing evidence. Candidates never inject until promoted, so err on
   the side of recording.
 - If a failed approach was instructive, it is already captured by the failed
@@ -3131,9 +3194,13 @@ fn run_onboard(
             Err(error) => println!("  ✗ {name}: {error}"),
         }
     }
-    println!("Building the vault…");
-    let report =
-        block_on(patient.build_vault(&engram::daemon::VaultBuildRequest { project_id: None }))?;
+    let report = if config.vault.enabled {
+        Some(block_on(patient.build_vault(
+            &engram::daemon::VaultBuildRequest { project_id: None },
+        ))?)
+    } else {
+        None
+    };
     if claude {
         println!("Synthesizing the architecture guide via claude…");
         let dossier = block_on(patient.architect_dossier())?;
@@ -3141,8 +3208,11 @@ fn run_onboard(
         let synthesized =
             engram::architect::synthesize_with_claude_cli("claude-opus-4-8", &prompt)?;
         let document = engram::architect::guide_document("claude-opus-4-8", &dossier, &synthesized);
-        std::fs::write(config.vault.root.join("ARCHITECTURE.md"), document)
-            .map_err(|error| engram::Error::Config(format!("guide write: {error}")))?;
+        save_product_guide(&patient, "claude-opus-4-8", &dossier, &document)?;
+        if config.vault.enabled {
+            std::fs::write(config.vault.root.join("ARCHITECTURE.md"), document)
+                .map_err(|error| engram::Error::Config(format!("guide export: {error}")))?;
+        }
     }
     let snapshot = block_on(patient.workspace())?;
     if json {
@@ -3160,7 +3230,10 @@ fn run_onboard(
         }
         println!(
             "\nVault: {}\nBrowser: http://127.0.0.1:{}",
-            report.root, config.web.port
+            report
+                .as_ref()
+                .map_or("disabled (optional export)", |r| r.root.as_str()),
+            config.web.port
         );
     }
     Ok(true)
@@ -3632,4 +3705,91 @@ const fn status_label(status: engram::doctor::CheckStatus) -> &'static str {
         engram::doctor::CheckStatus::Warning => "WARN",
         engram::doctor::CheckStatus::Fail => "FAIL",
     }
+}
+
+fn save_product_guide(
+    client: &DaemonClient,
+    model: &str,
+    dossier: &str,
+    document: &str,
+) -> Result<()> {
+    let record: Option<engram::product::Record> = serde_json::from_value(block_on(
+        client.product_query(&engram::product::Query::Guide),
+    )?)?;
+    block_on(client.product_mutate(&engram::product::Mutation::Save {
+        id: Some("workspace-guide".to_owned()),
+        expected_version: record.map_or(0, |r| r.version),
+        item: Box::new(engram::product::Item::Guide(engram::product::Guide {
+            content: document.to_owned(),
+            model: model.to_owned(),
+            dossier_digest: engram::architect::stable_digest(dossier),
+        })),
+    }))?;
+    Ok(())
+}
+
+fn run_product(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    action: &ProductAction,
+) -> Result<bool> {
+    use engram::product::{BundleRequest, ImpactRequest, Query};
+    let mut config = Config::load_for(None, overrides)?;
+    apply_socket_override(&mut config, socket)?;
+    require_daemon(&config)?;
+    let client = client(&config);
+    let read = |path: &Path| -> Result<String> {
+        std::fs::read_to_string(path)
+            .map_err(|e| engram::Error::Config(format!("{}: {e}", path.display())))
+    };
+    let result = match action {
+        ProductAction::Apply { file } => serde_json::to_value(block_on(
+            client.product_mutate(&serde_json::from_str(&read(file)?)?),
+        )?)?,
+        ProductAction::Lesson { file } => {
+            block_on(client.lesson_mutate(&serde_json::from_str(&read(file)?)?))?
+        }
+        _ => {
+            let query = match action {
+                ProductAction::Schema => Query::Schema,
+                ProductAction::Signals { task_id } => Query::TaskSignals {
+                    task_id: TaskId::parse(task_id)?,
+                },
+                ProductAction::Show { reviews } => {
+                    if *reviews {
+                        Query::Reviews
+                    } else {
+                        Query::Snapshot
+                    }
+                }
+                ProductAction::History { id } => Query::History { id: id.clone() },
+                ProductAction::Bundle {
+                    entity,
+                    task,
+                    budget,
+                    environment,
+                } => Query::Bundle(BundleRequest {
+                    entity_id: entity.clone(),
+                    task: task.clone(),
+                    token_budget: *budget,
+                    environment: environment.clone(),
+                }),
+                ProductAction::Impact {
+                    project,
+                    file,
+                    diff,
+                    environment,
+                } => Query::Impact(ImpactRequest {
+                    project_id: engram::ids::ProjectId::parse(project)?,
+                    paths: file.clone(),
+                    diff: diff.as_deref().map(read).transpose()?.unwrap_or_default(),
+                    environment: environment.clone(),
+                }),
+                _ => unreachable!(),
+            };
+            block_on(client.product_query(&query))?
+        }
+    };
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(true)
 }

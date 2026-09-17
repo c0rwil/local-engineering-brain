@@ -31,7 +31,6 @@ const INDEX_HTML: &str = include_str!("../assets/web/index.html");
 struct WebState {
     socket_path: PathBuf,
     request_timeout: Duration,
-    vault_root: PathBuf,
     architect_auto: String,
     token: Option<String>,
 }
@@ -93,12 +92,35 @@ pub fn router(config: &Config) -> Router {
     let state = WebState {
         socket_path: config.daemon.socket_path.clone(),
         request_timeout: Duration::from_millis(config.daemon.request_timeout_ms),
-        vault_root: config.vault.root.clone(),
         architect_auto: config.architect.auto.clone(),
         token: config.web.token.clone(),
     };
     Router::new()
         .route("/", get(index))
+        .route(
+            "/product.js",
+            get(|| async {
+                (
+                    [(
+                        axum::http::header::CONTENT_TYPE,
+                        "text/javascript; charset=utf-8",
+                    )],
+                    include_str!("../assets/web/product.js"),
+                )
+            }),
+        )
+        .route(
+            "/product.css",
+            get(|| async {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
+                    include_str!("../assets/web/product.css"),
+                )
+            }),
+        )
+        .route("/api/product/lessons", post(lesson_mutate))
+        .route("/api/product/query", post(product_query))
+        .route("/api/product/mutate", post(product_mutate))
         .route("/api/workspace", get(workspace))
         .route("/api/architecture", get(architecture))
         .route("/api/activity", get(activity))
@@ -505,7 +527,21 @@ async fn activity(
 }
 
 async fn architecture(State(state): State<WebState>) -> Json<ArchitectureDoc> {
-    let content = std::fs::read_to_string(state.vault_root.join("ARCHITECTURE.md")).ok();
+    let content = state
+        .client()
+        .product_query(&crate::product::Query::Guide)
+        .await
+        .ok()
+        .and_then(|value| {
+            serde_json::from_value::<Option<crate::product::Record>>(value)
+                .ok()
+                .flatten()
+        })
+        .filter(|record| !record.archived)
+        .and_then(|record| match record.item {
+            crate::product::Item::Guide(guide) => Some(guide.content),
+            _ => None,
+        });
     let drifted = match &content {
         Some(content) => match crate::architect::stamped_digest(content) {
             Some(recorded) => state
@@ -582,9 +618,53 @@ async fn link_scan(
     Ok(Json(report))
 }
 
+async fn product_query(
+    State(state): State<WebState>,
+    Json(request): Json<crate::product::Query>,
+) -> std::result::Result<Json<serde_json::Value>, WebError> {
+    Ok(Json(state.client().product_query(&request).await?))
+}
+async fn product_mutate(
+    State(state): State<WebState>,
+    Json(request): Json<crate::product::Mutation>,
+) -> std::result::Result<Json<crate::product::Record>, WebError> {
+    Ok(Json(state.client().product_mutate(&request).await?))
+}
+
+async fn lesson_mutate(
+    State(state): State<WebState>,
+    Json(request): Json<crate::product::lessons::LessonMutation>,
+) -> std::result::Result<Json<serde_json::Value>, WebError> {
+    Ok(Json(state.client().lesson_mutate(&request).await?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn product_data_routes_obey_the_existing_token_gate() {
+        let mut config = Config::default();
+        config.web.token = Some("test-token".to_owned());
+        for path in [
+            "/api/product/query",
+            "/api/product/mutate",
+            "/api/product/lessons",
+        ] {
+            let response = tower::ServiceExt::oneshot(
+                router(&config),
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+        }
+    }
 
     #[tokio::test]
     async fn index_serves_the_embedded_page() {

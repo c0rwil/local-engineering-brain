@@ -7,6 +7,10 @@ use engram::config::{Config, ConfigOverrides};
 #[derive(Debug, Parser)]
 #[command(name = "engramd", version, about = "Engram daemon")]
 struct Cli {
+    /// Use this configuration file instead of the user configuration.
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
+
     /// Override the canonical `SQLite` database path.
     #[arg(long, value_name = "PATH")]
     db: Option<PathBuf>,
@@ -31,7 +35,16 @@ fn run(cli: Cli) -> engram::Result<()> {
         db_path: cli.db,
         local_only: None,
     };
-    let mut config = Config::load_for(None, &overrides)?;
+    let mut config = if let Some(path) = cli.config {
+        Config::load_layers(
+            Some(&path),
+            None,
+            &overrides,
+            &std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from),
+        )?
+    } else {
+        Config::load_for(None, &overrides)?
+    };
     if let Some(socket) = cli.socket {
         config.daemon.socket_path = socket;
     }

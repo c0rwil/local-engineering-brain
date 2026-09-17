@@ -1514,6 +1514,43 @@ impl DaemonClient {
             .await
     }
 
+    /// Complete an episode or review a lesson with explicit evidence gates.
+    /// # Errors
+    /// Returns validation, storage or transport errors.
+    pub async fn lesson_mutate(
+        &self,
+        request: &crate::product::lessons::LessonMutation,
+    ) -> Result<serde_json::Value> {
+        self.request(
+            hyper::Method::POST,
+            "/api/v1/product/lessons",
+            Some(request),
+        )
+        .await
+    }
+
+    /// Query the product catalog, documentation, task context or change impact.
+    /// # Errors
+    /// Returns validation, storage or transport errors.
+    pub async fn product_query(
+        &self,
+        request: &crate::product::Query,
+    ) -> Result<serde_json::Value> {
+        self.request(hyper::Method::POST, "/api/v1/product/query", Some(request))
+            .await
+    }
+
+    /// Apply a versioned catalog mutation through the canonical scheduler.
+    /// # Errors
+    /// Returns conflict, validation or transport errors.
+    pub async fn product_mutate(
+        &self,
+        request: &crate::product::Mutation,
+    ) -> Result<crate::product::Record> {
+        self.request(hyper::Method::POST, "/api/v1/product/mutate", Some(request))
+            .await
+    }
+
     /// Fetch the deterministic workspace architecture dossier.
     ///
     /// # Errors
@@ -1771,7 +1808,47 @@ where
         shutdown: Arc::clone(&local_shutdown),
         started: Instant::now(),
     };
+    // Preserve a pre-catalog guide once. The vault is an optional export from
+    // this point onward; it is never required to serve documentation.
+    let product_store =
+        crate::product::ProductStore::new(state.database.clone(), state.redactor.clone());
+    if product_store
+        .query(&crate::product::Query::Guide)?
+        .is_null()
+    {
+        let legacy = config.vault.root.join("ARCHITECTURE.md");
+        if std::fs::metadata(&legacy).is_ok_and(|m| m.len() <= 262_144)
+            && let Ok(content) = std::fs::read_to_string(&legacy)
+        {
+            let stamp = crate::architect::stamped_digest(&content)
+                .unwrap_or("legacy-unverified")
+                .to_owned();
+            let import = state
+                .scheduler
+                .submit(MutationPriority::Interactive, move || {
+                    product_store.mutate(crate::product::Mutation::Save {
+                        id: Some("workspace-guide".to_owned()),
+                        expected_version: 0,
+                        item: Box::new(crate::product::Item::Guide(crate::product::Guide {
+                            content,
+                            dossier_digest: stamp,
+                            model: "legacy-import".to_owned(),
+                        })),
+                    })
+                })?;
+            match tokio::task::spawn_blocking(move || import.wait()).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    eprintln!("legacy guide import skipped; original export preserved: {error}");
+                }
+                Err(error) => eprintln!("legacy guide import task failed: {error}"),
+            }
+        }
+    }
     let router = Router::new()
+        .route("/api/v1/product/lessons", post(lesson_mutate))
+        .route("/api/v1/product/query", post(product_query))
+        .route("/api/v1/product/mutate", post(product_mutate))
         .route(API_HEALTH, get(health))
         .route(API_METRICS, get(metrics_snapshot))
         .route(API_MEMORY_STATS, get(memory_stats))
@@ -2489,8 +2566,14 @@ async fn index_project(
         .scheduler
         .submit(MutationPriority::ChangedFileRefresh, move || {
             let index = world.apply_prepared(&apply_project, prepared.0)?;
-            let drift = MemoryStore::with_redactor(world.database().clone(), redactor)
+            let drift = MemoryStore::with_redactor(world.database().clone(), redactor.clone())
                 .mark_symbol_drift_suspect(&apply_project.project.id)?;
+            if let Err(error) =
+                crate::product::ProductStore::new(world.database().clone(), redactor)
+                    .refresh_changed_sections(&apply_project.project.id)
+            {
+                eprintln!("derived documentation refresh failed after indexing: {error}");
+            }
             let git = prepared
                 .1
                 .map(|history| {
@@ -4284,18 +4367,28 @@ struct GuideAuto {
 /// Regenerate the guide when the workspace's STABLE projection has drifted
 /// past the stamped prose. Rate-limited, and every failure is a logged
 /// retry-next-tick, never a crash.
-async fn maybe_regenerate_guide(guide: &GuideAuto, database: &Database) -> bool {
-    if guide.mode == "off" || !guide.vault_enabled {
+async fn maybe_regenerate_guide(
+    guide: &GuideAuto,
+    database: &Database,
+    client: &DaemonClient,
+) -> bool {
+    if guide.mode == "off" {
         return false;
     }
-    let path = guide.vault_root.join("ARCHITECTURE.md");
-    let Ok(existing) = std::fs::read_to_string(&path) else {
-        return false; // no guide yet: generation stays an explicit first act
-    };
-    let Some(stamped) = crate::architect::stamped_digest(&existing) else {
+    let store = crate::product::ProductStore::new(database.clone(), Redactor::default());
+    let Ok(value) = store.query(&crate::product::Query::Guide) else {
         return false;
     };
-    let stamped = stamped.to_owned();
+    let Ok(Some(record)) = serde_json::from_value::<Option<crate::product::Record>>(value) else {
+        return false;
+    };
+    if record.archived {
+        return false;
+    }
+    let crate::product::Item::Guide(existing) = record.item else {
+        return false;
+    };
+    let stamped = existing.dossier_digest;
     let dossier = {
         let database = database.clone();
         match tokio::task::spawn_blocking(move || crate::architect::build_dossier(&database)).await
@@ -4346,19 +4439,34 @@ async fn maybe_regenerate_guide(guide: &GuideAuto, database: &Database) -> bool 
         }
     };
     let document = crate::architect::guide_document(&model, &dossier, &synthesized);
-    match std::fs::write(&path, &document) {
-        Ok(()) => {
-            eprintln!(
-                "guide auto-regenerated with `{model}` ({} bytes)",
-                document.len()
-            );
-            true
-        }
-        Err(error) => {
-            eprintln!("guide auto-regen write failed: {error}");
-            false
+    let saved = client
+        .product_mutate(&crate::product::Mutation::Save {
+            id: Some(record.id),
+            expected_version: record.version,
+            item: Box::new(crate::product::Item::Guide(crate::product::Guide {
+                content: document.clone(),
+                dossier_digest: crate::architect::stable_digest(&dossier),
+                model: model.clone(),
+            })),
+        })
+        .await;
+    if let Err(error) = saved {
+        eprintln!("guide auto-regeneration save failed: {error}");
+        return false;
+    }
+    if guide.vault_enabled {
+        let path = guide.vault_root.join("ARCHITECTURE.md");
+        if let Err(error) = std::fs::create_dir_all(&guide.vault_root)
+            .and_then(|()| std::fs::write(&path, &document))
+        {
+            eprintln!("optional guide export failed: {error}");
         }
     }
+    eprintln!(
+        "guide auto-regenerated with `{model}` ({} bytes)",
+        document.len()
+    );
+    true
 }
 
 /// Commit-driven auto refresh. Compares committed HEADs only — uncommitted
@@ -4463,7 +4571,7 @@ async fn watch_loop(
         }
         if last_guide.elapsed() >= guide.min_interval {
             last_guide = std::time::Instant::now();
-            let _ = maybe_regenerate_guide(&guide, &database).await;
+            let _ = maybe_regenerate_guide(&guide, &database, &client).await;
         }
         if let Some(origin_poll) = origin_poll {
             if last_origin.elapsed() >= origin_poll {
@@ -4507,6 +4615,42 @@ async fn watch_loop(
     }
 }
 
+async fn product_query(
+    State(state): State<DaemonState>,
+    Json(request): Json<crate::product::Query>,
+) -> std::result::Result<Json<serde_json::Value>, ApiError> {
+    let store = crate::product::ProductStore::new(state.database.clone(), state.redactor.clone());
+    Ok(Json(
+        run_blocking(&state, move || store.query(&request)).await?,
+    ))
+}
+
+async fn product_mutate(
+    State(state): State<DaemonState>,
+    Json(request): Json<crate::product::Mutation>,
+) -> std::result::Result<Json<crate::product::Record>, ApiError> {
+    let store = crate::product::ProductStore::new(state.database.clone(), state.redactor.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::Interactive, move || store.mutate(request))
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
+async fn lesson_mutate(
+    State(state): State<DaemonState>,
+    Json(request): Json<crate::product::lessons::LessonMutation>,
+) -> std::result::Result<Json<serde_json::Value>, ApiError> {
+    let store = crate::product::ProductStore::new(state.database.clone(), state.redactor.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::Interactive, move || {
+            store.lesson_mutate(&request)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -4532,6 +4676,32 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("daemon did not become ready");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn imports_long_legacy_guide_without_requiring_vault_export() {
+        let temp = TempDir::new().unwrap();
+        let mut config = test_config(&temp);
+        config.vault.enabled = false;
+        config.vault.root = temp.path().join("vault");
+        config.watch.enabled = false;
+        config.web.enabled = false;
+        std::fs::create_dir_all(&config.vault.root).unwrap();
+        let content = "A substantial existing architecture guide.\n".repeat(300);
+        std::fs::write(config.vault.root.join("ARCHITECTURE.md"), &content).unwrap();
+        let client = DaemonClient::new(&config.daemon.socket_path, Duration::from_secs(3));
+        let (stop, receive) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = receive.await;
+        }));
+        wait_until_ready(&client).await;
+        let value = client
+            .product_query(&crate::product::Query::Guide)
+            .await
+            .unwrap();
+        assert_eq!(value["item"]["value"]["content"], content);
+        stop.send(()).unwrap();
+        server.await.unwrap().unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

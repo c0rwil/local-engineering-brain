@@ -1,0 +1,344 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Engram product catalog item",
+  "description": "Product records are reference data, not memory evidence. Save through operation=save with expected_version=0 for create or the current version for an update. An anchor has exactly one path, node_id or evidence_id. Observed claims require independent evidence from a successful source task. Section reviewed=true is an explicit source-review attestation. Deployment evidence must match its project and exact revision.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "entity"
+        },
+        "value": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "product",
+                "capability",
+                "flow",
+                "service",
+                "repository",
+                "api",
+                "queue",
+                "database",
+                "schema",
+                "deployment"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "parent_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "project_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "owner": {
+              "type": "string"
+            },
+            "intent": {
+              "type": "string"
+            },
+            "constraints": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "environment": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "entity_id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "anchors": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/anchor"
+                    }
+                  }
+                },
+                "required": [
+                  "entity_id",
+                  "title"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "basis": {
+              "enum": [
+                "declared",
+                "observed",
+                "inferred"
+              ]
+            },
+            "anchors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/anchor"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "dependency"
+        },
+        "value": {
+          "type": "object",
+          "properties": {
+            "source_id": {
+              "type": "string"
+            },
+            "target_id": {
+              "type": "string"
+            },
+            "relation": {
+              "enum": [
+                "implements",
+                "calls",
+                "publishes",
+                "consumes",
+                "reads",
+                "writes",
+                "uses_schema",
+                "deploys",
+                "depends_on"
+              ]
+            },
+            "contract": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "environment": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "basis": {
+              "enum": [
+                "declared",
+                "observed",
+                "inferred"
+              ]
+            },
+            "anchors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/anchor"
+              }
+            }
+          },
+          "required": [
+            "source_id",
+            "target_id",
+            "relation",
+            "contract"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "section"
+        },
+        "value": {
+          "type": "object",
+          "properties": {
+            "entity_id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "curated": {
+              "type": "string"
+            },
+            "generated": {
+              "type": "string"
+            },
+            "reviewed": {
+              "type": "boolean"
+            },
+            "basis": {
+              "enum": [
+                "declared",
+                "observed",
+                "inferred"
+              ]
+            },
+            "anchors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/anchor"
+              }
+            }
+          },
+          "required": [
+            "entity_id",
+            "title"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "deployment"
+        },
+        "value": {
+          "type": "object",
+          "properties": {
+            "entity_id": {
+              "type": "string"
+            },
+            "project_id": {
+              "type": "string"
+            },
+            "environment": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "string"
+            },
+            "evidence_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "entity_id",
+            "project_id",
+            "environment",
+            "revision",
+            "evidence_id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "guide"
+        },
+        "value": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "dossier_digest": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content",
+            "dossier_digest",
+            "model"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "anchor": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "evidence_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -45,6 +45,7 @@ struct ProjectDossier {
     modules: Vec<(String, i64)>,
     routes: Vec<String>,
     head: Option<String>,
+    source_digest: String,
 }
 
 /// Build the complete deterministic dossier for every registered project.
@@ -96,7 +97,7 @@ fn project_dossier(
         .into_iter()
         .map(|link| (link.name, link.relation, link.note))
         .collect();
-    let (modules, head) = database.with_reader(|connection| {
+    let (modules, head, source_digest) = database.with_reader(|connection| {
         use rusqlite::OptionalExtension as _;
         let mut statement = connection.prepare(
             "SELECT file_path, COUNT(*) FROM nodes
@@ -125,7 +126,16 @@ fn project_dossier(
             )
             .optional()?
             .flatten();
-        Ok((modules, head))
+        let mut sources = connection.prepare(
+            "SELECT path,content_digest FROM indexed_files WHERE project_id=?1 ORDER BY path",
+        )?;
+        let rows = sources
+            .query_map([project_id.as_str()], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let source_digest = crate::experience::sha256(serde_json::to_string(&rows)?.as_bytes());
+        Ok((modules, head, source_digest))
     })?;
     let root = registry
         .alias_paths(project_id)?
@@ -144,6 +154,7 @@ fn project_dossier(
         modules,
         routes,
         head,
+        source_digest,
     })
 }
 
@@ -152,6 +163,7 @@ fn render_project(out: &mut String, dossier: &ProjectDossier) {
     if let Some(head) = &dossier.head {
         let _ = writeln!(out, "indexed-head: {head}");
     }
+    let _ = writeln!(out, "indexed-source-digest: {}", dossier.source_digest);
     if !dossier.technologies.is_empty() {
         let stack = dossier
             .technologies
@@ -266,6 +278,7 @@ pub fn stable_projection(dossier: &str) -> String {
                 || line.starts_with("tech: ")
                 || line.starts_with("link ->")
                 || line.starts_with("route-literal:")
+                || line.starts_with("indexed-source-digest:")
             {
                 Some(line.to_owned())
             } else if let Some(modules) = line.strip_prefix("modules: ") {

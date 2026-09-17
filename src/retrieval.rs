@@ -124,8 +124,12 @@ impl Retriever {
 
         let task_lower = request.task_text.to_lowercase();
         let task_terms = coverage_terms(&task_lower);
+        let expired = self.memories.expired_ids(request.project_id)?;
         let mut ranked = Vec::new();
         for (_, (memory, _bm25)) in candidates {
+            if expired.contains(&memory.id) {
+                continue;
+            }
             // FTS/bm25 stays a candidate prefilter only. On small memory sets
             // its IDF is nearly flat, so ranking uses claim-term coverage of
             // the task text instead: a short claim either names the concepts

@@ -285,3 +285,110 @@ separately records matching memories retrieved before compact truncation. The
 replay database must match the daemon's database; for a frozen replay, start an
 isolated daemon serving the snapshot. Reports omit raw prompts, evidence
 artifacts, and repository source, and make no model or cloud calls.
+
+## Product knowledge and living documentation
+
+The browser now opens on **Product**. Add the product's purpose, intended behavior,
+constraints and owner, then connect capabilities, services, repositories and
+contracts. **Flows** records ordered steps through the system; attach a handler,
+contract, test or observation to each step. **Repositories** retains the existing
+origin/main and local-checkout views.
+
+**Changes** accepts repository-relative changed paths or a unified diff. It shows
+records whose sources intersect the change separately from possible downstream
+consumers. The interaction map filters by capability, environment and search text.
+A missing edge means coverage is unknown, not that the change is isolated.
+
+Each documentation section separates human explanation from generated reference
+material. Add sources using the repository, file path, symbol ID or evidence ID.
+An optional revision assertion must match the indexed/evidence revision. Check
+the review checkbox only after reading those sources. “Sources unchanged” refers
+to the last indexed bytes, not live production. Reindexing updates affected source
+inventories and requests review without replacing human explanations. Every save
+has a revision; History lets you inspect previous text and source stamps.
+
+**Start working on this** builds a cited context for the selected product, flow,
+component or section. It uses the same compiler as the agent tool and CLI:
+
+```sh
+engram product show
+engram product schema
+engram product bundle ENTITY_ID "Describe the intended change" --budget 2000
+engram product impact PROJECT_ID --file src/api.rs --diff change.patch
+engram product history RECORD_ID
+```
+
+Use IDs returned by `product show`. Bundles label declared intent, inferred claims,
+source freshness, prior verification revisions and coverage gaps. The copied text
+fits the requested estimated-token budget; metadata returned by the CLI/browser
+is separate. MCP returns only the budgeted text. This explicit context does not
+change the normal compact injection prefix or the brain-off control.
+
+Catalog edits can also be applied as JSON with `engram product apply change.json`.
+For example, a new product declaration uses version 0:
+
+```json
+{
+  "operation": "save",
+  "id": "engineering-product",
+  "expected_version": 0,
+  "item": {
+    "type": "entity",
+    "value": {
+      "kind": "product",
+      "name": "Engineering product",
+      "intent": "Help engineers understand and change the system safely",
+      "basis": "declared"
+    }
+  }
+}
+```
+
+Read `product schema` for complete entity, dependency, section and deployment
+fields. Updating or archiving requires the current version. A stale edit fails
+without overwriting another editor. Archive preserves revision history. To restore
+an archived item, save its historical item with the current archived version.
+
+Architecture guides now live in SQLite. Existing `ARCHITECTURE.md` vault exports
+are imported once. `engram architect` saves to the catalog; `--out` also writes a
+Markdown file. If `vault.enabled` is true, the existing Obsidian export still runs.
+The product UI and guide no longer depend on enabling it.
+
+### Finish work and review lessons
+
+Agents can replace the end-of-task sequence with `engram_complete_task`: provide
+the existing task ID, observed outcome, touched files, actual verification output
+and up to five proposed lessons. A completion summary becomes one proposal when
+no lessons are supplied. Use deterministic test/build/lint/typecheck results with
+command and exit code, or observational runtime output, traces or metrics. Keep
+failed verification in the record; it is not automatically attached as supporting
+evidence. The call is retryable and reuses identical observations and proposals.
+
+**Knowledge** is the consolidated review inbox. Edit a claim into a reusable rule,
+inspect its evidence and any similar memories, then accept or reject it. Acceptance
+uses the normal evidence gates and caps confidence at 0.50. Unsupported proposals
+remain pending; attach actual supporting evidence through a completion retry.
+Similarity alone does not establish a contradiction. Explicitly identifying a
+contradiction quarantines the old claim. Accepted lessons do not mark the task
+accepted by the user.
+
+A proposal can include `expires_at_ms` for temporary operational knowledge.
+Expired memories stop injecting. Reverification can renew that expiry through a
+new successful task and a new review; rejected or quarantined duplicates require
+an explicit correction rather than silent reactivation.
+
+```sh
+engram product show --reviews
+engram product lesson completion.json
+engram product signals TASK_ID
+```
+
+The lesson JSON has `operation: "complete"`, `"review"` or `"signal"`. Completion
+fields mirror `engram_complete_task`; review fields mirror `engram_review_lesson`.
+Delivery signals cite actual evidence and distinguish `verification`,
+`commit_landed`, `pr_merged` and `user_acceptance`. Never set `accepted_by_user`
+from a passing test, merge, landed commit or silence. Omit it when unknown.
+
+For an isolated daemon, `engramd --config /absolute/path/config.toml` replaces the
+user configuration. Give it separate database, socket, vault and web-port paths;
+this is useful for local evaluation without touching the main workspace.
