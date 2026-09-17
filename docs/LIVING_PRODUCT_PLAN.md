@@ -23,7 +23,7 @@ compiler remain authoritative.
 - [x] Publish capture/replay, product evaluator and local-runtime diagnostic evidence.
 - [ ] Complete final-build local regression after the Metal/MLX runtime recovers;
   the corrected run could not reach warmup and has no score.
-- [ ] Publish main to origin and mirror; restore the company GitHub identity.
+- [x] Publish main to origin and mirror; restore the company GitHub identity.
 
 ## Acceptance rules
 
