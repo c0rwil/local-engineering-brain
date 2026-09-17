@@ -1,0 +1,130 @@
+{
+  "counts": {
+    "passed": 4,
+    "runtime_cancelled": 8,
+    "wall_timeout": 4,
+    "stream_idle_timeout": 4
+  },
+  "cells": [
+    {
+      "task_id": "t20_discard_recovered_resolves_parked_jobs",
+      "mode": "off",
+      "seed": 2,
+      "classification": "passed"
+    },
+    {
+      "task_id": "t20_discard_recovered_resolves_parked_jobs",
+      "mode": "brain",
+      "seed": 2,
+      "classification": "passed"
+    },
+    {
+      "task_id": "t20_discard_recovered_resolves_parked_jobs",
+      "mode": "brain",
+      "seed": 3,
+      "classification": "runtime_cancelled"
+    },
+    {
+      "task_id": "t20_discard_recovered_resolves_parked_jobs",
+      "mode": "off",
+      "seed": 3,
+      "classification": "runtime_cancelled"
+    },
+    {
+      "task_id": "t21_schedule_lists_accept_ranges",
+      "mode": "brain",
+      "seed": 2,
+      "classification": "runtime_cancelled"
+    },
+    {
+      "task_id": "t21_schedule_lists_accept_ranges",
+      "mode": "off",
+      "seed": 2,
+      "classification": "wall_timeout"
+    },
+    {
+      "task_id": "t21_schedule_lists_accept_ranges",
+      "mode": "off",
+      "seed": 3,
+      "classification": "wall_timeout"
+    },
+    {
+      "task_id": "t21_schedule_lists_accept_ranges",
+      "mode": "brain",
+      "seed": 3,
+      "classification": "wall_timeout"
+    },
+    {
+      "task_id": "t22_decode_rejects_duplicate_job_ids",
+      "mode": "off",
+      "seed": 2,
+      "classification": "runtime_cancelled"
+    },
+    {
+      "task_id": "t22_decode_rejects_duplicate_job_ids",
+      "mode": "brain",
+      "seed": 2,
+      "classification": "runtime_cancelled"
+    },
+    {
+      "task_id": "t22_decode_rejects_duplicate_job_ids",
+      "mode": "brain",
+      "seed": 3,
+      "classification": "passed"
+    },
+    {
+      "task_id": "t22_decode_rejects_duplicate_job_ids",
+      "mode": "off",
+      "seed": 3,
+      "classification": "passed"
+    },
+    {
+      "task_id": "t23_state_tags_parse_back",
+      "mode": "brain",
+      "seed": 2,
+      "classification": "runtime_cancelled"
+    },
+    {
+      "task_id": "t23_state_tags_parse_back",
+      "mode": "off",
+      "seed": 2,
+      "classification": "wall_timeout"
+    },
+    {
+      "task_id": "t23_state_tags_parse_back",
+      "mode": "off",
+      "seed": 3,
+      "classification": "runtime_cancelled"
+    },
+    {
+      "task_id": "t23_state_tags_parse_back",
+      "mode": "brain",
+      "seed": 3,
+      "classification": "runtime_cancelled"
+    },
+    {
+      "task_id": "t24_purge_empties_the_queue",
+      "mode": "off",
+      "seed": 2,
+      "classification": "stream_idle_timeout"
+    },
+    {
+      "task_id": "t24_purge_empties_the_queue",
+      "mode": "brain",
+      "seed": 2,
+      "classification": "stream_idle_timeout"
+    },
+    {
+      "task_id": "t24_purge_empties_the_queue",
+      "mode": "brain",
+      "seed": 3,
+      "classification": "stream_idle_timeout"
+    },
+    {
+      "task_id": "t24_purge_empties_the_queue",
+      "mode": "off",
+      "seed": 3,
+      "classification": "stream_idle_timeout"
+    }
+  ]
+}

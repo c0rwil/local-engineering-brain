@@ -13,7 +13,7 @@ historical recovery replay are reported separately from paired agent trials.
 | Axis | Control | With Engram | Evidence |
 |---|---:|---:|---|
 | Tribal-knowledge fidelity (Opus, 12 probes × 2 seeds) | 5/12 | **24/24** | 2026-08-31 flagship + multiseed |
-| Local-model task success (wall-calibrated, Q4 on-device) | 7/10 | **10/10**, −33% wall | 2026-09-01 |
+| Local-model task success (wall-calibrated, Q4 on-device) | 2/10 | 2/10; runtime errors dominate | [2026-09-16 rerun](perf-evidence/2026-09-16-local-regression.md) |
 | Preference distillation (learned conventions, unprompted) | 3/4 | **4/4**, −41% wall | 2026-09-02 |
 | Real-repo recall@1 (production backend, non-verbatim queries) | — | **11/11** | 2026-09-01 |
 | Compact injection (bytes at success parity) | baseline | **−33% injected bytes** | 2026-09-01 |
@@ -29,6 +29,12 @@ unknown.
 The [2026-09-03 hook matrix](perf-evidence/2026-09-03-opus-hooks-pipeline.md)
 reported 6/10 versus 10/10 at −19% mean wall. The new row is a fresh paired run;
 differences across dates are not attributed to the capture changes.
+
+The [2026-09-01 local matrix](perf-evidence/2026-09-01-local-multiseed-wall-calibrated.md)
+reported 7/10 versus 10/10 at −33% mean wall. The latest local rerun had twelve
+API cancellations/stream-idle errors and four wall timeouts. It shows no success
+gain and does not support a speedup claim; runtime reliability must be resolved
+before drawing an injection-quality comparison.
 
 ## What the fidelity probes measure
 

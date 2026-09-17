@@ -1,0 +1,23 @@
+{
+  "benchmark_id": "conveyor-family-g2-local-v1",
+  "model_hash": "mtplx-2.9.2-qwen38-27b-optimized-speed-q4-turbo-medium",
+  "config_hash": "a6f299d5ce9547f9427655fa28324d12c67ee9ca5c1e53cadcb4a9766c7ad88e",
+  "paired_runs": 10,
+  "off": {
+    "mode": "off",
+    "runs": 10,
+    "successes": 2,
+    "success_rate": 0.2,
+    "mean_wall_ms": 1448579.3
+  },
+  "brain": {
+    "mode": "brain",
+    "runs": 10,
+    "successes": 2,
+    "success_rate": 0.2,
+    "mean_wall_ms": 907844.0
+  },
+  "success_rate_delta": 0.0,
+  "mean_wall_time_delta_pct": -37.328664022742835,
+  "generated_at_ms": 1789550380571
+}

@@ -1,0 +1,9 @@
+{
+  "forwarded": 0,
+  "injected": 0,
+  "injected_bytes": 0,
+  "session_cache_hits": 0,
+  "session_cache_misses": 0,
+  "degraded": 0,
+  "refused": 0
+}

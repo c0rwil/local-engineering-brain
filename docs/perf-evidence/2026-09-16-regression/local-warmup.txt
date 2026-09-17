@@ -1,0 +1,15 @@
+Starting Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed for Claude Code...
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+`main.rs` is a single line:
+
+```rust
+fn main() { println!("warmup"); }
+```
+
+It prints exactly:
+
+```
+warmup
+```
+
+The `println!` macro emits the string `warmup` followed by a trailing newline, and nothing else.
