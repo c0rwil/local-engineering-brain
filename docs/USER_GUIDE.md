@@ -274,6 +274,14 @@ captured copies in other tasks are separate and are not rewritten. Use
 
 ## Measuring capture and replay
 
+A repository refresh updates the code graph and source freshness. It does not
+recover lessons from old conversations or validate incident claims. `engram ask`
+can find indexed symbols and documentation even when few memories are validated;
+historical lesson replay specifically checks which lessons the context compiler
+would inject. Candidates awaiting review, stale memories and uncaptured lessons
+are therefore replay misses. Review the supporting evidence in **Knowledge** or
+record a new verification before making those lessons eligible.
+
 `scripts/capture_eval.py` reports per-session candidate-to-validated conversion,
 time to first validated memory, acceptance coverage, and abandoned-task rate.
 Session conversion uses the original distillation's source tasks; later reuse

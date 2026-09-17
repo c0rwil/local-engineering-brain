@@ -1,0 +1,131 @@
+{
+  "implementation_commit": "3b65868",
+  "source_hash": "79e96819a4f43b74bacd20c8b9be6e17405d8494688402db77d13676899e6b01",
+  "measured_at_ms": 1789662521161,
+  "repositories": [
+    {
+      "repository": "agi-backend-rust",
+      "local_index_matches_checkout": true,
+      "origin_index_is_separate": true,
+      "local_active_graph_nodes": 21377,
+      "local_paths_with_graph_nodes": 124,
+      "origin_active_graph_nodes": 21503,
+      "origin_paths_with_graph_nodes": 99
+    },
+    {
+      "repository": "agents",
+      "local_index_matches_checkout": true,
+      "origin_index_is_separate": true,
+      "local_active_graph_nodes": 16231,
+      "local_paths_with_graph_nodes": 1037,
+      "origin_active_graph_nodes": 16587,
+      "origin_paths_with_graph_nodes": 955
+    },
+    {
+      "repository": "mobile",
+      "local_index_matches_checkout": true,
+      "origin_index_is_separate": true,
+      "local_active_graph_nodes": 64153,
+      "local_paths_with_graph_nodes": 1559,
+      "origin_active_graph_nodes": 61987,
+      "origin_paths_with_graph_nodes": 1270
+    }
+  ],
+  "false_quarantines_restored": {
+    "candidate": 5,
+    "validated": 1,
+    "confidence_and_epistemic_state_preserved": true,
+    "subsequent_origin_refresh_preserved_states": true
+  },
+  "memory_distribution": [
+    {
+      "epistemic_state": "candidate",
+      "status": "active",
+      "count": 43
+    },
+    {
+      "epistemic_state": "candidate",
+      "status": "archived",
+      "count": 1
+    },
+    {
+      "epistemic_state": "candidate",
+      "status": "suspect",
+      "count": 3
+    },
+    {
+      "epistemic_state": "validated",
+      "status": "active",
+      "count": 2
+    },
+    {
+      "epistemic_state": "validated",
+      "status": "archived",
+      "count": 1
+    }
+  ],
+  "guide": {
+    "regenerated": true,
+    "ui_reports_current": true,
+    "canonical_version": 3
+  },
+  "flow": {
+    "ui_reports_sources_unchanged": true,
+    "compiled_tokens": 3991,
+    "budget": 4000,
+    "included_records": 31,
+    "omitted_records": 9,
+    "gaps_disclosed": 8
+  },
+  "doctor_ok": true,
+  "rust_tests_passed": 266,
+  "fmt_passed": true,
+  "clippy_passed": true,
+  "artifact_sha256": {
+    "installed-status.stdout": "24d178628a37750589bba83411ea5c0c078c5c8d466886cfe08c57a01259e240",
+    "mobile-local.json": "27f3ad0e74ccf94fca607b17dc86c6517958a7a932797beea4724c85cc98d986",
+    "backend-origin-final.stdout": "fda4effa8fc38eb4eac5048d0a00d9e0f5c1fb98f0bb63593e8c31a6a2d05920",
+    "agents-local-restored.json": "1a5e06e38b21fb37fc9ebdef371af5566f674eb562122cb873526c3129ae4fe1",
+    "restored-mem_dc96a7cd-095e-4225-9e0f-547b4c9d60e6.stdout": "679034732dc7d8c78502beee892636328138feef51ed0eb250497993640d027b",
+    "repair-verification.json": "12c8a31e4d634f2b03722e6c64f867b1fb7c9f798475c9e15e479196f3a22b70",
+    "mobile-origin-final.stdout": "fda4effa8fc38eb4eac5048d0a00d9e0f5c1fb98f0bb63593e8c31a6a2d05920",
+    "verified-mem_dc96a7cd-095e-4225-9e0f-547b4c9d60e6.stdout": "679034732dc7d8c78502beee892636328138feef51ed0eb250497993640d027b",
+    "agents-local-final.stdout": "abf2508ae8ae246a6aaf28ed61adcb305787bf7ba4c211a4f738d107402c9a41",
+    "restored-mem_0d71a27e-c2ef-4a55-a90c-9f20c2a9a589.stdout": "530d05bc5d11fe75562eb9d77dd1a2f96f68226e0641e53855c308b4dd5e43fd",
+    "targeted-tests.log": "2b2dd4d5540553a9fab4e344c542dc48489f36b0e6462ffcfaa14d9e0649711a",
+    "false-origin-quarantines.json": "81db963be4f516df66d425d9224e292aaa9d2d7b782c833e4da4524eef8a2c2f",
+    "mobile-local-restored.json": "b8b016c5c03eeb19d9b2b0c5f6ed2e40a37d6c948c01b0e2dd49967ccfe45b90",
+    "agents-ask.txt": "27abaaa1d1da747a27d1cc7d4686ff4fe6525b5770dae8d7dd45485b8869295f",
+    "restored-mem_109158c5-1c69-42e9-bb6b-c2efd76923e7.stdout": "80ab33367c613feb7d3ce3bdfb5284c7f7a3b7b606ec5d0ec8b0ccb48a0464be",
+    "clippy.log": "2eb5205f0a7cdac08a8fed33f351eea79598c27b2a1410b798ff465d185d4985",
+    "backend-local-final.stdout": "e9b9b8380df431a7274699fb026ef9d99995ffb5672dd755f61614aff6faa6fb",
+    "agents-local.json": "ce30f54a36611d8af1a854402e89ee799bf458cfcc89e2f015881b732b6ef3f6",
+    "backend-local-restored.json": "19e7a0ca77b7db7190ebc558f0dc54071d8276a317eb2652387508d9c1d7baea",
+    "verified-mem_0d71a27e-c2ef-4a55-a90c-9f20c2a9a589.stdout": "530d05bc5d11fe75562eb9d77dd1a2f96f68226e0641e53855c308b4dd5e43fd",
+    "phone-flow-bundle.json": "5167a9154af54b3a3a205507881d7ac220bfe382a0377457f67a18617e0d4978",
+    "agents-origin-final.stdout": "fda4effa8fc38eb4eac5048d0a00d9e0f5c1fb98f0bb63593e8c31a6a2d05920",
+    "backend-origin.json": "3569dde88b37966f1d871e80ddf4b3e8b8f7689f0187ca811bcb0d9664b21745",
+    "backend-guide-ask.txt": "605e4d6e29e33199e634394ebbdf66128509aa45b74764980ec7bca1794f65ec",
+    "mobile-origin.json": "ff6a7198d684f012acf1e5174b4261385de80f51532349c9d13b14b4de3832d5",
+    "verified-mem_109158c5-1c69-42e9-bb6b-c2efd76923e7.stdout": "80ab33367c613feb7d3ce3bdfb5284c7f7a3b7b606ec5d0ec8b0ccb48a0464be",
+    "backend-status-final.stdout": "a812ceb2d548af0377da1db5634b7580fa0b4875f065fb96ae8a74b25ebb6f6c",
+    "doctor-final.json": "1cc6ef0313931d69afd86d707fe7dfab9e772e2c8934aa5c8719dee1ea1c2c42",
+    "verified-mem_ee927f35-fb3b-46b8-b4f8-f567b98e2c76.stdout": "9350a0426c181db104992fa9ce7996ccb4432b62bf05223e50b177446a53ef83",
+    "verified-mem_356c4ace-a5f1-4804-9448-c0519ed8a507.stdout": "997847d4b89ff0f1fd46dc8d949d2dad018dee1fd92714a460a8ec01402250f6",
+    "agents-origin.json": "d9a15c4931260e85650312363b92b9468263583526e0bfff50bdc4ee2a58e09e",
+    "restored-mem_2923b433-83a1-485f-a329-890749c87168.stdout": "133fc21097451ecd8d15c00bf8efe916b238634c2b3151108d0ad76ccce808a4",
+    "restored-mem_ee927f35-fb3b-46b8-b4f8-f567b98e2c76.stdout": "9350a0426c181db104992fa9ce7996ccb4432b62bf05223e50b177446a53ef83",
+    "restored-mem_356c4ace-a5f1-4804-9448-c0519ed8a507.stdout": "997847d4b89ff0f1fd46dc8d949d2dad018dee1fd92714a460a8ec01402250f6",
+    "verified-mem_2923b433-83a1-485f-a329-890749c87168.stdout": "133fc21097451ecd8d15c00bf8efe916b238634c2b3151108d0ad76ccce808a4",
+    "mobile-ask.txt": "4669c34a88ee96ad571c1fda90e701b537a93469190fe14e01bdc346447a1cf7",
+    "mobile-status-final.stdout": "7c47a8fb18de3779e6382fc322133bd5ab32caf248b35275cb556f1d4ab172f3",
+    "tests.log": "66b07e8799b02b2f3671cb35eea83eee592308c2801251bb1db3c1e4407e260f",
+    "architect.stdout": "77c63208f551ff27e1810d6bae3c656f7149678d53bd4ea5f9b827724ca2bf47",
+    "backend-ask.txt": "8ac123a1a92b56f1e31bdac61933e230cc8cf4e065245426db4d6500bbe8d795",
+    "backend-local.json": "68d968868ced5cc3c30ec98c5c831613f203fc7dff662dc8dff4319e0edf45d8",
+    "install.log": "eb8fecaf775b35c1324aa21db605f385657f21f607223b152eec66f0ec8147f4",
+    "mobile-local-final.stdout": "1eaf19531c53ec4eea6846fb3484ad14256bc6ee340b5509cbafb2153ad824d5",
+    "finish-refresh.log": "2a9b528eb2bb69c7c291a3a5b10f36c34d2575b3df7580abd38c42460feda362",
+    "agents-status-final.stdout": "7d8ddb3351dcc1a45351bfe953de684baf792105f21e3b3f0a0868623fb4d34d"
+  }
+}

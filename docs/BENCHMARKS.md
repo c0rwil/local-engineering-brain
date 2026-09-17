@@ -19,12 +19,18 @@ historical recovery replay are reported separately from paired agent trials.
 | Compact injection (bytes at success parity) | baseline | **−33% injected bytes** | 2026-09-01 |
 | Hook-pipeline fidelity (five injection moments, Opus) | 7/10 | **10/10** | [2026-09-17 final-build regression](perf-evidence/2026-09-17-hooks-product-regression.md) |
 | Living product / onboarding contracts (synthetic correctness checks) | — | **21/21**; no human speed claim | [2026-09-17 product evaluation](perf-evidence/2026-09-17-living-product.md) |
-| Operational-lesson replay (historical repair, six real-session probes) | 0/6 before recovery | **1/6** after one evidence-backed recovery | [2026-09-16 capture](perf-evidence/2026-09-16-capture-health.md) |
+| Operational-lesson replay (historical repair, six real-session probes) | 0/6 before recovery | **1/6**, unchanged after repository refresh | [2026-09-17 diagnosis](perf-evidence/2026-09-17-repository-refresh.md) |
 
 The [living-product report](perf-evidence/2026-09-17-living-product.md) adds a
 source-linked real-flow check and identifies internal documentation synthesis as
 a source of historical abandoned episodes. The unchanged six-case replay remains
 1/6; prospective capture and onboarding gains are not yet established.
+
+The [repository refresh diagnosis](perf-evidence/2026-09-17-repository-refresh.md)
+separates source indexing from lesson delivery: three replay lessons were never
+captured, one awaits review and one is quarantined for historical source drift.
+The remaining lesson injects. Refreshing all three relevant repositories did not
+close that historical evidence gap.
 
 The capture report also measures conversion and validation latency per session,
 acceptance coverage, and abandoned-task rate. It does not claim prospective
