@@ -834,8 +834,17 @@ mod tests {
         relay_send(temp.path(), "sess-a", "sess-b", "backend contract changed").expect("send 2");
         let drained = relay_drain(temp.path(), "sess-a");
         assert_eq!(drained.len(), 2);
-        assert!(drained[0].starts_with("from operator: check the auth tests"));
-        assert!(drained[1].starts_with("from sess-b: "));
+        // Messages created in the same millisecond have no relative age.
+        assert!(
+            drained
+                .iter()
+                .any(|m| m == "from operator: check the auth tests")
+        );
+        assert!(
+            drained
+                .iter()
+                .any(|m| m == "from sess-b: backend contract changed")
+        );
         assert!(
             relay_drain(temp.path(), "sess-a").is_empty(),
             "drain consumes"

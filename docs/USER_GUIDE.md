@@ -392,3 +392,8 @@ from a passing test, merge, landed commit or silence. Omit it when unknown.
 For an isolated daemon, `engramd --config /absolute/path/config.toml` replaces the
 user configuration. Give it separate database, socket, vault and web-port paths;
 this is useful for local evaluation without touching the main workspace.
+
+Internal architecture synthesis runs with hooks, tools and MCP disabled. It does
+not open engineering episodes or store an agent session transcript. Explicit
+`--claude` and configured Claude auto-generation still use your opted-in cloud
+provider; local-runtime generation remains available.

@@ -415,8 +415,27 @@ pub async fn synthesize(runtime_url: &str, model: &str, prompt: &str) -> Result<
 /// Returns an error when the CLI is missing, exits nonzero, or produces no
 /// output.
 pub fn synthesize_with_claude_cli(model: &str, prompt: &str) -> Result<String> {
-    let output = std::process::Command::new("claude")
+    run_claude_synthesis(std::process::Command::new("claude"), model, prompt)
+}
+
+fn run_claude_synthesis(
+    mut command: std::process::Command,
+    model: &str,
+    prompt: &str,
+) -> Result<String> {
+    let output = command
         .args(["-p", prompt, "--model", model, "--max-turns", "1"])
+        // Internal prose generation must not open episodes or call the brain.
+        .args([
+            "--tools",
+            "",
+            "--strict-mcp-config",
+            "--mcp-config",
+            r#"{"mcpServers":{}}"#,
+            "--settings",
+            r#"{"disableAllHooks":true}"#,
+            "--no-session-persistence",
+        ])
         .env_remove("ANTHROPIC_BASE_URL")
         .env_remove("ANTHROPIC_API_KEY")
         .env_remove("ANTHROPIC_AUTH_TOKEN")
@@ -490,6 +509,37 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn internal_synthesis_disables_hooks_tools_and_mcp() {
+        let temp = TempDir::new().unwrap();
+        let script = temp.path().join("synthesis.sh");
+        fs::write(
+            &script,
+            r#"
+tools=0; hooks=0; mcp=0; strict=0; persistence=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --tools) shift; [ "$1" = "" ] || exit 21; tools=1 ;;
+    --settings) shift; [ "$1" = '{"disableAllHooks":true}' ] || exit 22; hooks=1 ;;
+    --mcp-config) shift; [ "$1" = '{"mcpServers":{}}' ] || exit 23; mcp=1 ;;
+    --strict-mcp-config) strict=1 ;;
+    --no-session-persistence) persistence=1 ;;
+  esac
+  shift
+done
+[ "$tools$hooks$mcp$strict$persistence" = 11111 ] || exit 24
+printf '# Source-only guide\n'
+"#,
+        )
+        .unwrap();
+        let mut command = std::process::Command::new("/bin/sh");
+        command.arg(&script);
+        assert_eq!(
+            run_claude_synthesis(command, "fixture", "A synthetic dossier").unwrap(),
+            "# Source-only guide"
+        );
+    }
 
     #[test]
     fn dossier_lists_facts_links_and_routes_deterministically() {

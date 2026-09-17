@@ -73,6 +73,10 @@ and invalidates evidence whose artifact was purged. Tests, commit observations,
 merge observations and explicit user acceptance remain distinct signals; a merge
 or an uncorrected next prompt never invents acceptance.
 
+Internal Claude synthesis disables hooks, tools, MCP and session persistence.
+Documentation refreshes must not create engineering episodes or recursively call
+the memory system. Existing cloud opt-in remains explicit.
+
 ## Limits
 
 This catalog is scoped to one daemon. Existing cross-instance memory sync does
