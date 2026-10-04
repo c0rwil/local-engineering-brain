@@ -21,20 +21,74 @@ pub const LAUNCHER_ENV: &str = "ENGRAM_DAEMON_LAUNCHER";
 /// Ancestor processes recorded in the launcher description.
 const MAX_LAUNCHER_ANCESTORS: usize = 4;
 
+/// How long a client waits for a draining daemon to exit before it gives up
+/// instead of starting a second daemon.
+const CLIENT_DRAIN_WAIT: Duration = Duration::from_secs(10);
+
+/// What answers on the daemon socket.
+enum Probe {
+    Ready(Box<crate::daemon::HealthResponse>),
+    /// A daemon is finishing in-flight work before it exits.
+    Draining(String),
+    Absent,
+}
+
 /// Ensure the sibling `engramd` is healthy, starting it detached when absent.
+/// A daemon that is draining is waited out (bounded) rather than raced.
 ///
 /// # Errors
 ///
-/// Returns an error when the daemon cannot be located, started, or made ready.
+/// Returns an error when the daemon cannot be located, started, or made
+/// ready, or when a draining daemon does not exit in time.
 pub async fn ensure_daemon(config: &Config) -> Result<()> {
     let client = DaemonClient::new(
         &config.daemon.socket_path,
         Duration::from_millis(config.daemon.request_timeout_ms.min(2_000)),
     );
-    if matching_health(&client, config).await?.is_some() {
+    if wait_out_drain(&client, config, CLIENT_DRAIN_WAIT)
+        .await?
+        .is_some()
+    {
         return Ok(());
     }
     start_daemon(&client, config, &launcher_description()).await
+}
+
+/// The serving daemon's health (`Some`) or nothing answering (`None`). A
+/// draining daemon is polled until it exits, up to `wait`.
+async fn wait_out_drain(
+    client: &DaemonClient,
+    config: &Config,
+    wait: Duration,
+) -> Result<Option<crate::daemon::HealthResponse>> {
+    let deadline = Instant::now() + wait;
+    loop {
+        match probe(client, config).await? {
+            Probe::Ready(health) => return Ok(Some(*health)),
+            Probe::Absent => return Ok(None),
+            Probe::Draining(detail) => {
+                if Instant::now() >= deadline {
+                    return Err(Error::Daemon(format!(
+                        "{}: {detail}; it did not exit within {} s, retry shortly",
+                        crate::lifecycle::DRAINING_CODE,
+                        wait.as_secs()
+                    )));
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+}
+
+async fn probe(client: &DaemonClient, config: &Config) -> Result<Probe> {
+    match client.health().await {
+        Ok(health) => {
+            check_health(&health, config)?;
+            Ok(Probe::Ready(Box::new(health)))
+        }
+        Err(error) => Ok(crate::lifecycle::draining_detail(&error)
+            .map_or(Probe::Absent, |detail| Probe::Draining(detail.to_owned()))),
+    }
 }
 
 async fn start_daemon(client: &DaemonClient, config: &Config, launcher: &str) -> Result<()> {
@@ -66,8 +120,10 @@ async fn start_daemon(client: &DaemonClient, config: &Config, launcher: &str) ->
             let _ = child.wait();
         })
         .map_err(|error| Error::Daemon(format!("could not start daemon reaper: {error}")))?;
+    // A daemon that is still exiting holds the lock; the new one waits for
+    // it, so `draining` here means "not yet", not "failed".
     for _ in 0..100 {
-        if matching_health(client, config).await?.is_some() {
+        if matches!(probe(client, config).await?, Probe::Ready(_)) {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -76,6 +132,91 @@ async fn start_daemon(client: &DaemonClient, config: &Config, launcher: &str) ->
         "auto-started engramd did not become ready at {}",
         config.daemon.socket_path.display()
     )))
+}
+
+/// Outcome of [`stop_daemon`].
+#[derive(Clone, Debug, Serialize)]
+pub struct StopReport {
+    /// A daemon answered (serving or already draining) and was asked to stop.
+    #[serde(rename = "shutdown_requested")]
+    pub stopped: bool,
+    /// The daemon's process id, from its health report or its socket.
+    pub pid: Option<u32>,
+    /// Whether it exited within the wait; `None` when not waited for.
+    pub exited: Option<bool>,
+    /// Without a pid to watch: another daemon replaced the socket meanwhile.
+    pub replaced: bool,
+    pub waited_ms: u64,
+}
+
+/// Ask the daemon on this configuration's socket to stop, then wait up to
+/// `wait` (zero: do not wait) for its process to exit. The pid comes from the
+/// health report or, for daemons that do not report one, from the socket's
+/// peer credentials, so the wait follows the process even when another
+/// client binds a new socket meanwhile.
+///
+/// # Errors
+///
+/// Returns an error when the socket serves another database or the stop
+/// request fails.
+pub async fn stop_daemon(config: &Config, wait: Duration) -> Result<StopReport> {
+    let socket = &config.daemon.socket_path;
+    let client = DaemonClient::new(
+        socket,
+        Duration::from_millis(config.daemon.request_timeout_ms.min(2_000)),
+    );
+    let reported_pid = match client.health().await {
+        Ok(health) if health.database != config.storage.db_path => {
+            return Err(Error::Daemon(format!(
+                "socket {} belongs to database {}, not {}; not stopping it",
+                socket.display(),
+                health.database.display(),
+                config.storage.db_path.display()
+            )));
+        }
+        Ok(health) => health.pid,
+        Err(error) => {
+            // A draining daemon, or an older build whose health response this
+            // client cannot read, is still asked to stop: after an upgrade the
+            // socket serves an old build, and stopping it is the point.
+            if !crate::lifecycle::is_draining(&error)
+                && !crate::lifecycle::is_listening(socket).await
+            {
+                return Ok(StopReport {
+                    stopped: false,
+                    pid: None,
+                    exited: None,
+                    replaced: false,
+                    waited_ms: 0,
+                });
+            }
+            None
+        }
+    };
+    let pid = match reported_pid {
+        Some(pid) => Some(pid),
+        None => crate::lifecycle::serving_pid(socket).await,
+    };
+    let inode = crate::lifecycle::socket_inode(socket);
+    client.shutdown().await?;
+    if wait.is_zero() {
+        return Ok(StopReport {
+            stopped: true,
+            pid,
+            exited: None,
+            replaced: false,
+            waited_ms: 0,
+        });
+    }
+    let started = Instant::now();
+    let outcome = crate::lifecycle::wait_for_exit(socket, pid, inode, wait).await;
+    Ok(StopReport {
+        stopped: true,
+        pid,
+        exited: Some(outcome != crate::lifecycle::ExitWait::Running),
+        replaced: outcome == crate::lifecycle::ExitWait::Replaced,
+        waited_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    })
 }
 
 /// Outcome of [`restart_daemon`].
@@ -92,6 +233,9 @@ pub struct RestartReport {
     /// False when another client auto-started the serving daemon first; it
     /// then runs with that client's environment and privacy access.
     pub started_by_this_process: bool,
+    /// A daemon another client started after the old one exited, replaced
+    /// once so the new daemon runs with this process's environment.
+    pub displaced_pid: Option<u32>,
 }
 
 /// Gracefully stop the daemon that serves this configuration, wait until it
@@ -110,64 +254,47 @@ pub async fn restart_daemon(config: &Config, wait: Duration) -> Result<RestartRe
         &config.daemon.socket_path,
         Duration::from_millis(config.daemon.request_timeout_ms.min(2_000)),
     );
-    let previous = client.health().await.ok();
-    if let Some(previous) = &previous {
-        if previous.database != config.storage.db_path {
-            return Err(Error::Daemon(format!(
-                "socket {} belongs to database {}, not {}; not stopping it",
-                config.daemon.socket_path.display(),
-                previous.database.display(),
-                config.storage.db_path.display()
-            )));
-        }
-        client.shutdown().await?;
-        wait_for_exit(&config.daemon.socket_path, previous.pid, wait).await?;
+    let stopped = stop_daemon(config, wait).await?;
+    if stopped.exited == Some(false) {
+        let process = stopped
+            .pid
+            .map_or_else(|| "engramd".to_owned(), |pid| format!("engramd pid {pid}"));
+        return Err(Error::Daemon(format!(
+            "{process} is still finishing in-flight work after {} s; nothing was started. \
+             Run `engram daemon restart` again later",
+            wait.as_secs()
+        )));
     }
     let launcher = launcher_description();
-    if matching_health(&client, config).await?.is_none() {
-        start_daemon(&client, config, &launcher).await?;
+    let mut displaced = false;
+    let mut displaced_pid = None;
+    // Start, then confirm; at most one displacement in between.
+    for _ in 0..3 {
+        match wait_out_drain(&client, config, CLIENT_DRAIN_WAIT).await? {
+            None => start_daemon(&client, config, &launcher).await?,
+            Some(health) if health.launcher.as_deref() == Some(launcher.as_str()) => break,
+            // Another client started a daemon in the gap, with its own
+            // environment and folder access. Replace it once.
+            Some(_) if !displaced => {
+                displaced = true;
+                let stopped_other = stop_daemon(config, wait).await?;
+                displaced_pid = stopped_other.pid;
+                if stopped_other.exited == Some(false) {
+                    break;
+                }
+            }
+            Some(_) => break,
+        }
     }
     let health = client.health().await?;
     Ok(RestartReport {
-        stopped_previous: previous.is_some(),
-        previous_pid: previous.and_then(|previous| previous.pid),
+        stopped_previous: stopped.stopped,
+        previous_pid: stopped.pid,
         pid: health.pid,
         started_by_this_process: health.launcher.as_deref() == Some(launcher.as_str()),
         launcher: health.launcher,
+        displaced_pid,
     })
-}
-
-/// Wait until the stopping daemon has exited. It removes its socket only
-/// after draining, so a vanished socket (or, for daemons that report a pid,
-/// a vanished process) means the old process is done.
-async fn wait_for_exit(socket: &Path, pid: Option<u32>, wait: Duration) -> Result<()> {
-    let deadline = Instant::now() + wait;
-    loop {
-        if !socket.exists() || pid.is_some_and(|pid| !process_alive(pid)) {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            let process =
-                pid.map_or_else(|| "engramd".to_owned(), |pid| format!("engramd pid {pid}"));
-            return Err(Error::Daemon(format!(
-                "{process} is still finishing in-flight work after {} s; nothing was started. \
-                 Run `engram daemon restart` again later",
-                wait.as_secs()
-            )));
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-fn process_alive(pid: u32) -> bool {
-    Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
 }
 
 /// Describe the process starting a daemon and its ancestors, for example
@@ -251,16 +378,46 @@ fn daemon_command(daemon: &Path, config: &Config, snapshot: &Path) -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    close_inherited_descriptors(&mut command);
     command
 }
 
-async fn matching_health(
-    client: &DaemonClient,
-    config: &Config,
-) -> Result<Option<crate::daemon::HealthResponse>> {
-    let Ok(health) = client.health().await else {
-        return Ok(None);
+/// Highest descriptor number checked when closing inherited descriptors.
+const MAX_INHERITED_DESCRIPTOR: i32 = 65_536;
+
+/// A long-lived daemon must hold no descriptor of the process that started
+/// it beyond stdio. On macOS Rust creates pipes with `pipe()` and marks them
+/// close-on-exec only afterwards, so a daemon spawned while another thread
+/// creates a pipe can inherit it and keep it open for its whole life (a hook
+/// that waited for EOF on such a pipe hung for over 20 minutes). The child
+/// closes every descriptor from 3 up that is not already close-on-exec.
+#[allow(unsafe_code)]
+fn close_inherited_descriptors(command: &mut Command) {
+    use std::os::unix::process::CommandExt as _;
+
+    // Read in the parent so the child only makes async-signal-safe calls.
+    // SAFETY: getdtablesize has no preconditions and touches no memory.
+    let limit = unsafe { libc::getdtablesize() }.clamp(3, MAX_INHERITED_DESCRIPTOR);
+    let close = move || -> std::io::Result<()> {
+        for descriptor in 3..limit {
+            // SAFETY: fcntl and close are async-signal-safe system calls on a
+            // plain integer. Close-on-exec descriptors, such as the standard
+            // library's exec-error pipe, are left for exec to close.
+            let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+            if flags >= 0 && flags & libc::FD_CLOEXEC == 0 {
+                // SAFETY: as above; nothing in the child uses the descriptor.
+                unsafe { libc::close(descriptor) };
+            }
+        }
+        Ok(())
     };
+    // SAFETY: `close` runs between fork and exec, allocates nothing, holds no
+    // locks and only calls fcntl and close.
+    unsafe { command.pre_exec(close) };
+}
+
+/// Refuse a daemon that serves another database, workspace or build.
+fn check_health(health: &crate::daemon::HealthResponse, config: &Config) -> Result<()> {
     if health.database != config.storage.db_path {
         return Err(Error::Daemon(format!(
             "socket {} belongs to database {}, not {}",
@@ -290,7 +447,7 @@ async fn matching_health(
             crate::BUILD_ID
         )));
     }
-    Ok(Some(health))
+    Ok(())
 }
 
 #[cfg(test)]
@@ -381,8 +538,84 @@ mod tests {
         );
     }
 
-    #[test]
-    fn process_liveness_probe_sees_this_process() {
-        assert!(process_alive(std::process::id()));
+    /// A daemon from an older build: its health response lacks fields this
+    /// client requires and it reports no pid. On shutdown it stops listening
+    /// at once and removes its socket only when it has finished.
+    async fn serve_unreadable_health(
+        listener: tokio::net::UnixListener,
+        socket: std::path::PathBuf,
+    ) {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        loop {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1_024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                match stream.read(&mut buffer).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(&buffer[..read]),
+                }
+            }
+            if request.is_empty() {
+                // A probe that only connected.
+                continue;
+            }
+            let shutdown = request.starts_with(b"POST /api/v1/admin/shutdown ");
+            let body = if shutdown {
+                "null"
+            } else {
+                r#"{"status":"ok","version":"0.0.1"}"#
+            };
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
+                 connection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+            if shutdown {
+                drop(listener);
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                std::fs::remove_file(&socket).expect("remove socket");
+                return;
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_reaches_a_daemon_whose_health_this_client_cannot_read() {
+        let temp = tempfile::TempDir::new().expect("home");
+        let mut config = Config::load_layers(None, None, &ConfigOverrides::default(), temp.path())
+            .expect("config");
+        config.daemon.socket_path = temp.path().join("old.sock");
+        let listener = tokio::net::UnixListener::bind(&config.daemon.socket_path).expect("listen");
+        let old_daemon = tokio::spawn(serve_unreadable_health(
+            listener,
+            config.daemon.socket_path.clone(),
+        ));
+        assert!(
+            DaemonClient::new(&config.daemon.socket_path, Duration::from_secs(2))
+                .health()
+                .await
+                .is_err()
+        );
+
+        let report = stop_daemon(&config, Duration::from_secs(10))
+            .await
+            .expect("stop");
+        assert!(report.stopped, "{report:?}");
+        // Found through the socket's peer credentials.
+        assert_eq!(report.pid, Some(std::process::id()));
+        // This test process is no daemon executable, so the socket was
+        // watched until the old daemon removed it.
+        assert_eq!(report.exited, Some(true));
+        assert!(!report.replaced);
+        assert!(report.waited_ms >= 200, "{report:?}");
+        old_daemon.await.expect("old daemon");
+
+        let absent = stop_daemon(&config, Duration::from_secs(1))
+            .await
+            .expect("nothing to stop");
+        assert!(!absent.stopped);
+        assert_eq!(absent.pid, None);
     }
 }

@@ -154,6 +154,24 @@ not yet stable, and the schema version is 7.
 
 ### Fixed
 
+- A second daemon could start while the first was still draining: the first
+  closed its listener at once, a hook auto-started another daemon, and both
+  held the database (a new build migrated under the old one, and job recovery
+  requeued the old daemon's running job). `engramd` now holds an exclusive
+  lock on `<database>.daemon.lock` for its whole life, refuses to start while
+  a daemon from a build without the lock still has the database open, and
+  keeps its socket open while it drains, answering `draining` until requests,
+  the background job, a judge call and queued writes have finished (bounded;
+  writes still queued at the bound are logged as dropped); SIGTERM drains the
+  same way. Clients wait for a draining daemon instead of starting another.
+  `engram daemon stop` waits for the process to exit (`--wait-secs`),
+  `engram daemon restart` follows the old daemon by pid even when it does not
+  report one, and `scripts/install.sh` stops the previous daemon with the new
+  client after installing and waits for it to exit.
+- An auto-started daemon no longer inherits descriptors of the process that
+  started it. A pipe another thread had just created (not yet close-on-exec
+  on macOS) could stay open in the daemon, so a hook waiting for EOF on it
+  hung.
 - A checkout the process may not read (for example a macOS privacy denial in
   an auto-started daemon) is no longer treated as a folder without Git: it
   fails registration, lookup and Git probing with a `permission_denied` error

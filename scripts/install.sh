@@ -38,11 +38,8 @@ SOURCE_HASH=$(
 echo "Building Engram release ${SOURCE_HASH}..." >&2
 (cd "${PROJECT_ROOT}" && ENGRAM_BUILD_ID="${SOURCE_HASH}" cargo build --release --locked)
 
-# Keep the running daemon available until the new build has succeeded.
-if [ -x "${INSTALL_BIN_DIR}/engram" ]; then
-  "${INSTALL_BIN_DIR}/engram" daemon stop >/dev/null 2>&1 || true
-fi
-
+# The running daemon keeps serving from its own release until the new build is
+# installed below; it is stopped only after the symlinks point at the new one.
 RELEASE_DIR="${INSTALL_STATE_DIR}/releases/${SOURCE_HASH}"
 STAGING_DIR="${INSTALL_STATE_DIR}/releases/.${SOURCE_HASH}.staging.$$"
 mkdir -p "${STAGING_DIR}/bin"
@@ -74,6 +71,15 @@ for pair in leb:engram lebd:engramd leb-proxy:engram-proxy leb-mcp:engram-mcp; d
   ln -s "${RELEASE_DIR}/bin/${current}" "${temporary}"
   mv -f "${temporary}" "${INSTALL_BIN_DIR}/${legacy}"
 done
+
+# Stop the previous daemon with the NEW client and wait for its process to
+# exit: it finds an older daemon's pid through the socket even when that
+# daemon does not report one. Daemons started meanwhile are the new build,
+# and they refuse to start while the old process still has the database open.
+if ! "${INSTALL_BIN_DIR}/engram" daemon stop --wait-secs 150 >&2; then
+  echo "install: the previous daemon is still finishing in-flight work; the new" \
+    "daemon starts once it has exited" >&2
+fi
 
 MANIFEST_TMP="${INSTALL_STATE_DIR}/.install-manifest.json.$$"
 {

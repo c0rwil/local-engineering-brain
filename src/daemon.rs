@@ -203,6 +203,11 @@ struct DaemonState {
     metrics: Arc<MetricsRegistry>,
     shutdown: Arc<tokio::sync::Notify>,
     started: Instant,
+    /// Set once shutdown starts: new requests get `draining` while the
+    /// listener stays open, so clients do not start a second daemon.
+    draining: Arc<std::sync::atomic::AtomicBool>,
+    /// Requests admitted and not yet answered.
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// Bounded derived cache over graph read endpoints. Values are never
@@ -900,6 +905,20 @@ impl ApiError {
             body: ApiErrorBody {
                 code: "request_timeout".to_owned(),
                 message: "daemon request exceeded its configured deadline".to_owned(),
+                retryable: true,
+            },
+        }
+    }
+
+    fn draining() -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            body: ApiErrorBody {
+                code: crate::lifecycle::DRAINING_CODE.to_owned(),
+                message: format!(
+                    "engramd pid {} is finishing in-flight work before it exits",
+                    std::process::id()
+                ),
                 retryable: true,
             },
         }
@@ -1902,21 +1921,76 @@ fn requires_terminal_ack(method: &hyper::Method, path: &str) -> bool {
         || path == API_SKILL_PROMOTE
 }
 
-/// Serve the local API until `shutdown` resolves.
+/// Longest a graceful shutdown waits for in-flight requests, the background
+/// job and a judge call before it closes the listener anyway.
+const DRAIN_DEADLINE: Duration = Duration::from_secs(120);
+
+/// Longest a graceful shutdown waits for already-queued writes (some
+/// endpoints acknowledge a write once it is queued).
+const WRITE_DRAIN_DEADLINE: Duration = Duration::from_secs(10);
+
+/// Serve the local API until `shutdown` resolves, holding the database's
+/// daemon lock (see [`crate::lifecycle`]) for the duration.
 ///
 /// # Errors
 ///
-/// Returns an error when canonical storage or the Unix socket cannot be safely
-/// initialized, or when the HTTP server exits abnormally.
-#[allow(clippy::too_many_lines)]
+/// Returns an error when another daemon holds the database, when canonical
+/// storage or the Unix socket cannot be safely initialized, or when the HTTP
+/// server exits abnormally.
 pub async fn serve_until<F>(config: Config, external_shutdown: F) -> Result<()>
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    // Claim the database-scoped socket before opening canonical storage. Two
-    // edge processes may race to auto-start `engramd`; the socket is the
-    // cross-process ownership primitive that prevents concurrent migration
-    // and writer initialization.
+    let database = config.storage.db_path.clone();
+    let lock = tokio::task::spawn_blocking(move || {
+        crate::lifecycle::DaemonLock::acquire(&database, crate::lifecycle::start_wait())
+    })
+    .await
+    .map_err(|error| Error::Daemon(format!("daemon lock task failed: {error}")))??;
+    serve_with_lock(config, &lock, external_shutdown).await
+}
+
+/// Serve the local API until `shutdown` resolves. The caller holds `lock`
+/// for this database, which `engramd` keeps until the process exits.
+///
+/// # Errors
+///
+/// Returns an error when `lock` guards another database, when a daemon from
+/// a build without the lock still has the database open, when canonical
+/// storage or the Unix socket cannot be safely initialized, or when the HTTP
+/// server exits abnormally.
+#[allow(clippy::too_many_lines)]
+pub async fn serve_with_lock<F>(
+    config: Config,
+    lock: &crate::lifecycle::DaemonLock,
+    external_shutdown: F,
+) -> Result<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    if lock.database() != config.storage.db_path {
+        return Err(Error::Daemon(format!(
+            "daemon lock {} does not guard {}",
+            lock.path().display(),
+            config.storage.db_path.display()
+        )));
+    }
+    // A daemon built before the lock closes its listener at once on shutdown
+    // but keeps the database open while it drains, and can still hold it for
+    // a moment after removing its socket file. Unless a daemon answers on the
+    // socket (binding below refuses that case), wait for such a process to
+    // let go of the database.
+    if std::os::unix::net::UnixStream::connect(&config.daemon.socket_path).is_err() {
+        let database = config.storage.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::lifecycle::wait_for_unlocked_daemons(&database, crate::lifecycle::start_wait())
+        })
+        .await
+        .map_err(|error| Error::Daemon(format!("daemon handover task failed: {error}")))??;
+    }
+    // Claim the database-scoped socket before opening canonical storage. The
+    // daemon lock already excludes other lock-holding daemons; the socket
+    // probe still refuses a serving daemon from a build without the lock.
     let (listener, _guard) = bind_socket(
         &config.daemon.socket_path,
         usize::from(config.daemon.max_connections),
@@ -1947,6 +2021,8 @@ where
         metrics: Arc::new(MetricsRegistry::default()),
         shutdown: Arc::clone(&local_shutdown),
         started: Instant::now(),
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     };
     // Preserve a pre-catalog guide once. The vault is an optional export from
     // this point onward; it is never required to serve documentation.
@@ -2070,36 +2146,108 @@ where
             state.clone(),
             track_request_latency,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            drain_gate,
+        ))
         .with_state(state.clone());
 
     let (jobs_stop_sender, jobs_handle) = start_job_system(&state, &config).await?;
 
-    let judge_stopping = Arc::clone(&state.judge_stopping);
-    let shutdown_signal = async move {
-        tokio::select! {
-            () = external_shutdown => {}
-            () = local_shutdown.notified() => {}
-        }
-        judge_stopping.store(true, std::sync::atomic::Ordering::SeqCst);
-        let _ = jobs_stop_sender.send(true);
+    // The listener stays open until the drain below has finished, so clients
+    // see `draining` instead of a refused connection and never start a second
+    // daemon while this one still writes.
+    let (close_sender, close_receiver) = tokio::sync::oneshot::channel::<()>();
+    let mut server = tokio::spawn(
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                let _ = close_receiver.await;
+            })
+            .into_future(),
+    );
+    let socket_path = config.daemon.socket_path.clone();
+    let server_outcome = |joined: std::result::Result<io::Result<()>, tokio::task::JoinError>| {
+        joined
+            .map_err(|error| Error::Daemon(format!("daemon server task failed: {error}")))?
+            .map_err(|source| io_error(&socket_path, source))
     };
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal)
-        .await
-        .map_err(|source| io_error(&config.daemon.socket_path, source))?;
-    if let Some(handle) = jobs_handle {
-        handle
-            .await
-            .map_err(|error| Error::Daemon(format!("job runner exited abnormally: {error}")))?;
+    tokio::select! {
+        () = external_shutdown => {}
+        () = local_shutdown.notified() => {}
+        joined = &mut server => return server_outcome(joined),
     }
-    // Finish the one in-flight, timeout-bounded inference and persist its audit
-    // before the runtime exits. No further batch items start once stopping.
-    let _judge_finished = state
-        .judge_slot
-        .acquire()
-        .await
-        .map_err(|error| Error::Daemon(format!("judge shutdown wait failed: {error}")))?;
-    Ok(())
+    let drained = drain(&state, jobs_stop_sender, jobs_handle).await;
+    let _ = close_sender.send(());
+    if let Ok(joined) = tokio::time::timeout(Duration::from_secs(5), &mut server).await {
+        server_outcome(joined)?;
+    } else {
+        server.abort();
+        eprintln!("engramd: closing connections that outlived the drain");
+    }
+    drained
+}
+
+/// Stop admitting work, then finish what was admitted, each step bounded:
+/// the background job, a judge call and in-flight requests within
+/// [`DRAIN_DEADLINE`], then already-queued writes within
+/// [`WRITE_DRAIN_DEADLINE`]. Work still unfinished at a bound is logged.
+async fn drain(
+    state: &DaemonState,
+    jobs_stop: tokio::sync::watch::Sender<bool>,
+    jobs: Option<tokio::task::JoinHandle<()>>,
+) -> Result<()> {
+    use std::sync::atomic::Ordering;
+    state.draining.store(true, Ordering::SeqCst);
+    state.judge_stopping.store(true, Ordering::SeqCst);
+    let _ = jobs_stop.send(true);
+    let deadline = tokio::time::Instant::now() + DRAIN_DEADLINE;
+    let mut outcome = Ok(());
+    if let Some(handle) = jobs {
+        match tokio::time::timeout_at(deadline, handle).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                outcome = Err(Error::Daemon(format!(
+                    "job runner exited abnormally: {error}"
+                )));
+            }
+            Err(_) => eprintln!("engramd: the running background job outlived the drain deadline"),
+        }
+    }
+    // Finish the one in-flight, timeout-bounded inference and persist its
+    // audit. No further batch items start once stopping.
+    let _judge_finished = match tokio::time::timeout_at(deadline, state.judge_slot.acquire()).await
+    {
+        Ok(Ok(permit)) => Some(permit),
+        Ok(Err(error)) => {
+            return Err(Error::Daemon(format!(
+                "judge shutdown wait failed: {error}"
+            )));
+        }
+        Err(_) => {
+            eprintln!("engramd: the judge call outlived the drain deadline");
+            None
+        }
+    };
+    while state.in_flight.load(Ordering::SeqCst) > 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let unanswered = state.in_flight.load(Ordering::SeqCst);
+    if unanswered > 0 {
+        eprintln!("engramd: {unanswered} requests outlived the drain deadline and are cut off");
+    }
+    // Some endpoints acknowledge once a write is queued; let those land.
+    let write_deadline = tokio::time::Instant::now() + WRITE_DRAIN_DEADLINE;
+    while state.scheduler.pending() > 0 && tokio::time::Instant::now() < write_deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let dropped = state.scheduler.pending();
+    if dropped > 0 {
+        eprintln!(
+            "engramd: {dropped} queued writes did not finish within {} s and are dropped",
+            WRITE_DRAIN_DEADLINE.as_secs()
+        );
+    }
+    outcome
 }
 
 /// Recover crashed jobs, then start the daemon-owned background job loop.
@@ -2293,6 +2441,35 @@ async fn health(State(state): State<DaemonState>) -> Json<HealthResponse> {
         pid: Some(std::process::id()),
         launcher: std::env::var(crate::autostart::LAUNCHER_ENV).ok(),
     })
+}
+
+/// Counts one admitted request until its response is produced.
+struct InFlight(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Admit requests while serving; answer `draining` once shutdown started.
+/// The request is counted before the flag is read, so the drain cannot miss
+/// a request that was admitted just before it began.
+async fn drain_gate(
+    State(state): State<DaemonState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    state
+        .in_flight
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let _counted = InFlight(Arc::clone(&state.in_flight));
+    if state.draining.load(std::sync::atomic::Ordering::SeqCst)
+        && request.uri().path() != API_SHUTDOWN
+    {
+        return ApiError::draining().into_response();
+    }
+    next.run(request).await
 }
 
 /// Time every served request into its endpoint-group histogram. One relaxed
@@ -5114,6 +5291,63 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("daemon did not become ready");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn drain_lands_writes_acknowledged_once_queued() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        let temp = TempDir::new().expect("temp dir");
+        let config = test_config(&temp);
+        let state = DaemonState {
+            database: Database::open(&config.storage.db_path).expect("database"),
+            redactor: Redactor::new(&config.security.custom_redaction_patterns).expect("redactor"),
+            config: Arc::new(config),
+            scheduler: MutationScheduler::start(64),
+            blocking_slots: Arc::new(Semaphore::new(2)),
+            background_slots: Arc::new(Semaphore::new(1)),
+            judge_slot: Arc::new(Semaphore::new(1)),
+            judge_stopping: Arc::new(AtomicBool::new(false)),
+            world_cache: None,
+            metrics: Arc::new(MetricsRegistry::default()),
+            shutdown: Arc::new(tokio::sync::Notify::new()),
+            started: Instant::now(),
+            draining: Arc::new(AtomicBool::new(false)),
+            in_flight: Arc::new(AtomicUsize::new(0)),
+        };
+        // Hold the writer so writes acknowledged at enqueue pile up behind it,
+        // as tool observations do behind higher-priority work.
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let _blocker = state
+            .scheduler
+            .submit(MutationPriority::Interactive, move || {
+                let _ = held.recv();
+                Ok(())
+            })
+            .expect("blocker");
+        let landed = Arc::new(AtomicUsize::new(0));
+        for _ in 0..20 {
+            let landed = Arc::clone(&landed);
+            let _acknowledged = state
+                .scheduler
+                .submit(MutationPriority::Analytics, move || {
+                    landed.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+                .expect("queued write");
+        }
+        assert!(state.scheduler.pending() >= 20);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            let _ = release.send(());
+        });
+        let (stop, stopped) = tokio::sync::watch::channel(false);
+        drain(&state, stop, None).await.expect("drain");
+        assert!(*stopped.borrow(), "the job loop is told to stop");
+        assert!(state.draining.load(Ordering::SeqCst), "new work is refused");
+        assert!(state.judge_stopping.load(Ordering::SeqCst));
+        assert_eq!(landed.load(Ordering::SeqCst), 20, "queued writes landed");
+        assert_eq!(state.scheduler.pending(), 0);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

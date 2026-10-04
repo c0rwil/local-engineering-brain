@@ -34,6 +34,9 @@ http-body-util = "0.1.5"
 hyper = { version = "1.11.1", features = ["client", "http1"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 ignore = "0.4.25"
+# Already in the dependency graph; used directly only to close inherited
+# descriptors in an auto-started daemon (src/autostart.rs).
+libc = "0.2.189"
 moka = { version = "0.12.16", features = ["sync"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls"] }
 regex = "1.12.3"
@@ -74,7 +77,9 @@ lto = "thin"
 strip = true
 
 [lints.rust]
-unsafe_code = "forbid"
+# Denied everywhere; the one audited exception is the daemon spawn in
+# src/autostart.rs (`#[allow(unsafe_code)]` with SAFETY notes).
+unsafe_code = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

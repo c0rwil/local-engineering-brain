@@ -15,7 +15,7 @@ path, ever.
 | Full test suite | `cargo test --all-targets --all-features` |
 | Release build | `cargo build --release --locked` |
 | Install everything | `sh scripts/install.sh` (versioned releases under `~/.local/share/engram`, symlinks in `~/.local/bin`) |
-| Daemon status / stop / restart | `engram daemon status --json` / `engram daemon stop` / `engram daemon restart` (new daemon inherits this terminal's env and macOS folder access) |
+| Daemon status / stop / restart | `engram daemon status --json` / `engram daemon stop` (waits for the process to exit, `--wait-secs`) / `engram daemon restart` (new daemon inherits this terminal's env and macOS folder access) |
 | Diagnostics | `engram doctor --json` (daemon-side `checkout_access` and `project_identity`; CLI-side `codex_hooks` trust) |
 | Index a repo | `engram index <path> --json` (local tree; add `--origin` for fetched origin/main via throwaway worktree) |
 | Compile context | `engram context "<query>" --path <repo> --budget N --json` |
@@ -81,6 +81,17 @@ protection), so bump-and-reinstall order matters: build, install, restart
 - A running `engramd` predating a schema bump keeps serving old response shapes.
   After `cargo install`, restart it (`engram daemon stop`; next CLI call
   auto-starts the sibling binary) or clients may see deserialization gaps.
+- One daemon per database (`src/lifecycle.rs`): `engramd` holds an exclusive
+  `flock` on `<db>.daemon.lock` from before migrations and job recovery until
+  the process exits, and refuses to start while a daemon from a build without
+  the lock still has the database open (found with `lsof`/`/proc`). Stopping
+  keeps the listener open and answers `draining` (503) while it finishes
+  requests, the job, a judge call and queued writes (bounded 120 s + 10 s);
+  closing the listener first let a hook start a second daemon that migrated
+  and requeued jobs under the first. A daemon spawn closes every inherited
+  descriptor except stdio (`pre_exec`, the crate's only `unsafe`): macOS std
+  pipes get close-on-exec only after `pipe()`, and a daemon that inherited a
+  hook's stdin pipe kept that hook from ever seeing EOF.
 - Structural freshness needs the PRIOR scan's dirty-path set to catch files
   whose local edits were reverted while other files stayed dirty. It is
   persisted in `structural_scans.changed_paths_json` (NULL ⇒ conservative full
