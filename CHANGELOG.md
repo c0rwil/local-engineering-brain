@@ -57,6 +57,24 @@ not yet stable, and the schema version is 7.
 
 ### Added
 
+- Codex verification runs become evidence. Codex 0.155 sends hooks neither a
+  shell command's exit status nor the directory it ran in (`exec_command`
+  takes a `workdir`; the payload `cwd` is the session's). Its paginated
+  rollout records both in the `item_completed` event of the command, keyed by
+  the call id that hooks send as `tool_use_id`. The post-tool hook reads that
+  record from the calling thread's own rollout (root or spawned worker, never
+  an internal sub-session), waiting up to 1.5 s for the writer. It records
+  the evidence in the project where the command ran, with
+  `exit_status: "codex_rollout"`. Shell rules still apply: a pipe, `;` or
+  `||` still hides the status. Without a record the result stays unknown,
+  and so does the directory: every earlier result of the same command becomes
+  unknown in each of the session's episodes. Codex's exit code -1 (no exit
+  code, or the command could not run) is never a status.
+- The verification ledger labels a run `unreported` when the shell kept its
+  exit status but the client reported none (a Codex run without a rollout
+  record, a failure without an exit code, an interrupted call). Such runs
+  counted as recordable before. Migration 0022 rebuilds
+  `verification_observations` to accept the label and keeps its rows.
 - `engram project merge --into <keep> --from <retire>` merges a repository
   registered as two projects (`engram doctor` reports them). It refuses
   unless live checkouts of both report the same canonical remote and root
@@ -214,9 +232,12 @@ not yet stable, and the schema version is 7.
 - The user guide said Codex reports exit codes to hooks. Codex 0.155 does not:
   every shell command, also one run from a code-mode `exec` cell, reaches
   hooks as a `Bash` call whose `tool_response` is the command's output text.
-  Engram reads no status from output text, so Codex verification runs are not
-  recorded from hooks; status notes still apply. The `exec` cell itself runs
-  no hook, and its JavaScript is never read as shell text.
+  Engram reads no status from output text (see Added for the rollout record
+  it reads instead). The `exec` cell itself runs no hook, and its JavaScript
+  is never read as shell text.
+- Codex tool observations record a failed command as a failed call when its
+  rollout record says so. Codex runs `PostToolUse` for failed commands too, so
+  every Codex shell call was recorded as completed.
 - An interrupted backup (`engram backup create`, daily and pre-merge
   backups) no longer leaves a partial, world-readable file that looks like a
   backup: the copy is written to a hidden 0600 file and renamed when

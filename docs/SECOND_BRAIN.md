@@ -174,7 +174,8 @@ recognize. Reports then show how many runs carry an exit status that Engram can
 record, and how that share moves after a [status
 note](USER_GUIDE.md#status-notes-when-a-run-cannot-be-recorded). A record keeps
 three things: the verification kind, the cause that hid the status (`pipe`,
-`sequence`, `or`, `background`, `directory` or `syntax`) and whether the hook
+`sequence`, `or`, `background`, `directory` or `syntax`, or `unreported` when
+the shell kept the status but the client reported none) and whether the hook
 delivered a note. It never keeps the command, its output or paths. Calls need
 agent-reported session and tool-use IDs. Records follow the
 `[jobs] context_run_retention_days` window. Hooks send them to

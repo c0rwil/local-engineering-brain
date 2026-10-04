@@ -310,16 +310,25 @@ coding client reported its exit status:
   N"). A completed foreground `PostToolUse` Bash call therefore has status 0.
   Interrupted, backgrounded or timed-out calls, and calls whose non-zero status
   Claude Code reinterpreted (for example `grep` finding nothing), are not recorded.
-- Codex 0.155 reports no exit status to hooks. Every shell command, whether
-  the model ran `exec_command` directly or from a code-mode `exec` cell, arrives
-  as a `Bash` `PostToolUse` call whose `tool_response` is the command's output
-  text, and Codex runs that hook for failing commands too. Engram does not read
-  a status from output text, so Codex verification runs get status notes but
-  are not recorded as evidence, and the episode's result for them stays
-  unknown. Record the result with `engram_record_evidence` (MCP) or
-  `engram task evidence`. A result that carries an explicit integer exit code
-  (`exit_code`, `exitCode`) is recorded. The code-mode `exec` cell itself runs
-  no hook, and Engram never reads its JavaScript as shell text.
+- Codex 0.155 sends hooks no exit status. Every shell command, whether the
+  model ran `exec_command` directly or from a code-mode `exec` cell, arrives as
+  a `Bash` `PostToolUse` call whose `tool_response` is the command's output
+  text. Codex runs that hook for failing commands too. The payload's `cwd` is
+  the session's directory, not necessarily the command's (`exec_command` takes
+  a `workdir`). Engram reads both from the calling thread's rollout
+  (`transcript_path`): Codex writes an `item_completed` record with the
+  command's exit code and directory, keyed by the call id that hooks send as
+  `tool_use_id`. The hook waits up to 1.5 s for that record and records the
+  evidence with `exit_status: "codex_rollout"` in the project where the
+  command ran. Only a paginated rollout of the calling thread is read: the
+  root thread's own rollout, or a spawned worker's own rollout. Rollouts of
+  internal sub-sessions such as the guardian are never read. Legacy rollouts
+  keep no such records. Without a record, the run's result is unknown, and so
+  is its directory: every earlier result of the same command becomes unknown
+  in each of the session's episodes. Output text never gives a status, and
+  Codex's placeholder exit code -1 (no exit code, or the command could not
+  run) is not a status either. The code-mode `exec` cell itself runs no hook,
+  and Engram never reads its JavaScript as shell text.
 
 The status must also belong to every verification in the command. Engram
 records `cargo test`, `cd repo && cargo test` and `cargo fmt --check && cargo
@@ -437,6 +446,12 @@ reader that records results. When it cannot build a checked form (for example a
   - the notes delivered;
   - the recordable share before and after each conversation's first note;
   - the hidden runs by cause.
+
+  A run counts as recordable only when the client also reported its status.
+  When the shell kept the status but the client reported none (a Codex run
+  without a rollout record, a failure without an exit code, an interrupted
+  call), the cause is `unreported`. No note covers it, because rerunning the
+  command does not change what the client reports.
 
   `--json` adds the same figures for each repository (`verification_status`).
   The browser's **Effectiveness** tab shows them per repository under

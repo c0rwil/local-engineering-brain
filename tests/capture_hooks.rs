@@ -213,6 +213,7 @@ fn codex_budget_preserves_capture_and_retries_omitted_file_briefs() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn native_codex_shell_and_multi_repo_patch_open_scoped_episodes() {
     let temp = TempDir::new().unwrap();
     let root = temp.path();
@@ -255,19 +256,43 @@ fn native_codex_shell_and_multi_repo_patch_open_scoped_episodes() {
             .unwrap(),
         2
     );
-    // Native Codex exec passes cmd, including cd relative to the tool workdir.
+    // Codex 0.155 reports a shell call as `Bash` with the command text; the
+    // rollout records where it ran and its exit code. `cd` is relative to
+    // that directory.
+    let rollout = root.join("rollout-native.jsonl");
+    std::fs::write(
+        &rollout,
+        format!(
+            "{}\n{}\n",
+            json!({"type":"session_meta","payload":{"id":"native-shell",
+                "session_id":"native-shell","source":"vscode","history_mode":"paginated"}}),
+            json!({"type":"event_msg","payload":{"type":"item_completed",
+                "item":{"type":"CommandExecution","id":"exec-native","status":"completed",
+                    "exit_code":0,"cwd":format!("file://{}", one.display())}}})
+        ),
+    )
+    .unwrap();
     cli(
         root,
         &["hook", "prompt", "--codex"],
-        Some(json!({"session_id":"native-shell","cwd":one,"prompt":"Verify compute"})),
+        Some(
+            json!({"session_id":"native-shell","cwd":one,"transcript_path":rollout,
+            "prompt":"Verify compute"}),
+        ),
     );
-    let shell = json!({"session_id":"native-shell","cwd":one,"tool_name":"functions.exec_command","tool_input":{"cmd":"cd ../two && cargo test","workdir":one},"tool_response":{"exit_code":0,"stdout":"test result: ok"}});
+    let shell = json!({"session_id":"native-shell","turn_id":"turn-1","cwd":one,
+        "hook_event_name":"PreToolUse","model":"gpt-test","permission_mode":"default",
+        "transcript_path":rollout,"tool_name":"Bash","tool_use_id":"exec-native",
+        "tool_input":{"command":"cd ../two && cargo test"}});
     let output = cli(root, &["hook", "pretool", "--codex"], Some(shell.clone()));
     assert!(
         serde_json::from_str::<Value>(&output).unwrap()["hookSpecificOutput"]["additionalContext"]
             .is_string()
     );
-    cli(root, &["hook", "bash", "--codex"], Some(shell));
+    let mut finished = shell;
+    finished["hook_event_name"] = json!("PostToolUse");
+    finished["tool_response"] = json!("test result: ok");
+    cli(root, &["hook", "bash", "--codex"], Some(finished));
     assert_eq!(
         connection
             .query_row(
@@ -291,7 +316,7 @@ fn native_codex_shell_and_multi_repo_patch_open_scoped_episodes() {
     cli(
         root,
         &["hook", "session-end", "--codex"],
-        Some(json!({"session_id":"native-shell","cwd":one})),
+        Some(json!({"session_id":"native-shell","cwd":one,"transcript_path":rollout})),
     );
     assert_eq!(
         connection

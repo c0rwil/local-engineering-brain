@@ -423,6 +423,8 @@ fn negated_or_conditional_pipefail_leaves_a_pipe_unrecorded() {
 }
 
 /// Item 8: a bare `is_error` flag is not an exit status for any client.
+/// Codex 0.155 sends output text; a result object carrying only an error
+/// flag (as tool results of other kinds do) is no status either.
 #[test]
 fn an_error_flag_alone_records_no_verification() {
     let f = Fixture::new(&["repo"]);
@@ -433,8 +435,10 @@ fn an_error_flag_alone_records_no_verification() {
     );
     f.hook(
         &["hook", "bash", "--codex"],
-        &json!({"session_id":"item-8","cwd":repo,"hook_event_name":"PostToolUse",
-            "tool_name":"exec_command","tool_use_id":"c1","tool_input":{"cmd":"cargo test"},
+        &json!({"session_id":"item-8","turn_id":"turn-1","cwd":repo,
+            "hook_event_name":"PostToolUse","model":"gpt-test","permission_mode":"default",
+            "transcript_path":null,"tool_name":"Bash","tool_use_id":"c1",
+            "tool_input":{"command":"cargo test"},
             "tool_response":{"is_error":false,"stdout":"test result: ok"}}),
     );
     assert!(f.evidence().is_empty());
@@ -565,5 +569,315 @@ fn a_registered_folder_outside_git_configures_its_subdirectories() {
     assert!(
         saved.contains("compute") && !saved.contains("TICKET-4711"),
         "{saved}"
+    );
+}
+
+// Codex 0.155 reports a shell command to `PostToolUse` as `Bash` with only
+// the command text and the output text. The calling thread's paginated
+// rollout records the command's exit code and the directory it ran in. The
+// helpers below write synthetic rollouts in that format.
+
+fn file_uri(path: &Path) -> String {
+    use std::fmt::Write as _;
+    use std::os::unix::ffi::OsStrExt as _;
+    let mut uri = String::from("file://");
+    for byte in path.as_os_str().as_bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-._~".contains(byte) {
+            uri.push(char::from(*byte));
+        } else {
+            write!(uri, "%{byte:02X}").unwrap();
+        }
+    }
+    uri
+}
+
+/// Start the rollout of Codex thread `thread` in session `session`.
+fn codex_rollout(path: &Path, thread: &str, session: &str, source: &Value) {
+    let meta = json!({"timestamp":"2026-10-04T00:00:00.000Z","type":"session_meta",
+        "payload":{"id":thread,"session_id":session,"source":source,
+            "history_mode":"paginated","cwd":"/synthetic","cli_version":"0.155.0-alpha.2.6"}});
+    std::fs::write(path, format!("{meta}\n")).unwrap();
+}
+
+/// Append the line Codex writes when shell call `id` finishes in `cwd`.
+fn codex_finished(path: &Path, id: &str, cwd: &Path, exit_code: i64) {
+    let status = if exit_code == 0 {
+        "completed"
+    } else {
+        "failed"
+    };
+    let line = json!({"timestamp":"2026-10-04T00:00:01.000Z","ordinal":2,"type":"event_msg",
+        "payload":{"type":"item_completed","thread_id":"synthetic","turn_id":"turn-1",
+            "started_at_ms":1,"completed_at_ms":2,
+            "item":{"type":"CommandExecution","id":id,"command":["/bin/zsh","-lc","synthetic"],
+                "cwd":file_uri(cwd),"status":status,"exit_code":exit_code,
+                "source":"unified_exec_startup","process_id":"7","parsed_cmd":[],
+                "stdout":"synthetic output","stderr":"","aggregated_output":"synthetic output",
+                "formatted_output":"synthetic output","duration":{"secs":1,"nanos":0}}}});
+    let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    writeln!(file, "{line}").unwrap();
+}
+
+impl Fixture {
+    fn codex_prompt(&self, session: &str, cwd: &Path, rollout: &Path) {
+        self.hook(
+            &["hook", "prompt", "--codex"],
+            &json!({"session_id":session,"turn_id":"turn-1","cwd":cwd,
+                "hook_event_name":"UserPromptSubmit","model":"gpt-test",
+                "permission_mode":"default","transcript_path":rollout,
+                "prompt":"Make compute return 2"}),
+        );
+    }
+
+    /// A Codex shell call as `PostToolUse` reports it: the session's `cwd`,
+    /// the command, and the output text. Returns the hook's output.
+    fn codex_bash(
+        &self,
+        session: &str,
+        cwd: &Path,
+        rollout: &Path,
+        id: &str,
+        command: &str,
+    ) -> String {
+        self.codex_call(&json!({"session_id":session,"turn_id":"turn-1","cwd":cwd,
+            "hook_event_name":"PostToolUse","model":"gpt-test","permission_mode":"default",
+            "transcript_path":rollout,"tool_name":"Bash","tool_use_id":id,
+            "tool_input":{"command":command},"tool_response":"synthetic output"}))
+    }
+
+    fn codex_call(&self, payload: &Value) -> String {
+        cli(self.root(), &["hook", "bash", "--codex"], Some(payload))
+    }
+
+    fn codex_end(&self, session: &str, cwd: &Path, rollout: &Path) {
+        self.hook(
+            &["hook", "session-end", "--codex"],
+            &json!({"session_id":session,"cwd":cwd,"transcript_path":rollout,
+                "hook_event_name":"SessionEnd","reason":"other"}),
+        );
+    }
+
+    /// Outcome of the session's episode for one repository.
+    fn outcome_in(&self, session: &str, repo: &str) -> String {
+        self.db()
+            .query_row(
+                "SELECT t.status FROM tasks t JOIN projects p ON p.id=t.project_id
+                 WHERE t.session_id=?1 AND p.name=?2",
+                [session, repo],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    /// Rows of `sql` once `expected` have committed: the daemon acknowledges
+    /// observations before it writes them.
+    fn committed(&self, sql: &str, expected: usize) -> Vec<(String, i64)> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let rows = self.rows(sql);
+            if rows.len() >= expected || std::time::Instant::now() > deadline {
+                return rows;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// Verification ledger rows (cause or "recordable", note), oldest first.
+    fn ledger(&self, expected: usize) -> Vec<(String, i64)> {
+        self.committed(
+            "SELECT coalesce(hidden_reason, 'recordable'), note_delivered
+             FROM verification_observations ORDER BY observed_at_ms, rowid",
+            expected,
+        )
+    }
+}
+
+/// The rollout record gives a Codex run its exit status and the directory it
+/// ran in, which the payload's session `cwd` does not: here the model ran
+/// the tests with `workdir` set to another folder.
+#[test]
+fn codex_rollout_records_become_evidence_where_the_command_ran() {
+    let f = Fixture::new(&["one", "two repo"]);
+    let (one, two) = (f.repo("one"), f.repo("two repo"));
+    let rollout = f.root().join("rollout-root.jsonl");
+    codex_rollout(&rollout, "codex-ran", "codex-ran", &json!("vscode"));
+    f.codex_prompt("codex-ran", &one, &rollout);
+    codex_finished(&rollout, "exec-1", &one, 101);
+    assert_eq!(
+        f.codex_bash("codex-ran", &one, &rollout, "exec-1", "cargo test"),
+        ""
+    );
+    codex_finished(&rollout, "exec-2", &two, 0);
+    f.codex_bash("codex-ran", &one, &rollout, "exec-2", "cargo test");
+    assert_eq!(
+        f.rows(
+            "SELECT p.name || ' ' || json_extract(e.metadata_json,'$.exit_status') || ' ' ||
+                json_extract(e.metadata_json,'$.source'), e.exit_code
+             FROM evidence e JOIN projects p ON p.id=e.project_id
+             ORDER BY e.observed_at_ms, e.rowid"
+        ),
+        [
+            ("one codex_rollout codex-hook".to_owned(), 101),
+            ("two repo codex_rollout codex-hook".to_owned(), 0)
+        ]
+    );
+    // The failing command is a failed tool call too.
+    assert_eq!(
+        f.committed(
+            "SELECT p.name || ' ' || o.outcome, count(*) FROM tool_observations o
+             JOIN projects p ON p.id=o.project_id WHERE o.tool_name='Bash'
+             GROUP BY o.project_id, o.outcome ORDER BY p.name",
+            2
+        ),
+        [("one failed".to_owned(), 1), ("two repo ok".to_owned(), 1)]
+    );
+    assert_eq!(
+        f.ledger(2),
+        [("recordable".to_owned(), 0), ("recordable".to_owned(), 0)]
+    );
+    f.codex_end("codex-ran", &one, &rollout);
+    assert_eq!(f.outcome_in("codex-ran", "two repo"), "success");
+    assert_eq!(f.outcome_in("codex-ran", "one"), "failure");
+}
+
+/// The rollout writer can lag the hook; the hook waits briefly for the line.
+#[test]
+fn codex_waits_briefly_for_a_record_still_being_written() {
+    let f = Fixture::new(&["repo"]);
+    let repo = f.repo("repo");
+    let rollout = f.root().join("rollout-late.jsonl");
+    codex_rollout(&rollout, "codex-late", "codex-late", &json!("vscode"));
+    f.codex_prompt("codex-late", &repo, &rollout);
+    let writer = std::thread::spawn({
+        let (rollout, repo) = (rollout.clone(), repo.clone());
+        move || {
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            codex_finished(&rollout, "exec-late", &repo, 0);
+        }
+    });
+    f.codex_bash("codex-late", &repo, &rollout, "exec-late", "cargo test");
+    writer.join().unwrap();
+    assert_eq!(f.evidence(), [("test_result".to_owned(), 0)]);
+}
+
+/// Without its record a Codex run has neither a status nor a known
+/// directory: nothing is recorded, the ledger says the client reported no
+/// status, and no earlier pass of the same command may close an episode.
+#[test]
+fn a_codex_run_without_a_record_stays_unknown_everywhere() {
+    let f = Fixture::new(&["one", "two"]);
+    let (one, two) = (f.repo("one"), f.repo("two"));
+    let rollout = f.root().join("rollout-unknown.jsonl");
+    codex_rollout(&rollout, "codex-unknown", "codex-unknown", &json!("vscode"));
+    f.codex_prompt("codex-unknown", &one, &rollout);
+    codex_finished(&rollout, "exec-1", &one, 0);
+    f.codex_bash("codex-unknown", &one, &rollout, "exec-1", "cargo test");
+    codex_finished(&rollout, "exec-2", &two, 0);
+    f.codex_bash("codex-unknown", &one, &rollout, "exec-2", "cargo test");
+    let started = std::time::Instant::now();
+    // The model ran it in either folder; Codex wrote no record of it.
+    f.codex_bash("codex-unknown", &one, &rollout, "exec-3", "cargo test");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(1_500),
+        "the hook waited for the record"
+    );
+    assert_eq!(
+        f.evidence(),
+        [("test_result".to_owned(), 0), ("test_result".to_owned(), 0)]
+    );
+    assert_eq!(
+        f.ledger(3),
+        [
+            ("recordable".to_owned(), 0),
+            ("recordable".to_owned(), 0),
+            ("unreported".to_owned(), 0)
+        ]
+    );
+    f.codex_end("codex-unknown", &one, &rollout);
+    assert_eq!(f.outcome_in("codex-unknown", "one"), "abandoned");
+    assert_eq!(
+        f.outcome_in("codex-unknown", "two"),
+        "abandoned",
+        "the unrecorded run may have failed in this folder"
+    );
+}
+
+/// A pipe hides the verification's status even when the rollout has the
+/// pipeline's: the run is noted, never recorded.
+#[test]
+fn a_piped_codex_run_is_noted_not_recorded() {
+    let f = Fixture::new(&["repo"]);
+    let repo = f.repo("repo");
+    let rollout = f.root().join("rollout-pipe.jsonl");
+    codex_rollout(&rollout, "codex-pipe", "codex-pipe", &json!("vscode"));
+    f.codex_prompt("codex-pipe", &repo, &rollout);
+    codex_finished(&rollout, "exec-pipe", &repo, 0);
+    let output = f.codex_bash(
+        "codex-pipe",
+        &repo,
+        &rollout,
+        "exec-pipe",
+        "cargo test 2>&1 | tail -5",
+    );
+    let note: Value = serde_json::from_str(output.trim()).expect("note envelope");
+    let note = note["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .expect("note");
+    assert!(
+        note.contains("`set -o pipefail; cargo test 2>&1 | tail -5`"),
+        "{note}"
+    );
+    assert!(f.evidence().is_empty());
+    assert_eq!(f.ledger(1), [("pipe".to_owned(), 1)]);
+}
+
+/// Only the calling thread's own rollout is read: a spawned worker's runs
+/// count for the root session, the guardian stays silent, and a call that
+/// names another thread's rollout gets no status from it.
+#[test]
+fn codex_reads_only_the_calling_threads_rollout() {
+    let f = Fixture::new(&["repo"]);
+    let repo = f.repo("repo");
+    let root_rollout = f.root().join("rollout-root.jsonl");
+    let worker_rollout = f.root().join("rollout-worker.jsonl");
+    let guardian_rollout = f.root().join("rollout-guardian.jsonl");
+    codex_rollout(&root_rollout, "codex-tree", "codex-tree", &json!("vscode"));
+    codex_rollout(
+        &worker_rollout,
+        "worker-thread",
+        "codex-tree",
+        &json!({"subagent":{"thread_spawn":{"parent_thread_id":"codex-tree","depth":1}}}),
+    );
+    codex_rollout(
+        &guardian_rollout,
+        "guardian-thread",
+        "codex-tree",
+        &json!({"subagent":{"other":"guardian"}}),
+    );
+    f.codex_prompt("codex-tree", &repo, &root_rollout);
+    let call = |rollout: &Path, id: &str| {
+        json!({"session_id":"codex-tree","turn_id":"turn-1","cwd":repo,
+            "hook_event_name":"PostToolUse","model":"gpt-test","permission_mode":"default",
+            "transcript_path":rollout,"tool_name":"Bash","tool_use_id":id,
+            "tool_input":{"command":"cargo test"},"tool_response":"synthetic output"})
+    };
+    codex_finished(&worker_rollout, "exec-worker", &repo, 0);
+    let mut worker = call(&worker_rollout, "exec-worker");
+    worker["agent_id"] = json!("worker-thread");
+    worker["agent_type"] = json!("worker");
+    f.codex_call(&worker);
+    codex_finished(&guardian_rollout, "exec-guardian", &repo, 0);
+    assert_eq!(f.codex_call(&call(&guardian_rollout, "exec-guardian")), "");
+    codex_finished(&worker_rollout, "exec-misnamed", &repo, 0);
+    f.codex_call(&call(&worker_rollout, "exec-misnamed"));
+    assert_eq!(f.evidence(), [("test_result".to_owned(), 0)]);
+    assert_eq!(
+        f.ledger(2),
+        [("recordable".to_owned(), 0), ("unreported".to_owned(), 0)]
+    );
+    assert_eq!(
+        f.rows("SELECT session_id, count(*) FROM tasks GROUP BY session_id"),
+        [("codex-tree".to_owned(), 1)],
+        "the worker's run belongs to the root session's episode"
     );
 }
