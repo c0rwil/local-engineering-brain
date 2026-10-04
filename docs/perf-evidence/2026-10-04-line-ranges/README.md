@@ -32,9 +32,10 @@ less, or cover more sites, is untested here.
   does not resend a pack. New sources and changed source content still do.
 - **Related uses.** Anchors are up to three direct definitions in the request's
   repository that a task identifier or explicit path names. A caller is listed
-  when its call text equals the definition's name. From another file, the name
-  must also be unique in the repository, in the same language family, and
-  imported by the calling file. Kotlin, Java, Scala, C# and Go files in the same
+  when its call text equals the definition's name and no other definition in
+  the anchor's file has that name. From another file, the name must also be
+  unique in the repository, in the same language family, and imported by the
+  calling file. Kotlin, Java, Scala, C# and Go files in the same
   directory need no import. An import longer than the indexer's 200-character
   label counts as possible evidence. A shared use is another definition in the
   anchor's file that makes the same specific call: a free function, a path, a
@@ -48,9 +49,11 @@ less, or cover more sites, is untested here.
 
 ## Measurements
 
-Before is the installed release `58c2d018…`; after is this branch's release build.
-Both used identical frozen inputs and cases. The navigation suite alternated the
-two binaries over three rounds.
+Before is the installed release `58c2d018…`. After is a release build of this
+branch's commit `0a08a9a`, before any merge with other workstreams. Both used
+identical frozen inputs and cases. The navigation suite alternated the two
+binaries over three rounds. Selections and token counts below were identical in
+both measurement sessions; see [Latency](#latency).
 
 ### Navigation probes, no checkout root
 
@@ -66,8 +69,6 @@ Eighteen authored probes over five real indexed repositories, three repeats each
 | Estimated pack tokens, 54 Brain compilations | 11,067 | 13,047 (+17.9%) |
 | Related-use lines (estimated tokens) | 0 | 48 (1,998), in 6/18 cases |
 | Brain requests within budget; Off controls with zero injection | 54/54; 54/54 | 54/54; 54/54 |
-| Median API latency per round | 5.65, 4.89, 5.50 ms | 5.28, 5.64, 7.43 ms |
-| Median compiler-reported time | 3.0 ms | 3.0 ms |
 
 ### Navigation probes, live checkout roots
 
@@ -81,7 +82,6 @@ per binary. The daemon read those files only to compare digests.
 | Related-use lines (estimated tokens) | 0 | 48 (2,076) |
 | Estimated pack tokens | 12,291 | 14,766 (+20.1%) |
 | Intended file / expected definition in first five | 45/48; 39/48 | 45/48; 39/48 |
-| Median API latency; compiler-reported time | 14.5 ms; 9.0 ms | 18.5 ms; 11.5 ms |
 
 The 231 ranged pointers are every emitted local definition pointer. An independent
 recomputation of the checkout digests found 231 current files and none changed.
@@ -107,7 +107,6 @@ Selections were identical across the three repeats, so per-repeat counts follow.
 | Estimated pack tokens, 36 Brain compilations | 10,296 | 11,610 (+12.8%) |
 | Related-use lines (estimated tokens), 36 compilations | 0 | 21 (777) |
 | Absent-field negative probe | no source | no source |
-| Median API latency | 10.4 ms | 15.3 ms |
 
 | Case (one repeat) | Before components | After components | Before tokens | After tokens |
 | --- | ---: | ---: | ---: | ---: |
@@ -120,14 +119,32 @@ Selections were identical across the three repeats, so per-repeat counts follow.
 
 In the environment task, the task text names `Settings::from_env`. The after pack
 lists three of its callers in the HTTP contract test file, each with a range: the
-settings helper and both tests that take the shared lock. Those are the sites the
-pilot attempt missed and the required components it never received. The pilot
-also recorded a whole-file Read of that test file exceeding the Read size limit.
+settings helper and both tests that take the shared lock. The two tests are the
+sites the first pilot attempt missed, and none of the three appeared in any pilot
+pack. In that attempt, a whole-file Read exceeded the size limit and narrower
+reads did not reach the missed sites.
 
 The cue added nothing to the other tasks. The guide task names types and fields;
 the index records no calls to them. The status-polling repository is Python, and
 the native indexer records no Python call sites. The onboarding task names no
 identifier, so it has no anchor.
+
+### Latency
+
+The machine was shared with other compile jobs, so latency is indicative only.
+Two sessions ran the same alternating plan. Session 1 used a build that differs
+from the commit by one two-line comment edit. Session 2 used the commit's build.
+
+| Median API latency | Session 1 (load ≈7–14) | Session 2 (load ≈17–20) |
+| --- | ---: | ---: |
+| Navigation, no root, per round: before | 5.65, 4.89, 5.50 ms | 11.93, 11.49, 11.51 ms |
+| Navigation, no root, per round: after | 5.28, 5.64, 7.43 ms | 6.33, 21.45, 14.00 ms |
+| Navigation, live roots: before → after | 14.5 → 18.5 ms | 24.4 → 29.7 ms |
+| Historical tasks: before → after | 10.4 → 15.3 ms | 16.7 → 24.6 ms |
+
+With a checkout root, the after daemon was 4–8 ms slower per request in both
+sessions. That covers file reads, digests and use lookups. Without a root, the
+difference was within round-to-round variation.
 
 ## Correctness checks
 
@@ -150,7 +167,7 @@ test covers moved ranges, fallbacks and newly added uses.
 - Live-root results depend on the checkouts at run time. None of the emitted
   files had changed since indexing.
 - Latency was measured locally on a machine shared with compile jobs
-  (one-minute load average about 7–14). Treat it as indicative only.
+  (one-minute load average about 7–20). Treat it as indicative only.
 - Two navigation cases now expect `Intervention::cancelled`. The current native
   extractor qualifies impl methods, so the old label `cancelled` is absent from
   today's index. Both binaries used the updated case file.
@@ -162,7 +179,10 @@ test covers moved ranges, fallbacks and newly added uses.
 - Frozen navigation snapshot: SHA-256 `9501c83e33d3dafa…`, schema 16, frozen
   with `--freeze-from` from the live database; unchanged after every run.
 - Before daemon SHA-256 `c595276569ebf8a6…` (release `58c2d0182e653f23…`);
-  after daemon SHA-256 `1b2320edbe0225a9…`.
+  after daemon SHA-256 `3e2cbe4ef9f75dff…` (session 2, built from `0a08a9a`)
+  and `1b2320edbe0225a9…` (session 1).
+- Harness SHA-256: navigation `df3c2293372c57a7…`, tasks `ae727153eb2cf4e9…`,
+  matching the committed scripts.
 - Navigation cases SHA-256 `0abdb2d0ab649052…`; task cases `76c5cd20a1bc4fa2…`.
   Pilot fixture snapshots were hash-checked before and after each task run.
 - Raw reports include private repository paths and identifiers. They stay in the
