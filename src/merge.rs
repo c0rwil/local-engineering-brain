@@ -129,7 +129,10 @@ pub const TABLE_ROLES: &[(&str, TableRole)] = &[
     ("tasks", TableRole::Moved(CollisionRule::Impossible)),
     ("evidence", TableRole::Moved(CollisionRule::Impossible)),
     ("memories", TableRole::Moved(CollisionRule::Impossible)),
-    ("lesson_reviews", TableRole::Moved(CollisionRule::Impossible)),
+    (
+        "lesson_reviews",
+        TableRole::Moved(CollisionRule::Impossible),
+    ),
     (
         "context_runs",
         TableRole::Moved(CollisionRule::RekeyRetired("request_id")),
@@ -339,12 +342,12 @@ fn project_state(connection: &Connection, id: &ProjectId) -> Result<Option<Proje
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    Ok(row.map(|(active, merged_into)| match (active, merged_into) {
+    row.map(|(active, merged_into)| match (active, merged_into) {
         (true, _) => Ok(ProjectState::Active),
         (false, Some(survivor)) => ProjectId::parse(&survivor).map(ProjectState::Merged),
         (false, None) => Ok(ProjectState::Tombstoned),
     })
-    .transpose()?)
+    .transpose()
 }
 
 fn is_view(connection: &Connection, id: &ProjectId) -> Result<bool> {
@@ -571,12 +574,7 @@ pub fn identity_evidence(survivor: &MergeParty, retired: &MergeParty) -> Identit
     let identities = checkouts
         .iter()
         .filter(|probe| probe.state == "readable")
-        .filter_map(|probe| {
-            Some((
-                probe.canonical_remote.clone()?,
-                probe.root_commit.clone()?,
-            ))
-        })
+        .filter_map(|probe| Some((probe.canonical_remote.clone()?, probe.root_commit.clone()?)))
         .collect::<BTreeSet<_>>();
     if evidence.refusal.is_none() && identities.len() > 1 {
         let listed = checkouts
@@ -644,9 +642,13 @@ fn probe(party: &MergeParty, path: &str) -> CheckoutEvidence {
         CheckoutState::Readable {
             identity: Some(identity),
         } => {
-            evidence.pinned_project_id = identity.pinned_project_id.clone();
-            evidence.canonical_remote = identity.canonical_remote.clone();
-            evidence.root_commit = identity.root_commit.clone();
+            evidence
+                .pinned_project_id
+                .clone_from(&identity.pinned_project_id);
+            evidence
+                .canonical_remote
+                .clone_from(&identity.canonical_remote);
+            evidence.root_commit.clone_from(&identity.root_commit);
             match &identity.pinned_project_id {
                 Some(pinned) if *pinned != party.id => (
                     "pinned_elsewhere",
@@ -662,7 +664,7 @@ fn probe(party: &MergeParty, path: &str) -> CheckoutEvidence {
             }
         }
     };
-    evidence.state = state.to_owned();
+    state.clone_into(&mut evidence.state);
     evidence.detail = detail;
     evidence
 }
@@ -807,8 +809,8 @@ pub fn plan(
             rows: role_rows(connection, &table, role, r)?,
             collisions: u64::try_from(found.len()).unwrap_or(u64::MAX),
             collision_rule: match role {
-                TableRole::Moved(rule) if rule != CollisionRule::Impossible => {
-                    Some(rule.describe().to_owned())
+                TableRole::Moved(collision) if collision != CollisionRule::Impossible => {
+                    Some(collision.describe().to_owned())
                 }
                 _ => None,
             },
@@ -896,9 +898,8 @@ fn role_rows(
 /// Rows of a child table whose parent row belongs to the retired project.
 fn follower_rows(connection: &Connection, table: &str, retired: &ProjectId) -> Result<u64> {
     let references = {
-        let mut statement = connection.prepare(
-            "SELECT \"table\", \"from\", \"to\" FROM pragma_foreign_key_list(?1)",
-        )?;
+        let mut statement = connection
+            .prepare("SELECT \"table\", \"from\", \"to\" FROM pragma_foreign_key_list(?1)")?;
         statement
             .query_map([table], |row| {
                 Ok((
@@ -1277,6 +1278,13 @@ pub fn execute(database: &Database, input: &MergeExecution) -> Result<MergeOutco
         if let Some(outcome) = earlier_merge(transaction, survivor, retired)? {
             return Ok(outcome);
         }
+        if !input.identity.same_repository || input.identity.refusal.is_some() {
+            return Err(Error::MergeRefused(
+                input.identity.refusal.clone().unwrap_or_else(|| {
+                    "the two projects are not proven to be one repository".to_owned()
+                }),
+            ));
+        }
         check_parties(transaction, survivor, retired)?;
         verify_roles(transaction)?;
         let survivor_party = party(transaction, survivor)?;
@@ -1300,7 +1308,7 @@ pub fn execute(database: &Database, input: &MergeExecution) -> Result<MergeOutco
             root_commit: fill.root_commit.clone(),
             repaired_view: views.repaired.clone(),
             retired_views: views.retired.clone(),
-            audit: audit.clone(),
+            audit: Box::new(audit.clone()),
         };
         append_generated_with_id_in_transaction(transaction, &event_id, &event, now)?;
         let survivor_after = party(transaction, survivor)?;
@@ -1315,10 +1323,7 @@ pub fn execute(database: &Database, input: &MergeExecution) -> Result<MergeOutco
             repaired_view: views.repaired,
             retired_views: views.retired,
             checkouts_to_repin: retired_party.checkouts.clone(),
-            reindex_paths: reindex_order(
-                &retired_party.checkouts,
-                &survivor_party.checkouts,
-            ),
+            reindex_paths: reindex_order(&retired_party.checkouts, &survivor_party.checkouts),
             pending_anchors: pending_anchor_count(transaction, survivor)?,
             audit,
         })
@@ -1426,7 +1431,7 @@ pub fn earlier_merge(
         checkouts_to_repin: audit.moved_aliases.clone(),
         reindex_paths: reindex_order(&audit.moved_aliases, &survivor_others),
         pending_anchors: pending_anchor_count(connection, survivor)?,
-        audit,
+        audit: *audit,
     }))
 }
 
@@ -1533,7 +1538,10 @@ fn rescope(
         if *role == TableRole::Kept {
             let kept = count(
                 transaction,
-                &format!("SELECT COUNT(*) FROM {} WHERE project_id = ?1", quote(table)),
+                &format!(
+                    "SELECT COUNT(*) FROM {} WHERE project_id = ?1",
+                    quote(table)
+                ),
                 [retired.as_str()],
             )?;
             audit.kept.insert((*table).to_owned(), kept);
@@ -1711,18 +1719,28 @@ fn rederive_memories(
     add(&mut audit.rebuilt, "memory_vectors", vector_rows);
     for raw_id in moved {
         let memory_id = MemoryId::parse(raw_id)?;
-        let (project_id, claim, rationale, tags_json, active): (String, String, String, String, bool) =
-            transaction.query_row(
-                "SELECT project_id, claim, rationale, tags_json, status = 'active'
+        let (project_id, claim, rationale, tags_json, active): (
+            String,
+            String,
+            String,
+            String,
+            bool,
+        ) = transaction.query_row(
+            "SELECT project_id, claim, rationale, tags_json, status = 'active'
                  FROM memories WHERE id = ?1",
-                [raw_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-            )?;
-        let tags: Vec<String> = serde_json::from_str(&tags_json)?;
-        transaction.execute(
-            "DELETE FROM memories_fts WHERE memory_id = ?1",
             [raw_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )?;
+        let tags: Vec<String> = serde_json::from_str(&tags_json)?;
+        transaction.execute("DELETE FROM memories_fts WHERE memory_id = ?1", [raw_id])?;
         transaction.execute(
             "INSERT INTO memories_fts(memory_id, project_id, claim, rationale, tags)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -2051,8 +2069,8 @@ fn resolve_pending_anchors(
 /// Returns storage errors.
 pub fn redirects(connection: &Connection) -> Result<BTreeMap<String, String>> {
     let pairs = {
-        let mut statement =
-            connection.prepare("SELECT id, merged_into FROM projects WHERE merged_into IS NOT NULL")?;
+        let mut statement = connection
+            .prepare("SELECT id, merged_into FROM projects WHERE merged_into IS NOT NULL")?;
         statement
             .query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -2088,7 +2106,10 @@ pub fn redirect_json_bytes(body: &[u8], redirects: &BTreeMap<String, String>) ->
         }
         for (from, to) in [
             (format!("\"{retired}\""), format!("\"{survivor}\"")),
-            (format!("\"repo:{retired}\""), format!("\"repo:{survivor}\"")),
+            (
+                format!("\"repo:{retired}\""),
+                format!("\"repo:{survivor}\""),
+            ),
         ] {
             let current = rewritten.as_deref().unwrap_or(body);
             let positions = find_all(current, from.as_bytes());

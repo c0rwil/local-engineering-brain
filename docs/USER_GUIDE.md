@@ -465,6 +465,7 @@ knowledge never ping-pongs back.
 | Verify a backup | `engram backup verify` |
 | See what would inject and why | `engram context "…" --path <repo> --json` |
 | Regenerate the architecture guide | `engram architect --claude` |
+| Merge a repository registered twice (`engram doctor` warns) | `engram project merge --into <keep> --from <retire> --dry-run`, then the same with `--yes` ([details](#duplicate-project-registrations)) |
 | Restart the daemon from this terminal | `engram daemon restart` (waits up to `--wait-secs`, default 150, for in-flight work) |
 | Stop everything | `engram daemon stop` (waits up to `--wait-secs`, default 150, for the process to exit; `0` returns at once) |
 
@@ -539,30 +540,99 @@ while the daemon could not read Git), so a later clone could not be matched
 to it, or when separate clones carry different `.engram/project.toml` pins.
 Knowledge recorded under one id is not visible from the other.
 
-Engram never merges or re-identifies projects automatically. A project
+Engram never merges or re-identifies projects on its own. A project
 registered without Git identity gets its root commit and canonical remote
 recorded once Git is readable; its id does not change. The remote is recorded
 only when no other active project could be the same repository, so with
 duplicates neither claims it, and a later clone without metadata registers as
-a new project instead of silently joining one of them. Until a merge command
-exists:
+a new project instead of silently joining one of them. You merge them
+explicitly:
 
-- Work in one checkout. `engram memory list --path <checkout>` shows the
-  memories each id holds.
-- Do not point one checkout's `project.toml` at the other id. Each recorded
-  checkout path belongs to exactly one project, so that checkout would stop
-  resolving.
-- Deleting a clone you no longer use clears the warning; its records stay
-  under its id.
+```bash
+engram project merge --into brain --from engram --dry-run   # the plan, changes nothing
+engram project merge --into brain --from engram --yes       # merge
+```
 
-A safe merge command would need: an explicit choice of surviving and retired
-id; evidence that both are the same repository (the doctor's remote and root
-commit match); a backup and a dry run that counts the rows to move; one
-single-writer transaction that re-scopes project-keyed rows (memories, tasks,
-attempts, evidence, context runs, facts, links and checkout paths) with
-explicit rules for key collisions; an auditable merge event plus a tombstone
-for the retired id so replay reproduces the result; rewritten pins for the
-retired checkouts; and a re-index instead of moving derived indexes.
+`--into` names the project that survives and `--from` the one that is
+retired into it, each by project id, name, or checkout path (a path contains
+`/` or starts with `.` or `~`). Without `--yes` or `--dry-run` the command
+prints the plan, changes nothing and exits non-zero. `--json` prints the same
+data as JSON.
+
+**Preconditions (no override).** Both projects are active, distinct, and not
+origin views. The daemon probes every recorded checkout of both. At least one
+checkout of each that the daemon can read must report a canonical `origin`
+remote and root commit; every readable checkout must report the same pair,
+and so must any identity a project already records. Otherwise the merge is
+refused with the reason, before anything is written.
+
+**The plan (`--dry-run`)** lists, in a fixed order: the identity evidence per
+checkout; the retired project's rows per table and what happens to them;
+every key collision and its resolution; memories of both projects with the
+same claim; fact, link and origin-view decisions; memory anchors to
+re-attach; product records to re-anchor; unfinished jobs to cancel; the pins
+to rewrite; and the checkout paths re-indexed afterwards, in order.
+
+**Execution (`--yes`):**
+
+1. The daemon takes a transactionally consistent backup
+   (`<database dir>/backups/pre-merge-<id>-<time>.sqlite`) and reports it.
+2. In the same scheduler job, one canonical transaction re-scopes every
+   project-keyed table. The list of tables comes from the schema itself and
+   each table has an explicit role; a table without one makes the merge
+   refuse.
+   - Moved to the survivor: tasks (attempts and signals follow), evidence,
+     memories (sources, evidence links, expiry and compact text follow;
+     project-scope ids are rewritten), lesson reviews (judgments follow),
+     context runs (items and usage events follow), resource usage, tool and
+     verification observations, and waiting memory anchors.
+   - Rebuilt: the retired project's structural index (nodes, edges, indexed
+     files, scans, source search, commits) is dropped, not moved. Memory
+     search text and hashed vectors are re-derived for moved memories; model
+     vectors are dropped and a semantic rebuild re-embeds them.
+   - Retired with the id, as history: its events (immutable) and its
+     finished jobs. Unfinished jobs are cancelled.
+   - Project records: checkout paths move. Links are united: links between
+     the two are dropped, and a link the survivor already has wins. Facts
+     merge with the survivor's value winning; `internal.*` facts (such as
+     `internal.hidden`) never move. The retired project's origin view is
+     paired with the survivor when the survivor has none; otherwise it is
+     retired too. The survivor records the shared remote and root commit
+     where it had none.
+3. Key collisions follow explicit rules and are recorded. A context run whose
+   request id both projects used keeps both runs; the retired run's request
+   id gets a `~merged-<id>` suffix. A usage sample recorded under both keeps
+   the survivor's row. A tool or verification observation of the same call
+   keeps the survivor's row; tool observations take the union of both rows'
+   paths. Memories with identical claims are both kept and listed.
+4. The transaction appends a `PROJECTS_MERGED` event: survivor, retired
+   project, row counts, every decision and the backup path. The retired id
+   stays as a tombstone that names its survivor. Replaying the event log
+   reproduces the merged project records.
+5. The CLI rewrites the retired checkouts' `.engram/project.toml` (and legacy
+   `.leb/project.toml`) to the survivor id, atomically and only while a pin
+   still holds the retired id, and reports each file. It writes them itself
+   because an auto-started daemon may lack macOS privacy access that your
+   terminal has.
+6. The CLI re-indexes the survivor over every checkout path, the retired ones
+   first and the survivor's oldest checkout last. It then finalizes: each
+   memory anchor on a dropped symbol is re-attached to the symbol with the
+   same stable identity (path and qualified name). A memory whose symbol is
+   gone is marked `suspect` with reason `merge_anchor_unresolved`, for
+   revalidation; it is never promoted. Rows written under the retired id
+   since the merge are moved as well.
+
+A failure inside the transaction changes nothing. When a later step fails,
+for example a pin denied by privacy settings or a checkout that cannot be
+re-indexed, the merge itself is complete: fix the cause and run the same
+command again. A repeated merge reports "already merged" and retries only the
+remaining steps.
+
+**After a merge** the retired id still works. Requests that carry it (a hook
+session that started before the merge, an MCP client, a script) are
+redirected to the survivor, and a checkout whose pin still holds the retired
+id resolves to the survivor. An agent session that was running in a retired
+checkout continues under the survivor; its current episode is split in two.
 
 ## Capturing operations lessons
 

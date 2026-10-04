@@ -153,7 +153,7 @@ pub enum DomainEvent {
         repaired_view: Option<ProjectId>,
         /// Origin views tombstoned with the retired project.
         retired_views: Vec<ProjectId>,
-        audit: ProjectMergeAudit,
+        audit: Box<ProjectMergeAudit>,
     },
 }
 
@@ -646,7 +646,7 @@ impl EventStore {
 }
 
 impl ProjectProjection {
-    /// The pure counterpart of the PROJECTS_MERGED projection: the retired
+    /// The pure counterpart of the `PROJECTS_MERGED` projection: the retired
     /// project becomes a tombstone naming the survivor, its checkout paths
     /// move, its origin views are tombstoned, forks and earlier merges point
     /// at the survivor, and missing survivor identity is filled.
@@ -888,7 +888,7 @@ fn apply_project_projection(
     Ok(())
 }
 
-/// The project-projection part of a PROJECTS_MERGED event.
+/// The project-projection part of a `PROJECTS_MERGED` event.
 struct MergeProjection<'a> {
     survivor: &'a ProjectId,
     retired: &'a ProjectId,
@@ -946,44 +946,7 @@ fn apply_merge_projection(
         "UPDATE project_aliases SET project_id = ?1 WHERE project_id = ?2",
         params![survivor, retired],
     )?;
-    transaction.execute(
-        "DELETE FROM project_links
-         WHERE (project_id = ?1 AND linked_project_id = ?2)
-            OR (project_id = ?2 AND linked_project_id = ?1)",
-        params![survivor, retired],
-    )?;
-    transaction.execute(
-        "INSERT OR IGNORE INTO project_links
-             (project_id, linked_project_id, relation, note, created_at_ms)
-         SELECT ?1, linked_project_id, relation, note, created_at_ms
-         FROM project_links WHERE project_id = ?2",
-        params![survivor, retired],
-    )?;
-    transaction.execute(
-        "DELETE FROM project_links WHERE project_id = ?1",
-        [retired],
-    )?;
-    transaction.execute(
-        "INSERT OR IGNORE INTO project_links
-             (project_id, linked_project_id, relation, note, created_at_ms)
-         SELECT project_id, ?1, relation, note, created_at_ms
-         FROM project_links WHERE linked_project_id = ?2",
-        params![survivor, retired],
-    )?;
-    transaction.execute(
-        "DELETE FROM project_links WHERE linked_project_id = ?1",
-        [retired],
-    )?;
-    transaction.execute(
-        "INSERT OR IGNORE INTO project_facts(project_id, key, value, note, updated_at_ms)
-         SELECT ?1, key, value, note, updated_at_ms
-         FROM project_facts WHERE project_id = ?2 AND substr(key, 1, 9) <> 'internal.'",
-        params![survivor, retired],
-    )?;
-    transaction.execute(
-        "DELETE FROM project_facts WHERE project_id = ?1",
-        [retired],
-    )?;
+    merge_links_and_facts(transaction, survivor, retired)?;
     if let Some(view) = merge.repaired_view {
         transaction.execute(
             "INSERT INTO project_facts(project_id, key, value, note, updated_at_ms)
@@ -1025,6 +988,47 @@ fn apply_merge_projection(
          WHERE id = ?1",
         params![survivor, merge.canonical_remote, merge.root_commit],
     )?;
+    Ok(())
+}
+
+/// Links and facts of a merge (see [`apply_merge_projection`]).
+fn merge_links_and_facts(
+    transaction: &Transaction<'_>,
+    survivor: &str,
+    retired: &str,
+) -> Result<()> {
+    transaction.execute(
+        "DELETE FROM project_links
+         WHERE (project_id = ?1 AND linked_project_id = ?2)
+            OR (project_id = ?2 AND linked_project_id = ?1)",
+        params![survivor, retired],
+    )?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO project_links
+             (project_id, linked_project_id, relation, note, created_at_ms)
+         SELECT ?1, linked_project_id, relation, note, created_at_ms
+         FROM project_links WHERE project_id = ?2",
+        params![survivor, retired],
+    )?;
+    transaction.execute("DELETE FROM project_links WHERE project_id = ?1", [retired])?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO project_links
+             (project_id, linked_project_id, relation, note, created_at_ms)
+         SELECT project_id, ?1, relation, note, created_at_ms
+         FROM project_links WHERE linked_project_id = ?2",
+        params![survivor, retired],
+    )?;
+    transaction.execute(
+        "DELETE FROM project_links WHERE linked_project_id = ?1",
+        [retired],
+    )?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO project_facts(project_id, key, value, note, updated_at_ms)
+         SELECT ?1, key, value, note, updated_at_ms
+         FROM project_facts WHERE project_id = ?2 AND substr(key, 1, 9) <> 'internal.'",
+        params![survivor, retired],
+    )?;
+    transaction.execute("DELETE FROM project_facts WHERE project_id = ?1", [retired])?;
     Ok(())
 }
 

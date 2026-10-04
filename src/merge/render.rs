@@ -21,82 +21,9 @@ pub fn plan_text(plan: &MergePlan, pins: &[PinRewrite]) -> String {
     out.push('\n');
     identity_section(&mut out, plan);
     out.push('\n');
-    let _ = writeln!(
-        out,
-        "Rows of {} (moved: re-scoped to {}; rebuilt: dropped, then rebuilt; retired: kept \
-         with the retired id):",
-        plan.retired.name, plan.survivor.name
-    );
-    let width = plan
-        .tables
-        .iter()
-        .map(|table| table.table.len())
-        .max()
-        .unwrap_or(0);
-    for table in &plan.tables {
-        let _ = writeln!(
-            out,
-            "  {:<8} {:<width$} {:>8}  {}",
-            table.class, table.table, table.rows, table.role
-        );
-    }
+    rows_section(&mut out, plan);
     out.push('\n');
-    list_section(
-        &mut out,
-        "Key collisions",
-        plan.collisions
-            .iter()
-            .map(|collision| {
-                format!(
-                    "{} {}: {}",
-                    collision.table, collision.key, collision.resolution
-                )
-            })
-            .collect(),
-    );
-    list_section(
-        &mut out,
-        "Memories with the same claim in both projects (both kept)",
-        plan.duplicate_claims
-            .iter()
-            .map(|pair| format!("{} and {}", pair.survivor_memory_id, pair.retired_memory_id))
-            .collect(),
-    );
-    list_section(
-        &mut out,
-        &format!("Facts of {}", plan.retired.name),
-        plan.facts
-            .iter()
-            .map(|fact| match &fact.survivor_value {
-                Some(kept) => format!(
-                    "{}: {} (retired value {:?}, survivor value {kept:?})",
-                    fact.key, fact.decision, fact.retired_value
-                ),
-                None => format!("{}: {} ({:?})", fact.key, fact.decision, fact.retired_value),
-            })
-            .collect(),
-    );
-    list_section(
-        &mut out,
-        "Links",
-        plan.links
-            .iter()
-            .map(|link| {
-                format!(
-                    "{} -> {} ({}): {}",
-                    link.project_id, link.linked_project_id, link.relation, link.decision
-                )
-            })
-            .collect(),
-    );
-    let mut views = Vec::new();
-    if let Some(view) = &plan.views.repaired {
-        views.push(format!("{view}: re-paired with {}", plan.survivor.name));
-    }
-    for view in &plan.views.retired {
-        views.push(format!("{view}: retired with {}", plan.retired.name));
-    }
-    list_section(&mut out, "Origin views", views);
+    decisions_section(&mut out, plan);
     let _ = writeln!(
         out,
         "Memory anchors on {}'s symbols: {} ({} re-attached in the merge, {} after the re-index)",
@@ -121,11 +48,93 @@ pub fn plan_text(plan: &MergePlan, pins: &[PinRewrite]) -> String {
     if let Some(refusal) = &plan.identity.refusal {
         let _ = writeln!(out, "Refused: {refusal}");
     } else {
-        out.push_str(
-            "A transactionally consistent backup is taken before anything changes.\n",
-        );
+        out.push_str("A transactionally consistent backup is taken before anything changes.\n");
     }
     out
+}
+
+/// Every project-keyed table: moved first, then rebuilt, then retired.
+fn rows_section(out: &mut String, plan: &MergePlan) {
+    let _ = writeln!(
+        out,
+        "Rows of {} (moved: re-scoped to {}; rebuilt: dropped, then rebuilt; retired: kept \
+         with the retired id):",
+        plan.retired.name, plan.survivor.name
+    );
+    let width = plan
+        .tables
+        .iter()
+        .map(|table| table.table.len())
+        .max()
+        .unwrap_or(0);
+    for class in ["moved", "rebuilt", "retired"] {
+        for table in plan.tables.iter().filter(|table| table.class == class) {
+            let _ = writeln!(
+                out,
+                "  {:<8} {:<width$} {:>8}  {}",
+                table.class, table.table, table.rows, table.role
+            );
+        }
+    }
+}
+
+fn decisions_section(out: &mut String, plan: &MergePlan) {
+    list_section(
+        out,
+        "Key collisions",
+        plan.collisions
+            .iter()
+            .map(|collision| {
+                format!(
+                    "{} {}: {}",
+                    collision.table, collision.key, collision.resolution
+                )
+            })
+            .collect(),
+    );
+    list_section(
+        out,
+        "Memories with the same claim in both projects (both kept)",
+        plan.duplicate_claims
+            .iter()
+            .map(|pair| format!("{} and {}", pair.survivor_memory_id, pair.retired_memory_id))
+            .collect(),
+    );
+    list_section(
+        out,
+        &format!("Facts of {}", plan.retired.name),
+        plan.facts
+            .iter()
+            .map(|fact| match &fact.survivor_value {
+                Some(kept) => format!(
+                    "{}: {} (retired value {:?}, survivor value {kept:?})",
+                    fact.key, fact.decision, fact.retired_value
+                ),
+                None => format!("{}: {} ({:?})", fact.key, fact.decision, fact.retired_value),
+            })
+            .collect(),
+    );
+    list_section(
+        out,
+        "Links",
+        plan.links
+            .iter()
+            .map(|link| {
+                format!(
+                    "{} -> {} ({}): {}",
+                    link.project_id, link.linked_project_id, link.relation, link.decision
+                )
+            })
+            .collect(),
+    );
+    let mut views = Vec::new();
+    if let Some(view) = &plan.views.repaired {
+        views.push(format!("{view}: re-paired with {}", plan.survivor.name));
+    }
+    for view in &plan.views.retired {
+        views.push(format!("{view}: retired with {}", plan.retired.name));
+    }
+    list_section(out, "Origin views", views);
 }
 
 fn identity_section(out: &mut String, plan: &MergePlan) {
@@ -150,11 +159,7 @@ fn identity_section(out: &mut String, plan: &MergePlan) {
             .detail
             .as_deref()
             .map_or_else(String::new, |detail| format!(" ({detail})"));
-        let _ = writeln!(
-            out,
-            "  {name}: {} {}{detail}",
-            probe.path, probe.state
-        );
+        let _ = writeln!(out, "  {name}: {} {}{detail}", probe.path, probe.state);
     }
     let fill = &plan.identity_fill;
     if let Some(remote) = &fill.canonical_remote {
@@ -287,10 +292,10 @@ fn pin_line(pin: &PinRewrite) -> String {
         }
         PinState::Failed => "failed",
     };
-    let target = pin
-        .file
-        .as_ref()
-        .map_or_else(|| pin.checkout.display().to_string(), |file| file.display().to_string());
+    let target = pin.file.as_ref().map_or_else(
+        || pin.checkout.display().to_string(),
+        |file| file.display().to_string(),
+    );
     let detail = pin
         .detail
         .as_deref()

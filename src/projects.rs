@@ -1245,7 +1245,11 @@ pub fn rewrite_merged_pins(
                 Ok(_) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => {
-                    results.push(entry(Some(file), pin_failure(&error), Some(error.to_string())));
+                    results.push(entry(
+                        Some(file),
+                        pin_failure(&error),
+                        Some(error.to_string()),
+                    ));
                     continue;
                 }
             }
@@ -1271,7 +1275,8 @@ fn pin_failure(error: &std::io::Error) -> PinState {
 fn read_pin(file: &Path) -> std::result::Result<ProjectMetadataFile, (PinState, String)> {
     let contents =
         fs::read_to_string(file).map_err(|error| (pin_failure(&error), error.to_string()))?;
-    toml::from_str(&contents).map_err(|error| (PinState::Failed, format!("not a project pin: {error}")))
+    toml::from_str(&contents)
+        .map_err(|error| (PinState::Failed, format!("not a project pin: {error}")))
 }
 
 fn rewrite_pin_file(
@@ -2655,5 +2660,145 @@ mod tests {
         assert!(registry.unset_fact(&id, "hosting.provider").expect("unset"));
         assert!(!registry.unset_fact(&id, "hosting.provider").expect("gone"));
         assert_eq!(registry.facts(&id).expect("facts").len(), 1);
+    }
+
+    fn pin(dir: &Path, metadata_dir: &str, project: &ProjectId) -> PathBuf {
+        let file = dir.join(metadata_dir).join("project.toml");
+        fs::create_dir_all(file.parent().expect("dir")).expect("metadata dir");
+        fs::write(
+            &file,
+            format!("project_id = \"{project}\"\nname = \"copy\"\n"),
+        )
+        .expect("pin");
+        file
+    }
+
+    #[test]
+    fn merged_pins_are_rewritten_only_while_they_hold_the_retired_id() {
+        let temp = TempDir::new().expect("temp dir");
+        let retired = ProjectId::parse("prj_bbbbbbbb-0000-4000-8000-000000000002").expect("id");
+        let survivor = ProjectId::parse("prj_aaaaaaaa-0000-4000-8000-000000000001").expect("id");
+        let other = ProjectId::parse("prj_cccccccc-0000-4000-8000-000000000003").expect("id");
+        let checkout = temp.path().join("copy");
+        let current = pin(&checkout, ".engram", &retired);
+        let legacy = pin(&checkout, ".leb", &retired);
+
+        let planned = rewrite_merged_pins(&checkout, &retired, &survivor, "app", true);
+        assert!(
+            planned
+                .iter()
+                .all(|pin| pin.state == PinState::WouldRewrite)
+        );
+        assert_eq!(planned.len(), 2);
+        assert!(
+            fs::read_to_string(&current)
+                .expect("pin")
+                .contains(retired.as_str())
+        );
+
+        let rewritten = rewrite_merged_pins(&checkout, &retired, &survivor, "app", false);
+        assert_eq!(
+            rewritten.iter().map(|pin| pin.state).collect::<Vec<_>>(),
+            [PinState::Rewritten, PinState::Rewritten]
+        );
+        for file in [&current, &legacy] {
+            let metadata: ProjectMetadataFile =
+                toml::from_str(&fs::read_to_string(file).expect("pin")).expect("valid pin");
+            assert_eq!(metadata.project_id, survivor);
+            assert_eq!(metadata.name.as_deref(), Some("app"));
+        }
+        let leftovers = fs::read_dir(current.parent().expect("dir"))
+            .expect("listing")
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .is_ok_and(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            })
+            .count();
+        assert_eq!(leftovers, 0, "no temporary files remain");
+        assert!(
+            rewrite_merged_pins(&checkout, &retired, &survivor, "app", false)
+                .iter()
+                .all(|pin| pin.state == PinState::AlreadySurvivor)
+        );
+
+        let elsewhere = temp.path().join("elsewhere");
+        let foreign = pin(&elsewhere, ".engram", &other);
+        let untouched = rewrite_merged_pins(&elsewhere, &retired, &survivor, "app", false);
+        assert_eq!(untouched[0].state, PinState::OtherProject);
+        assert!(
+            fs::read_to_string(&foreign)
+                .expect("pin")
+                .contains(other.as_str())
+        );
+
+        let bare = temp.path().join("bare");
+        fs::create_dir_all(&bare).expect("dir");
+        assert_eq!(
+            rewrite_merged_pins(&bare, &retired, &survivor, "app", false)[0].state,
+            PinState::NoPin
+        );
+        assert_eq!(
+            rewrite_merged_pins(&temp.path().join("gone"), &retired, &survivor, "app", false)[0]
+                .state,
+            PinState::Missing
+        );
+    }
+
+    #[test]
+    fn a_checkout_pinned_to_a_merged_id_resolves_to_the_survivor() {
+        let temp = TempDir::new().expect("temp dir");
+        let registry = registry(&temp);
+        let survivor = registry
+            .resolve_or_register(&{
+                let path = temp.path().join("app");
+                fs::create_dir_all(&path).expect("checkout");
+                path
+            })
+            .expect("survivor")
+            .project;
+        let copy = temp.path().join("copy");
+        fs::create_dir_all(&copy).expect("checkout");
+        let retired = registry
+            .resolve_or_register(&copy)
+            .expect("retired")
+            .project;
+        assert_ne!(retired.id, survivor.id);
+        registry
+            .events
+            .append(&DomainEvent::ProjectsMerged {
+                project_id: survivor.id.clone(),
+                retired_project_id: retired.id.clone(),
+                canonical_remote: None,
+                root_commit: None,
+                repaired_view: None,
+                retired_views: Vec::new(),
+                audit: Box::default(),
+            })
+            .expect("merge");
+        // The copy's pin still holds the retired id.
+        assert!(
+            fs::read_to_string(metadata_dir(&copy).join("project.toml"))
+                .expect("pin")
+                .contains(retired.id.as_str())
+        );
+        assert_eq!(
+            registry
+                .lookup(&copy)
+                .expect("lookup")
+                .map(|project| project.id),
+            Some(survivor.id.clone())
+        );
+        let resolved = registry.resolve_or_register(&copy).expect("resolve");
+        assert_eq!(resolved.project.id, survivor.id);
+        let projects: i64 = registry
+            .database
+            .with_reader(|connection| {
+                connection
+                    .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
+                    .map_err(Error::from)
+            })
+            .expect("count");
+        assert_eq!(projects, 2, "nothing was registered again");
     }
 }

@@ -216,8 +216,7 @@ struct DaemonState {
     merged_projects: MergedProjects,
 }
 
-type MergedProjects =
-    Arc<std::sync::RwLock<Arc<std::collections::BTreeMap<String, String>>>>;
+type MergedProjects = Arc<std::sync::RwLock<Arc<std::collections::BTreeMap<String, String>>>>;
 
 /// Bounded derived cache over graph read endpoints. Values are never
 /// canonical: keys carry a per-project generation that graph mutations bump
@@ -1554,8 +1553,12 @@ impl DaemonClient {
         &self,
         request: &MergeFinalizeRequest,
     ) -> Result<crate::merge::FinalizeOutcome> {
-        self.request(hyper::Method::POST, API_PROJECT_MERGE_FINALIZE, Some(request))
-            .await
+        self.request(
+            hyper::Method::POST,
+            API_PROJECT_MERGE_FINALIZE,
+            Some(request),
+        )
+        .await
     }
 
     /// Verify a backup using normal schema and integrity checks.
@@ -2637,11 +2640,9 @@ fn prepare_merge(database: &Database, request: &ProjectMergeRequest) -> Result<P
             let path = from_path
                 .canonicalize()
                 .unwrap_or_else(|_| from_path.to_path_buf());
-            if let Some(original) = crate::merge::merge_that_moved(
-                connection,
-                &survivor,
-                &path.to_string_lossy(),
-            )? {
+            if let Some(original) =
+                crate::merge::merge_that_moved(connection, &survivor, &path.to_string_lossy())?
+            {
                 return crate::merge::earlier_merge(connection, &survivor, &original);
             }
         }

@@ -1231,6 +1231,12 @@ fn run_project(
             ));
         }
     };
+    if !*json {
+        eprintln!(
+            "Merge recorded. Rewriting pins and re-indexing {} checkout paths...",
+            outcome.reindex_paths.len()
+        );
+    }
     let follow_up = block_on(engram::merge::client::follow_up(&client, &outcome))?;
     if *json {
         println!(

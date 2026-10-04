@@ -47,8 +47,13 @@ pub fn rewrite_pins(
     let mut seen = std::collections::BTreeSet::new();
     let mut results = Vec::new();
     for checkout in checkouts {
-        for pin in rewrite_merged_pins(Path::new(checkout), retired, survivor, survivor_name, dry_run)
-        {
+        for pin in rewrite_merged_pins(
+            Path::new(checkout),
+            retired,
+            survivor,
+            survivor_name,
+            dry_run,
+        ) {
             let key = pin
                 .file
                 .clone()
