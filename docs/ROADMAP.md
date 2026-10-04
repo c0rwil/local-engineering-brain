@@ -165,3 +165,14 @@ run is recorded once as `test_result` with its exit status and source digests,
 and source pointers arrive as checked `path:start-end` ranges. `engram doctor`
 passes except for the duplicate `brain`/`engram` registration and the Codex
 hooks that still await trust.
+
+### Second and third passes (2026-10-04, later)
+
+| Workstream | Added | Measured or found |
+|---|---|---|
+| 0. Capture | `engram project merge` (dry run, backup, one transaction, audit event, retired-id redirect); pinned non-Git folders resolve in subdirectories | A review on a faithful copy found no lost rows. It confirmed nine defects, all fixed before release. The live merge of `engram` into `brain` waits for the operator. Codex 0.155 reports no exit status to hooks at all; reading it from the rollout transcript is in progress |
+| 1. Evidence and judge | Status notes when a verification's exit status is hidden, with a ledger of recordable runs; judge acceptance of unindexed files through hook digests and of immaterial revision differences; a judge Git watchdog | The note fires live in Claude Code. A replay still passes 2 of 135 pending reviews: existing evidence predates hook digests, and 45 of 73 stale reviews touched files that really changed |
+| 2. Context efficiency | Python call sites (extractor v3) with query rewrites and a unique-name rule; line-ranged, task-ranked file briefs with a size line for large files | Pilot tasks: required definitions in their file brief's first five rose from 45 to 87 of 105, and listed first from 6 to 51. Source-map selections were unchanged |
+| 3. Proof | Held-out collection runner, report and import; a login check before every attempt; inspected resume after infrastructure stops | The held-out collection stopped after one attempt because the Claude Code login had expired before the agent started. That attempt is kept as an infrastructure attempt |
+| 4. Safety | A loopback Host and Origin guard on `engram-proxy`; agent-written task prompts screened before the judge | No false positives on the backup's prompts |
+| Maintenance | Job-row retention; recurring vault exports; hidden projects skipped by automatic exports | 30 of 123 live job rows are past retention |
