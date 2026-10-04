@@ -105,7 +105,8 @@ not recorded. Each record keeps the tool name, an action class, repository-relat
 paths and, for Read calls, whether `offset`, `limit` or `pages` was supplied, the size
 of the text the tool returned and whether the agent's size limit rejected or truncated
 it. File content, shell commands and error text are never stored. The pre-tool hook
-records a touch before compiling any context that touch triggers. Records follow the
+records a call before compiling any context that call triggers; the post-tool hook
+reports whether it completed or failed. Records follow the
 `[jobs] context_run_retention_days` window.
 
 Each repository report (`context_use` in `--json`) compares delivered file pointers
@@ -113,34 +114,43 @@ with later reads and edits in the same agent session:
 
 - **Precision**: pointed files read or edited after delivery, divided by pointed files
   not already touched when the context was compiled. Already-touched files are counted
-  separately; a context compiled for the file being read cannot claim that read.
+  separately; a context compiled for the file being read cannot claim that read. Only
+  completed calls are touches. Failed calls, and calls seen only before execution
+  (denied, interrupted or missing their post-tool hook), never count as reads or edits
+  of a file.
 - **Coverage**: of the files first read or edited after a context for their repository
   was delivered in the session, the share that an earlier context had pointed to. A
   pointer from a linked repository's context also counts.
 - **First-touch distance**: observed tool calls from delivery to the first touch,
-  including the touching call.
-- **Read volume**: ranged-read share, mean result bytes, size-limit hits and failures.
+  including the touching call and any failed or unfinished calls in between.
+- **Read volume**: ranged-read share, mean result bytes, size-limit hits and failures
+  over Read calls with a post-tool outcome. Unfinished Read calls are counted apart.
   `brain` covers calls made after a context was delivered in that session and
   repository. `unattributed` covers calls made before; it is not a control group.
 
 These are associations, not causation: an agent may have found a pointed file without
-the pointer. Contexts without a later observed tool call, contexts linked to no agent
-session, and every context delivered before tool observation existed are reported as
-unobserved and stay out of precision. Pointers resolve through their indexed node to a
-file path, so line ranges do not affect attribution; pointers that cannot be resolved
-are counted separately. Only Read and edit tools with explicit file arguments count as
-touches. Shell commands are not parsed for paths, so shell reads, including most Codex
-reads, are not attributed and do not appear as Read calls. Files created during a
-session count as touched although no earlier context could point to them. Failed reads
-still count as touches. Calls outside tracked repositories are not observed, so
-first-touch distances can undercount. Result bytes measure the text content the tool
-reported, not provider tokens; image, PDF and unknown results have no size.
+the pointer. Contexts without a later tool call whose outcome was observed, contexts
+linked to no agent session, and every context delivered before tool observation existed
+are reported as unobserved and stay out of precision. Pointers resolve through their
+indexed node to a file path, so line ranges do not affect attribution; pointers that
+cannot be resolved are counted separately. Only Read and edit tools with explicit file
+arguments count as touches. Shell commands are not parsed for paths, so shell reads,
+including most Codex reads, are not attributed and do not appear as Read calls. Files
+created during a session count as touched although no earlier context could point to
+them. Calls outside tracked repositories are not observed, so first-touch distances can
+undercount. Result bytes measure the text content the tool reported, not provider
+tokens; image, PDF and unknown results have no size.
 
 Only sessions running updated hooks are observed: earlier sessions stored no touched
 paths, so historical contexts stay unobserved. Hooks send observations to
-`POST /api/v1/effectiveness/tool`. Another harness can send one per call and phase
-(`pre`, `post` or `failure`); repeats of the same call merge, keeping the earliest
-time:
+`POST /api/v1/effectiveness/tool`. The daemon validates the request, stamps the receipt
+time and queues a lowest-priority write; it answers without waiting for the commit, so
+a busy writer cannot delay the pre-tool hook. Project, task and context scope are checked
+when the write runs, and failures are logged rather than returned. Hooks wait at most
+500 ms for the answer and otherwise continue without the observation. Another harness
+can send one observation per call and phase (`pre`, `post` or `failure`); repeats of the
+same call merge, keeping the earliest time. Paths must be normalized and relative to the
+repository root; absolute paths and empty, `.` or `..` segments are rejected with HTTP 422:
 
 ```json
 {

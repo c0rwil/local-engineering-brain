@@ -16,9 +16,9 @@ use crate::storage::Database;
 mod context_use;
 
 pub use context_use::{
-    ContextUse, FirstTouch, PointerUse, ReadVolume, ToolAction, ToolObservationRequest,
-    ToolObservationResult, ToolPhase, UNATTRIBUTED_MODE, delete_tool_observation_batch,
-    hook_tool_observation, pointer_file, post_tool_phase,
+    ContextUse, FirstTouch, PointerUse, ReadVolume, ToolAction, ToolObservationReceipt,
+    ToolObservationRequest, ToolObservationResult, ToolPhase, UNATTRIBUTED_MODE,
+    delete_tool_observation_batch, hook_tool_observation, pointer_file, post_tool_phase,
 };
 
 const WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
@@ -322,8 +322,8 @@ impl EffectivenessStore {
                     "Daily usage is observational. Savings require controlled trials with matched tasks, model, configuration and correctness checks.".to_owned(),
                     "Missing measurements remain null. Totals cover reported samples only; per-field coverage is included. Samples must be additive deltas, not cumulative session totals.".to_owned(),
                     "Compiled context tokens are estimates, not billed tokens. Compilation alone does not prove the agent read or applied the context. Candidate source kinds and hook text outside context_runs were not historically retained.".to_owned(),
-                    "Context use is an association, not causation: a pointed file read or edited later in the same agent session may have been found without the pointer. Files already read or edited before a context was compiled are counted separately and excluded from precision. Contexts without a later observed tool call in the same agent session, including every context delivered before tool observation existed, are unobserved rather than unused. Attribution uses file paths; line ranges are ignored.".to_owned(),
-                    "Tool observations need hooks that report session and tool-use IDs. Only read and edit tools with explicit file arguments count as touches. Shell commands are not parsed for paths, so shell reads, including most Codex reads, are neither touches nor Read calls. Read result bytes are the text size the tool reported, not provider tokens; image, PDF and unknown results have no size. Reads before any delivered context in that session and repository are unattributed, which is not a control group.".to_owned(),
+                    "Context use is an association, not causation: a pointed file read or edited later in the same agent session may have been found without the pointer. Files already read or edited before a context was compiled are counted separately and excluded from precision. Contexts without a later tool call in the same agent session whose outcome was observed, including every context delivered before tool observation existed, are unobserved rather than unused. Attribution uses file paths; line ranges are ignored.".to_owned(),
+                    "Tool observations need hooks that report session and tool-use IDs. Only completed calls of read and edit tools with explicit file arguments count as touches; failed calls and calls seen only before execution, such as denied ones, do not. Read figures cover calls with a post-tool outcome; unfinished calls are counted apart. Shell commands are not parsed for paths, so shell reads, including most Codex reads, are neither touches nor Read calls. Read result bytes are the text size the tool reported, not provider tokens; image, PDF and unknown results have no size. Reads before any delivered context in that session and repository are unattributed, which is not a control group.".to_owned(),
                     "Cache tokens retain the provider's categories and are not added to input tokens. Costs are reported USD observations, never inferred from token estimates. Source breakdowns include internal judgment overhead when reported.".to_owned(),
                     "Controlled comparisons use matching stored benchmark/model/configuration/snapshot hashes and unique task/seed pairs. Savings on completed work use only pairs where both attempts pass and both measurements are complete. All-attempt totals retain failures, unscorable outcomes and reported partial usage. Missing and partial coverage is explicit. Legacy benchmark rows lack project identity, so comparisons appear only in unfiltered reports.".to_owned(),
                 ],
