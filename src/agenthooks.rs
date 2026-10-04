@@ -14,6 +14,9 @@
 //!
 //! Every hook fails OPEN: a broken brain must never break a coding session.
 
+pub mod codex;
+pub mod cursor;
+
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -693,6 +696,60 @@ pub fn active_sessions(state_dir: &Path) -> Vec<(String, HookSession, std::time:
     sessions
 }
 
+/// The coding agent that invoked a hook. Capture logic is shared; the client
+/// selects provenance labels and output bounds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HookClient {
+    ClaudeCode,
+    Codex,
+    Cursor,
+}
+
+impl HookClient {
+    /// `resource_usage.source` label for usage this client reports.
+    #[must_use]
+    pub fn usage_source(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude_code",
+            Self::Codex => "codex",
+            Self::Cursor => "cursor",
+        }
+    }
+
+    /// Evidence `metadata.source` label for verifications its hooks observe.
+    #[must_use]
+    pub fn evidence_source(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code-hook",
+            Self::Codex => "codex-hook",
+            Self::Cursor => "cursor-hook",
+        }
+    }
+
+    /// Whether one tool-time context message must fit the configured token
+    /// budget. Claude Code reads each emitted block separately.
+    #[must_use]
+    pub fn bounded_context(self) -> bool {
+        !matches!(self, Self::ClaudeCode)
+    }
+
+    /// Hard byte ceiling for one tool-time context message.
+    #[must_use]
+    pub fn context_byte_cap(self) -> usize {
+        match self {
+            Self::Cursor => cursor::CONTEXT_BYTES,
+            Self::ClaudeCode | Self::Codex => usize::MAX,
+        }
+    }
+
+    /// Whether the prompt hook can return context to the model. Cursor's
+    /// documented `beforeSubmitPrompt` output has no context field.
+    #[must_use]
+    pub fn prompt_context(self) -> bool {
+        !matches!(self, Self::Cursor)
+    }
+}
+
 /// Wrap hook context in the `hookSpecificOutput.additionalContext` JSON
 /// envelope. Claude Code accepts it for PreToolUse/PostToolUse; Codex
 /// expects it for every event.
@@ -1203,7 +1260,7 @@ fn is_engram_hook(command: &str) -> bool {
         ] | [
             "hook",
             "session-start" | "prompt" | "pretool" | "bash" | "stop" | "session-end",
-            "--codex"
+            "--codex" | "--cursor"
         ]
     ) {
         return false;
