@@ -306,6 +306,16 @@ passes only hexadecimal revisions of at least seven digits to Git. A missing or
 ambiguous revision, a changed file, an unreadable file or a task without touched
 files keeps the deferral.
 
+These source checks run Git locally only: `GIT_NO_LAZY_FETCH=1` stops a partial
+clone from fetching missing objects from its remote (Git 2.44 and later),
+`GIT_TERMINAL_PROMPT=0` stops credential prompts, and `GIT_OPTIONAL_LOCKS=0` avoids
+the optional index lock. Project-state reads (HEAD, status and the diff fingerprint)
+and the commit-ancestry check for commit-bounded memories use the same environment.
+All Git work for one review shares a five-second limit. When Git exceeds it, the
+judge kills the process and defers the review with a reason saying that Git did not
+answer in time. The next pass checks the review again. A timed-out revision
+comparison is never reported as a revision difference.
+
 Hook provenance (a hook `source` label and `source_digests`) is attached only
 through the daemon's hook evidence endpoint, which the CLI and MCP do not use;
 the generic evidence endpoint removes those keys from client-supplied metadata.

@@ -88,7 +88,10 @@ protects the loopback listener from DNS rebinding.
   (`[architect] auto = "claude"` in config).
 
 An optional Obsidian vault mirror exports to `~/.engram/vault` when enabled.
-The workspace UI and canonical documentation do not depend on it.
+The workspace UI and canonical documentation do not depend on it. With
+`[vault] auto_refresh`, a graph change schedules one export for that repository
+when the current refresh window closes (`refresh_interval_secs`, default 300).
+Further changes in the same window share that export.
 
 ## 5. Connect your agents (once, machine-wide)
 
@@ -404,8 +407,10 @@ reader that records results. When it cannot build a checked form (for example a
   - the hidden runs by cause.
 
   `--json` adds the same figures for each repository (`verification_status`).
-  The comparison is observational: the run that prompted a note counts before
-  it.
+  The browser's **Effectiveness** tab shows them per repository under
+  **Recordable verification runs**, with an all-repositories row when more
+  than one repository has runs. The comparison is observational: the run that
+  prompted a note counts before it.
 
 ## 6. Day to day: what's automatic vs. what you do
 

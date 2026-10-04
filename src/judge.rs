@@ -233,6 +233,8 @@ pub struct JudgmentAudit {
 pub struct JudgeStore {
     database: Database,
     redactor: Redactor,
+    /// Local-only, time-bounded Git for live source checks.
+    git: sources::GitRunner,
 }
 
 impl JudgeStore {
@@ -243,7 +245,11 @@ impl JudgeStore {
 
     #[must_use]
     pub const fn with_redactor(database: Database, redactor: Redactor) -> Self {
-        Self { database, redactor }
+        Self {
+            database,
+            redactor,
+            git: sources::GitRunner::DEFAULT,
+        }
     }
 
     /// Prepare a bounded batch without mutating storage or invoking a model.
@@ -326,6 +332,7 @@ impl JudgeStore {
             &review.project_id,
             &review.task_id,
             task.as_ref().and_then(|task| task.final_commit.as_deref()),
+            &self.git,
         )?;
         if let Some(reason) = &sources.issue {
             blocked_reason = Some(reason.clone());
@@ -377,7 +384,15 @@ impl JudgeStore {
                                     && !sources.revision_immaterial(observed)
                             })
                     {
-                        blocked_reason = Some("Evidence revision differs from the live checkout; verify current behavior again".to_owned());
+                        // A timed-out comparison leaves the difference unknown.
+                        blocked_reason = Some(
+                            if sources.git_timed_out {
+                                sources::GIT_TIMEOUT
+                            } else {
+                                "Evidence revision differs from the live checkout; verify current behavior again"
+                            }
+                            .to_owned(),
+                        );
                     }
                     source_records.push(json!({"record": record, "eligible": is_eligible,
                         "redacted_digest": crate::experience::sha256(redacted.as_bytes())}));

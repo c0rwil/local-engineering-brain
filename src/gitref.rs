@@ -16,6 +16,16 @@ use std::process::Command;
 
 use crate::error::{Error, Result};
 
+/// Environment for Git reads that must stay on this machine and never wait
+/// for a person: no lazy fetch of missing objects from a partial clone's
+/// promisor remote (Git 2.44+), no credential prompt, no optional index lock.
+/// Background checks apply it; origin refreshes, which fetch on purpose, do not.
+pub const LOCAL_READ_ENV: [(&str, &str); 3] = [
+    ("GIT_NO_LAZY_FETCH", "1"),
+    ("GIT_TERMINAL_PROMPT", "0"),
+    ("GIT_OPTIONAL_LOCKS", "0"),
+];
+
 /// A detached worktree at the remote default branch; removed on drop.
 pub struct OriginWorktree {
     repo: PathBuf,

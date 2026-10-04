@@ -245,14 +245,59 @@ impl JobQueue {
         Self { database }
     }
 
-    /// Idempotently enqueue one job. An existing row with the same
-    /// `(job_type, dedupe_key)` is returned unchanged, whatever its status.
+    /// Idempotently enqueue one job, due immediately. An existing row with the
+    /// same `(job_type, dedupe_key)` is returned unchanged, whatever its status.
     ///
     /// # Errors
     ///
     /// Returns an error for invalid limits, a missing required project scope,
     /// or storage failure.
     pub fn enqueue(&self, request: &EnqueueJob, now_ms: i64) -> Result<JobRecord> {
+        self.enqueue_due(request, now_ms, now_ms)
+    }
+
+    /// Request the automatic vault refresh after a graph change: one
+    /// `vault_export` per project per `refresh_interval_secs` window. The job is
+    /// due when its window closes, so one export covers every change made in
+    /// the window. Each window has its own dedupe key; a succeeded or dead
+    /// export never blocks a later window's refresh.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a zero interval, invalid limits or storage failure.
+    pub fn enqueue_vault_refresh(
+        &self,
+        project_id: &ProjectId,
+        refresh_interval_secs: u64,
+        max_attempts: u32,
+        now_ms: i64,
+    ) -> Result<JobRecord> {
+        let window_ms = i64::try_from(refresh_interval_secs.saturating_mul(1_000))
+            .map_err(|_| Error::Config("vault refresh interval is too long".to_owned()))?;
+        if window_ms == 0 {
+            return Err(Error::Config(
+                "vault refresh interval must be positive".to_owned(),
+            ));
+        }
+        let window = now_ms.div_euclid(window_ms);
+        let request = EnqueueJob {
+            job_type: JobType::VaultExport,
+            project_id: Some(project_id.clone()),
+            payload: serde_json::json!({}),
+            dedupe_key: format!("vault_export:{project_id}:{refresh_interval_secs}s-{window}"),
+            max_attempts,
+        };
+        let window_end = window.saturating_add(1).saturating_mul(window_ms);
+        self.enqueue_due(&request, now_ms, window_end)
+    }
+
+    /// [`Self::enqueue`] with a first-run time; a duplicate keeps its own.
+    fn enqueue_due(
+        &self,
+        request: &EnqueueJob,
+        now_ms: i64,
+        not_before_ms: i64,
+    ) -> Result<JobRecord> {
         if request.max_attempts == 0 {
             return Err(Error::Config(
                 "jobs require at least one attempt".to_owned(),
@@ -276,7 +321,7 @@ impl JobQueue {
                 "INSERT INTO jobs(id, project_id, job_type, priority, status, payload_json,
                                   dedupe_key, attempts, max_attempts, last_error, result_json,
                                   not_before_ms, created_at_ms, updated_at_ms, completed_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?6, 0, ?7, NULL, NULL, ?8, ?8, ?8, NULL)
+                 VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?6, 0, ?7, NULL, NULL, ?9, ?8, ?8, NULL)
                  ON CONFLICT(job_type, dedupe_key) DO NOTHING",
                 params![
                     id.as_str(),
@@ -287,6 +332,7 @@ impl JobQueue {
                     request.dedupe_key,
                     i64::from(request.max_attempts),
                     now_ms,
+                    not_before_ms,
                 ],
             )?;
             Ok(())
@@ -1604,6 +1650,86 @@ mod tests {
         assert_eq!(daily_dedupe_key(0), "day-0");
         assert_eq!(daily_dedupe_key(day_ms - 1), "day-0");
         assert_eq!(daily_dedupe_key(day_ms), "day-1");
+    }
+
+    /// Regression: the automatic vault refresh was keyed per project only, so
+    /// the first export (or a dead one) blocked every later refresh.
+    #[test]
+    fn vault_refresh_recurs_once_per_window_after_the_window_closes() {
+        let temp = TempDir::new().expect("temp dir");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let registry = ProjectRegistry::new(database.clone());
+        let [project, other] = ["one", "two"].map(|name| {
+            let root = temp.path().join(name);
+            std::fs::create_dir_all(&root).expect("project dir");
+            registry
+                .resolve_or_register(&root)
+                .expect("project")
+                .project
+                .id
+        });
+        let queue = JobQueue::new(database);
+        let window = 300_000;
+
+        let first = queue
+            .enqueue_vault_refresh(&project, 300, 3, 10 * window + 1_000)
+            .expect("first change");
+        assert_eq!(first.job_type, JobType::VaultExport);
+        assert_eq!(
+            first.not_before_ms,
+            11 * window,
+            "due when the window closes"
+        );
+        assert!(
+            first.dedupe_key.ends_with(":300s-10"),
+            "{}",
+            first.dedupe_key
+        );
+        let again = queue
+            .enqueue_vault_refresh(&project, 300, 3, 11 * window - 1)
+            .expect("later change in the same window");
+        assert_eq!(again.id, first.id, "one export per window");
+        assert_eq!(again.not_before_ms, first.not_before_ms);
+        assert!(queue.claim_due(11 * window - 1).expect("claim").is_none());
+        let claimed = queue.claim_due(11 * window).expect("claim").expect("due");
+        assert_eq!(claimed.id, first.id);
+        queue
+            .record_success(&claimed.id, &serde_json::json!({}), 11 * window)
+            .expect("success");
+
+        // The next window gets its own job although the last one succeeded.
+        let next = queue
+            .enqueue_vault_refresh(&project, 300, 1, 11 * window + 5)
+            .expect("change in the next window");
+        assert_ne!(
+            next.id, first.id,
+            "a finished export does not block refreshes"
+        );
+        assert_eq!(
+            (next.status, next.not_before_ms),
+            (JobStatus::Pending, 12 * window)
+        );
+        let claimed = queue.claim_due(12 * window).expect("claim").expect("due");
+        assert_eq!(claimed.id, next.id);
+        queue
+            .record_failure(&claimed.id, "vault unwritable", 12 * window)
+            .expect("failure");
+        let dead = queue.get(&next.id).expect("get").expect("row");
+        assert_eq!(dead.status, JobStatus::Dead);
+        let after_dead = queue
+            .enqueue_vault_refresh(&project, 300, 3, 12 * window + 5)
+            .expect("change after a dead export");
+        assert_ne!(
+            after_dead.id, next.id,
+            "a dead export does not block refreshes"
+        );
+        assert_eq!(after_dead.status, JobStatus::Pending);
+        let elsewhere = queue
+            .enqueue_vault_refresh(&other, 300, 3, 12 * window + 5)
+            .expect("another project");
+        assert_ne!(elsewhere.id, after_dead.id, "windows are per project");
+
+        assert!(queue.enqueue_vault_refresh(&project, 0, 3, 0).is_err());
     }
 
     fn executor(database: &Database) -> JobExecutor {

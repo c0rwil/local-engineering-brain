@@ -214,6 +214,9 @@ pub struct VaultConfig {
     /// structural scan changes a project's graph, so notes and mermaid
     /// diagrams track the code without manual rebuilds.
     pub auto_refresh: bool,
+    /// Automatic refresh window in seconds: graph changes within one window
+    /// share one export, which runs when the window closes.
+    pub refresh_interval_secs: u64,
 }
 
 impl Default for VaultConfig {
@@ -222,6 +225,7 @@ impl Default for VaultConfig {
             enabled: false,
             root: PathBuf::from("~/.engram/vault"),
             auto_refresh: true,
+            refresh_interval_secs: 300,
         }
     }
 }
@@ -798,6 +802,12 @@ impl Config {
         {
             return Err(Error::Config(
                 "jobs.context_run_retention_days must be between 1 and 3650".to_owned(),
+            ));
+        }
+        // The vault refresh window schedules automatic `vault_export` jobs.
+        if !(60..=86_400).contains(&self.vault.refresh_interval_secs) {
+            return Err(Error::Config(
+                "vault.refresh_interval_secs must be between 60 and 86400".to_owned(),
             ));
         }
         Ok(())
@@ -1499,6 +1509,10 @@ mod tests {
         assert_eq!(config.jobs.poll_interval_ms, 5_000);
         assert_eq!(config.jobs.max_attempts, 5);
         assert_eq!(config.jobs.context_run_retention_days, 90);
+        assert_eq!(
+            config.vault.refresh_interval_secs,
+            VaultConfig::default().refresh_interval_secs
+        );
     }
 
     #[test]
@@ -1519,6 +1533,11 @@ mod tests {
                 "retention.toml",
                 "[jobs]\ncontext_run_retention_days = 0\n",
                 "context_run_retention_days",
+            ),
+            (
+                "vault.toml",
+                "[vault]\nrefresh_interval_secs = 59\n",
+                "refresh_interval_secs",
             ),
         ] {
             let path = temp.path().join(name);

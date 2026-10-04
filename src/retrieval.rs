@@ -342,6 +342,7 @@ fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
     let status = Command::new("git")
         .args(["merge-base", "--is-ancestor", ancestor, descendant])
         .current_dir(root)
+        .envs(crate::gitref::LOCAL_READ_ENV)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io::{ErrorKind, Read as _};
 use std::path::{Component, Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
@@ -34,6 +36,10 @@ const PACKED_REFS_LIMIT: u64 = 8 * 1024 * 1024;
 const MAX_REVISION_CHECKS: usize = 4;
 /// Longest `git cat-file --batch` header line read.
 const OBJECT_HEADER_LIMIT: u64 = 4 * 1024;
+/// Wall time for all Git work in one review's live-source check.
+const LIVE_GIT_BUDGET: Duration = Duration::from_secs(5);
+/// Longest `git rev-parse` output read.
+const HEAD_OUTPUT_LIMIT: u64 = 4 * 1024;
 
 pub(super) const TOO_MANY_FILES: &str =
     "Source episode exceeds the 64-file live verification limit";
@@ -46,6 +52,7 @@ pub(super) const INVALID_PATH: &str = "Touched path escapes its checkout or is n
 pub(super) const RESOLVES_OUTSIDE: &str = "Touched source resolves outside the registered checkout";
 pub(super) const TASK_REVISION_DIFFERS: &str =
     "Source task revision differs from the live checkout; verify current behavior again";
+pub(super) const GIT_TIMEOUT: &str = "Source check stopped: Git did not answer within the time limit (slow storage, heavy load or a partial clone fetching objects); the next pass checks again";
 pub(super) const PRIVACY_DENIED: &str = "Touched source file is blocked for the daemon by macOS privacy controls; run `engram doctor` for the access fix";
 pub(super) const PERMISSION_DENIED: &str = "Touched source file is not readable by the daemon (permission denied); make it readable by the daemon's user";
 pub(super) const READ_FAILED: &str =
@@ -61,14 +68,16 @@ pub(super) const UNANCHORED_UNOBSERVED: &str = "Touched file has no indexed anch
 pub(super) const UNANCHORED_CHANGED: &str = "Touched file has no indexed anchor and changed after the hook-observed verification; verify it again";
 
 /// Reporting order: containment, checkout state, reads, then index agreement.
-/// A Git HEAD failure has no fixed text and ranks with the revision check.
-const ISSUE_ORDER: [&str; 15] = [
+/// A Git HEAD failure has no fixed text and ranks with the revision check; a
+/// Git timeout ranks above it because it leaves the revision unknown.
+const ISSUE_ORDER: [&str; 16] = [
     TOO_MANY_FILES,
     OUTSIDE_CHECKOUTS,
     INVALID_PATH,
     RESOLVES_OUTSIDE,
     CHECKOUT_ACCESS_DENIED,
     CHECKOUT_UNAVAILABLE,
+    GIT_TIMEOUT,
     TASK_REVISION_DIFFERS,
     PRIVACY_DENIED,
     PERMISSION_DENIED,
@@ -79,7 +88,82 @@ const ISSUE_ORDER: [&str; 15] = [
     DIFFERS_FROM_INDEX,
     NOT_INDEXED,
 ];
-const HEAD_ISSUE_RANK: usize = 6;
+const HEAD_ISSUE_RANK: usize = 7;
+
+/// How live checks run Git. Every call is local-only
+/// ([`crate::gitref::LOCAL_READ_ENV`]) and shares one wall-time budget per
+/// review; a child still running at the deadline is killed. Tests substitute
+/// the program and a shorter budget.
+#[derive(Clone, Debug)]
+pub(super) struct GitRunner {
+    /// `None` runs `git` from `PATH`.
+    pub program: Option<PathBuf>,
+    pub budget: Duration,
+}
+
+impl GitRunner {
+    pub(super) const DEFAULT: Self = Self {
+        program: None,
+        budget: LIVE_GIT_BUDGET,
+    };
+
+    fn command(&self, root: &Path, arguments: &[&str]) -> Command {
+        let mut command = Command::new(self.program.as_deref().unwrap_or(Path::new("git")));
+        command
+            .arg("-C")
+            .arg(root)
+            .args(arguments)
+            .envs(crate::gitref::LOCAL_READ_ENV)
+            .stderr(Stdio::null());
+        command
+    }
+}
+
+enum Waited<T> {
+    /// The conversation finished; the exit status, if Git exited in time.
+    Done(T, Option<ExitStatus>),
+    TimedOut,
+    Failed,
+}
+
+/// Talk to a spawned Git child on a worker thread until `deadline`. The worker
+/// owns the pipes and drops them when it returns, so Git exits even if output
+/// was left unread. At the deadline the child is killed; a worker still blocked
+/// on a pipe that a descendant holds open is left to finish on its own.
+fn within_deadline<T: Send + 'static>(
+    mut child: Child,
+    deadline: Instant,
+    talk: impl FnOnce(Option<ChildStdin>, Option<ChildStdout>) -> T + Send + 'static,
+) -> Waited<T> {
+    let (input, output) = (child.stdin.take(), child.stdout.take());
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(talk(input, output));
+    });
+    match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(value) => loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Waited::Done(value, Some(status)),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Waited::Done(value, None);
+                }
+            }
+        },
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            match error {
+                std::sync::mpsc::RecvTimeoutError::Timeout => Waited::TimedOut,
+                std::sync::mpsc::RecvTimeoutError::Disconnected => Waited::Failed,
+            }
+        }
+    }
+}
 
 /// Verified live state for one episode.
 pub(super) struct LiveSources {
@@ -96,6 +180,8 @@ pub(super) struct LiveSources {
     /// Recorded revisions (normalized) at which every touched file has exactly
     /// its live and indexed content, so a newer live HEAD is immaterial.
     pub unchanged_revisions: Vec<String>,
+    /// Git did not answer within the review's budget; revisions are unknown.
+    pub git_timed_out: bool,
 }
 
 impl LiveSources {
@@ -141,7 +227,9 @@ pub(super) fn live_sources(
     project_id: &ProjectId,
     task_id: &TaskId,
     final_commit: Option<&str>,
+    git: &GitRunner,
 ) -> Result<LiveSources> {
+    let deadline = Instant::now() + git.budget;
     let recorded = load(database, project_id, task_id)?;
     if recorded.touched.len() > MAX_TOUCHED_FILES {
         return Ok(LiveSources {
@@ -150,6 +238,7 @@ pub(super) fn live_sources(
             issue: Some(TOO_MANY_FILES.to_owned()),
             unanchored: Vec::new(),
             unchanged_revisions: Vec::new(),
+            git_timed_out: false,
         });
     }
     let (checkouts, access_denied) = checkouts(project_id, &recorded);
@@ -174,10 +263,14 @@ pub(super) fn live_sources(
 
     let mut issues = Issues::default();
     let mut head = None;
+    let mut git_timed_out = false;
     if let Some(index) = task_checkout {
-        match live_head(&checkouts[index].root) {
+        match live_head_within(git, &checkouts[index].root, deadline) {
             Ok(current) => head = current,
-            Err(error) => issues.add(&error),
+            Err(error) => {
+                git_timed_out = error == GIT_TIMEOUT;
+                issues.add(&error);
+            }
         }
     }
     let targets: Vec<Target> = locations
@@ -202,7 +295,13 @@ pub(super) fn live_sources(
     );
     let unchanged_revisions = match (task_checkout, head.as_deref(), &files.comparable) {
         (Some(index), Some(current), Some(comparable)) => {
-            immaterial_revisions(&checkouts[index].root, current, &revisions, comparable)
+            let root = &checkouts[index].root;
+            immaterial_revisions(git, root, deadline, current, &revisions, comparable)
+                .unwrap_or_else(|| {
+                    git_timed_out = true;
+                    issues.add(GIT_TIMEOUT);
+                    Vec::new()
+                })
         }
         _ => Vec::new(),
     };
@@ -231,6 +330,7 @@ pub(super) fn live_sources(
         issue: issues.first(),
         unanchored: files.unanchored,
         unchanged_revisions,
+        git_timed_out,
     })
 }
 
@@ -349,12 +449,15 @@ fn normalized_revision(revision: &str) -> Option<String> {
 /// file still has exactly the content it had at that revision. At most
 /// `MAX_REVISION_CHECKS` distinct revisions are compared, the task's own first.
 /// A task without touched files has nothing to compare and gets none.
+/// `None` when Git did not finish before `deadline`.
 fn immaterial_revisions(
+    git: &GitRunner,
     root: &Path,
+    deadline: Instant,
     head: &str,
     revisions: &[String],
     files: &[(String, String)],
-) -> Vec<String> {
+) -> Option<Vec<String>> {
     let mut differing: Vec<String> = Vec::new();
     for revision in revisions {
         if same_revision(revision, head) {
@@ -367,37 +470,39 @@ fn immaterial_revisions(
         }
     }
     if differing.is_empty() || files.is_empty() {
-        return Vec::new();
+        return Some(Vec::new());
     }
-    files_unchanged_since(root, &differing, files)
+    files_unchanged_since(git, root, deadline, differing, files.to_vec())
 }
 
 /// The recorded revisions at which every file has exactly its live content,
 /// read through one bounded `git cat-file --batch` process in `root`. A
 /// missing, ambiguous, non-blob or oversized object leaves that revision out.
+/// `None` when Git did not finish before `deadline`.
 fn files_unchanged_since(
+    git: &GitRunner,
     root: &Path,
-    revisions: &[String],
-    files: &[(String, String)],
-) -> Vec<String> {
-    use std::process::{Command, Stdio};
-    let Ok(mut child) = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["cat-file", "--batch"])
+    deadline: Instant,
+    revisions: Vec<String>,
+    files: Vec<(String, String)>,
+) -> Option<Vec<String>> {
+    let Ok(child) = git
+        .command(root, &["cat-file", "--batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
         .spawn()
     else {
-        return Vec::new();
+        return Some(Vec::new());
     };
-    let mut unchanged = Vec::new();
-    if let (Some(mut input), Some(output)) = (child.stdin.take(), child.stdout.take()) {
+    let compared = within_deadline(child, deadline, move |input, output| {
+        let mut unchanged = Vec::new();
+        let (Some(mut input), Some(output)) = (input, output) else {
+            return unchanged;
+        };
         let mut output = std::io::BufReader::new(output);
         let mut remaining = LIVE_READ_BUDGET;
         'revisions: for revision in revisions {
-            for (path, live_digest) in files {
+            for (path, live_digest) in &files {
                 if path.contains(['\n', '\r']) {
                     continue 'revisions;
                 }
@@ -410,12 +515,15 @@ fn files_unchanged_since(
                     Blob::Unreadable => break 'revisions,
                 }
             }
-            unchanged.push(revision.clone());
+            unchanged.push(revision);
         }
+        unchanged
+    });
+    match compared {
+        Waited::Done(unchanged, _) => Some(unchanged),
+        Waited::TimedOut => None,
+        Waited::Failed => Some(Vec::new()),
     }
-    let _ = child.kill();
-    let _ = child.wait();
-    unchanged
 }
 
 enum Blob {
@@ -478,20 +586,43 @@ fn read_blob(
 /// Read the live Git HEAD, or `None` outside Git.
 /// # Errors
 /// Returns a reviewer-facing reason when Git exists but HEAD cannot be read.
+#[cfg(test)]
 pub(super) fn live_head(root: &Path) -> std::result::Result<Option<String>, String> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "--verify", "HEAD"])
-        .output()
+    live_head_within(&GitRunner::DEFAULT, root, Instant::now() + LIVE_GIT_BUDGET)
+}
+
+/// [`live_head`] with the review's Git runner and deadline; a timeout returns
+/// [`GIT_TIMEOUT`].
+fn live_head_within(
+    git: &GitRunner,
+    root: &Path,
+    deadline: Instant,
+) -> std::result::Result<Option<String>, String> {
+    let child = git
+        .command(root, &["rev-parse", "--verify", "HEAD"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()
         .map_err(|error| format!("Cannot read live Git HEAD: {error}"))?;
-    if !output.status.success() {
+    let read = within_deadline(child, deadline, |_, output| {
+        let mut bytes = Vec::new();
+        if let Some(output) = output {
+            let _ = output.take(HEAD_OUTPUT_LIMIT).read_to_end(&mut bytes);
+        }
+        bytes
+    });
+    let (stdout, status) = match read {
+        Waited::Done(stdout, Some(status)) => (stdout, status),
+        Waited::Done(_, None) | Waited::TimedOut => return Err(GIT_TIMEOUT.to_owned()),
+        Waited::Failed => return Err("Cannot read live Git HEAD".to_owned()),
+    };
+    if !status.success() {
         if root.join(".git").exists() {
             return Err("Cannot resolve live Git HEAD".to_owned());
         }
         return Ok(None);
     }
-    let head = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let head = String::from_utf8_lossy(&stdout).trim().to_owned();
     if !(head.len() == 40 || head.len() == 64) || !head.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err("Live Git HEAD is not a commit hash".to_owned());
