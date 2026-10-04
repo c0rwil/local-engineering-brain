@@ -315,6 +315,61 @@ fn codex_post_tool_use_carries_the_note() {
     assert_eq!(f.ledger(3), vec![(or.clone(), 1), (or, 0), (None, 0)]);
 }
 
+/// Codex 0.155 runs no hook for a code-mode `exec` cell and reports each
+/// shell command the cell runs as its own `Bash` call, like a direct
+/// `exec_command`: `tool_input.command`, and the output text as
+/// `tool_response`, without an exit code. Those runs get notes and ledger
+/// rows, but no status is inferred, so none becomes evidence and the episode
+/// cannot close as a success.
+#[test]
+fn codex_code_mode_commands_are_noted_but_never_inferred_to_pass() {
+    let f = Fixture::new();
+    f.prompt(&["--codex"], "codex-code-mode");
+    let post = |tool: &str, id: &str, command: &str| {
+        f.cli(
+            &["hook", "bash", "--codex"],
+            Some(
+                &json!({"session_id":"codex-code-mode","turn_id":"turn-1","cwd":f.repo(),
+                "hook_event_name":"PostToolUse","model":"gpt-test","permission_mode":"default",
+                "transcript_path":null,"tool_name":tool,"tool_use_id":id,
+                "tool_input":{"command":command},"tool_response":"test result: ok"}),
+            ),
+        )
+    };
+    let note = hook_note(
+        &post("Bash", "exec-1", "cargo test 2>&1 | tail -5"),
+        "PostToolUse",
+    );
+    assert!(
+        note.contains("`set -o pipefail; cargo test 2>&1 | tail -5`"),
+        "{note}"
+    );
+    assert_eq!(post("Bash", "exec-2", "cargo test"), "");
+    // The cell's JavaScript, were a build to report it, is not shell text.
+    let cell = "const r = await tools.exec_command({ cmd: \"cargo test || true\" });";
+    assert_eq!(post("exec", "cell-1", cell), "");
+    let pipe = Some("pipe".to_owned());
+    assert_eq!(f.ledger(2), vec![(pipe, 1), (None, 0)]);
+    let evidence: i64 = f
+        .db()
+        .query_row("SELECT count(*) FROM evidence", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(evidence, 0, "output text is not an exit status");
+    f.cli(
+        &["hook", "session-end", "--codex"],
+        Some(&json!({"session_id":"codex-code-mode","cwd":f.repo()})),
+    );
+    let status: String = f
+        .db()
+        .query_row(
+            "SELECT status FROM tasks WHERE session_id='codex-code-mode'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "abandoned");
+}
+
 #[test]
 fn cursor_shell_results_carry_the_note_in_their_single_response() {
     let f = Fixture::new();

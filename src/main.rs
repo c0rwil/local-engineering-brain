@@ -5057,7 +5057,12 @@ fn discover_project_root(path: &Path) -> Result<PathBuf> {
     } else {
         existing
     };
-    Ok(GitState::discover(&directory)?.map_or(directory, |git| git.repository_root))
+    // Configuration follows project identity: a registered folder outside Git
+    // configures its subdirectories, as a repository root does.
+    Ok(GitState::discover(&directory)?.map_or_else(
+        || engram::projects::pinned_folder_root(&directory).unwrap_or(directory),
+        |git| git.repository_root,
+    ))
 }
 
 fn print_status(status: &ProjectStatus) {

@@ -226,7 +226,7 @@ impl ProjectRegistry {
         let requested_path = canonical_path(requested_path)?;
         let git = GitState::discover(&requested_path)?;
         let root = git.as_ref().map_or_else(
-            || requested_path.clone(),
+            || pinned_folder_root(&requested_path).unwrap_or_else(|| requested_path.clone()),
             |state| state.repository_root.clone(),
         );
         let local_metadata = read_project_metadata(&root)?;
@@ -1127,6 +1127,34 @@ pub fn metadata_dir(root: &Path) -> PathBuf {
     }
     let legacy = root.join(".leb");
     if legacy.exists() { legacy } else { current }
+}
+
+/// The registered folder that owns `directory` when Git reports no work tree
+/// there: `directory` itself or its nearest ancestor holding a project pin
+/// (`.engram/project.toml`, or the legacy `.leb/project.toml`). A folder
+/// outside Git owns its whole tree, as a repository root owns its
+/// subdirectories, so a nested path never registers on its own.
+///
+/// The search stops at the first directory with a `.git` entry: Git saw no
+/// work tree there, so the path is inside a Git directory or a repository
+/// Git would not read, and a pin above it is not this path's identity. It
+/// also stops at the home directory: a pin there, or above it, would make
+/// every folder of the user's part of one project, so a registered home
+/// directory owns only itself.
+#[must_use]
+pub fn pinned_folder_root(directory: &Path) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").and_then(|home| fs::canonicalize(home).ok());
+    pinned_folder_root_below(directory, home.as_deref())
+}
+
+fn pinned_folder_root_below(directory: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    directory
+        .ancestors()
+        .take_while(|ancestor| {
+            !ancestor.join(".git").exists() && !home.is_some_and(|home| home.starts_with(ancestor))
+        })
+        .find(|ancestor| metadata_dir(ancestor).join("project.toml").is_file())
+        .map(Path::to_path_buf)
 }
 
 /// Find the primary checkout of a linked Git worktree. Submodules have a
@@ -2153,6 +2181,75 @@ mod tests {
             .expect("resolved");
         let metadata = fs::read_to_string(project.join(".engram/project.toml")).expect("metadata");
         assert!(metadata.contains(resolved.project.id.as_str()));
+    }
+
+    #[test]
+    fn test_registered_folder_outside_git_owns_its_subdirectories() {
+        let temp = TempDir::new().expect("temp dir");
+        let folder = temp.path().join("plain");
+        let nested = folder.join("src/deep");
+        let pinned = folder.join("vendor/own");
+        fs::create_dir_all(&nested).expect("nested");
+        fs::create_dir_all(pinned.join("lib")).expect("pinned");
+        let registry = registry(&temp);
+        // Registered before its parent, the inner folder keeps its own pin.
+        let own = registry.resolve_or_register(&pinned).expect("inner");
+        let registered = registry.resolve_or_register(&folder).expect("folder");
+        assert_ne!(own.project.id, registered.project.id);
+
+        let found = registry.lookup(&nested).expect("lookup").expect("owned");
+        assert_eq!(found.id, registered.project.id);
+        let file = nested.join("deep.rs");
+        fs::write(&file, "pub fn deep() {}\n").expect("file");
+        let resolved = registry.resolve_or_register(&file).expect("resolve");
+        assert_eq!(resolved.project.id, registered.project.id);
+        assert_eq!(resolved.root, fs::canonicalize(&folder).expect("canonical"));
+        for directory in [&nested, &folder.join("src")] {
+            assert!(
+                !directory.join(".engram").exists(),
+                "a nested path never gets its own pin: {}",
+                directory.display()
+            );
+        }
+        let inner = registry
+            .lookup(&pinned.join("lib"))
+            .expect("lookup")
+            .expect("owned");
+        assert_eq!(inner.id, own.project.id, "the nearest pin wins");
+    }
+
+    #[test]
+    fn test_a_folder_pin_never_crosses_a_git_boundary() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path().join("repo");
+        init_repo(&repo);
+        let registry = registry(&temp);
+        registry.resolve_or_register(&repo).expect("register");
+        assert!(repo.join(".engram/project.toml").is_file());
+        // Git reports no work tree inside its own directory; the repository's
+        // pin beside it is not that path's identity.
+        let internal = repo.join(".git/hooks");
+        fs::create_dir_all(&internal).expect("git hooks dir");
+        assert_eq!(pinned_folder_root(&internal), None);
+        assert!(registry.lookup(&internal).expect("lookup").is_none());
+    }
+
+    #[test]
+    fn test_a_registered_home_directory_owns_only_itself() {
+        let temp = TempDir::new().expect("temp dir");
+        let home = temp.path().join("home");
+        let notes = home.join("notes");
+        let deep = notes.join("2026/october");
+        fs::create_dir_all(&deep).expect("folders");
+        registry(&temp).resolve_or_register(&home).expect("home");
+        assert!(home.join(".engram/project.toml").is_file());
+        assert_eq!(pinned_folder_root_below(&deep, Some(&home)), None);
+        assert_eq!(pinned_folder_root_below(&home, Some(&home)), None);
+        assert_eq!(pinned_folder_root_below(&deep, None), Some(home.clone()));
+        // A folder registered inside the home directory still owns its tree.
+        fs::create_dir_all(notes.join(".engram")).expect("pin dir");
+        fs::write(notes.join(".engram/project.toml"), "").expect("pin");
+        assert_eq!(pinned_folder_root_below(&deep, Some(&home)), Some(notes));
     }
 
     #[test]

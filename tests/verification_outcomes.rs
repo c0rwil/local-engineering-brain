@@ -481,3 +481,89 @@ fn cli_evidence_metadata_cannot_claim_hook_provenance() {
         json!({"note":"kept"})
     );
 }
+
+/// A registered folder outside Git owns its subdirectories, as a repository
+/// root does: a file read in a nested directory and verifications run there
+/// belong to the folder's project, and the nested directory never registers
+/// on its own. (The fixture folders are not Git repositories.)
+#[test]
+fn a_registered_folder_outside_git_owns_its_subdirectories() {
+    let f = Fixture::new(&["repo"]);
+    let repo = f.repo("repo");
+    let nested = repo.join("crates/core");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(nested.join("deep.rs"), "pub fn deep() -> u32 { 2 }\n").unwrap();
+    f.prompt("nested", &repo);
+    f.hook(
+        &["hook", "pretool"],
+        &json!({"session_id":"nested","cwd":repo,"hook_event_name":"PreToolUse",
+            "tool_name":"Read","tool_use_id":"r1",
+            "tool_input":{"file_path":nested.join("deep.rs")}}),
+    );
+    let pass = Run::Pass("test result: ok");
+    f.bash("nested", &nested, "t1", "cargo test", &pass);
+    f.bash(
+        "nested",
+        &repo,
+        "t2",
+        "cd crates/core && cargo clippy",
+        &pass,
+    );
+    assert_eq!(
+        f.rows(
+            "SELECT p.name, e.exit_code FROM evidence e JOIN projects p ON p.id=e.project_id
+             ORDER BY e.observed_at_ms, e.rowid"
+        ),
+        [("repo".to_owned(), 0), ("repo".to_owned(), 0)]
+    );
+    // The daemon acknowledges an observation before it writes it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let reads = loop {
+        let reads = f.rows(
+            "SELECT paths_json, count(*) FROM tool_observations WHERE tool_name='Read'
+             GROUP BY paths_json",
+        );
+        if !reads.is_empty() || std::time::Instant::now() > deadline {
+            break reads;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(reads, [("[\"crates/core/deep.rs\"]".to_owned(), 1)]);
+    assert_eq!(
+        f.rows("SELECT name, count(*) FROM projects GROUP BY name"),
+        [("repo".to_owned(), 1)]
+    );
+    for directory in [&nested, &repo.join("crates")] {
+        assert!(
+            !directory.join(".engram").exists(),
+            "{}",
+            directory.display()
+        );
+    }
+    f.end("nested", &repo);
+    assert_eq!(f.outcome("nested"), "success");
+}
+
+/// Configuration follows the same identity: a hook running in a subdirectory
+/// of a registered folder outside Git loads the folder's project config.
+#[test]
+fn a_registered_folder_outside_git_configures_its_subdirectories() {
+    let f = Fixture::new(&["repo"]);
+    let repo = f.repo("repo");
+    let nested = repo.join("docs/notes");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(
+        repo.join(".engram/config.toml"),
+        "[security]\ncustom_redaction_patterns = [\"TICKET-[0-9]+\"]\n",
+    )
+    .unwrap();
+    f.hook(
+        &["hook", "prompt"],
+        &json!({"session_id":"configured","cwd":nested,"prompt":"Fix TICKET-4711 in compute"}),
+    );
+    let saved = engram::agenthooks::pending_prompt(f.root(), "configured").expect("prompt");
+    assert!(
+        saved.contains("compute") && !saved.contains("TICKET-4711"),
+        "{saved}"
+    );
+}

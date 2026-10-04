@@ -55,6 +55,12 @@ detects the technology stack from manifests and infra files. Definitive cross-re
 `file:` packages, submodules) auto-link on every index; `engram link scan`
 proposes fuzzier matches, `engram link add` records what you know by hand.
 
+A folder that is not a Git repository can be indexed too. Its project pin
+(`.engram/project.toml`) then covers its subdirectories, as a repository root
+covers its own: hooks, `--path` and project configuration in a subdirectory
+resolve to the folder. A subfolder that already has its own pin keeps its
+own project, and a registered home directory covers only itself.
+
 Teach Engram the facts a codebase can't tell it about itself:
 
 ```bash
@@ -299,7 +305,16 @@ coding client reported its exit status:
   N"). A completed foreground `PostToolUse` Bash call therefore has status 0.
   Interrupted, backgrounded or timed-out calls, and calls whose non-zero status
   Claude Code reinterpreted (for example `grep` finding nothing), are not recorded.
-- Codex supplies an explicit exit code in its tool result.
+- Codex 0.155 reports no exit status to hooks. Every shell command, whether
+  the model ran `exec_command` directly or from a code-mode `exec` cell, arrives
+  as a `Bash` `PostToolUse` call whose `tool_response` is the command's output
+  text, and Codex runs that hook for failing commands too. Engram does not read
+  a status from output text, so Codex verification runs get status notes but
+  are not recorded as evidence, and the episode's result for them stays
+  unknown. Record the result with `engram_record_evidence` (MCP) or
+  `engram task evidence`. A result that carries an explicit integer exit code
+  (`exit_code`, `exitCode`) is recorded. The code-mode `exec` cell itself runs
+  no hook, and Engram never reads its JavaScript as shell text.
 
 The status must also belong to every verification in the command. Engram
 records `cargo test`, `cd repo && cargo test` and `cargo fmt --check && cargo
