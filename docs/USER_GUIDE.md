@@ -723,7 +723,10 @@ The product UI and guide no longer depend on enabling it.
 
 An optional evidence judge can process pending lesson proposals automatically with
 a local model or TypeSafe Jev. Its citations, source checks and usage appear in
-**Effectiveness**. Human review stays available. See [engineering memory and measured
+**Effectiveness**. An unchanged proposal is judged once; new evidence or a revised
+proposal starts another review. When the judge finds a conflict with an existing
+memory, it marks that memory suspect and leaves the proposal for your review in
+**Knowledge**. Human review stays available. See [engineering memory and measured
 effectiveness](SECOND_BRAIN.md) for setup, usage capture and isolated workspaces.
 
 Agents can replace the end-of-task sequence with `engram_complete_task`: provide

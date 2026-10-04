@@ -2,6 +2,9 @@
 //!
 //! Prepare and infer outside the writer; apply through the daemon scheduler. A
 //! snapshot digest prevents applying a verdict after its source material changes.
+//! The packet digest is the dedupe key: it binds the proposal, task and evidence,
+//! the deterministic gate result and the inference policy, but no volatile index,
+//! scan or ordering state, so an unchanged review is judged once.
 
 use std::time::{Duration, Instant};
 
@@ -13,11 +16,16 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 use crate::experience::ExperienceStore;
 use crate::ids::{EvidenceId, MemoryId};
+use crate::memory::{MemoryStatus, MemoryStore, review_conflict_reason};
 use crate::product::lessons::{Decision, LessonReview, ReviewRequest};
 use crate::product::{ProductStore, now_ms};
 use crate::security::Redactor;
 use crate::storage::Database;
 
+#[cfg(test)]
+mod regression_tests;
+mod schema;
+mod sources;
 mod typesafe;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -28,8 +36,21 @@ pub enum JudgeProvider {
     Typesafe,
 }
 
-const POLICY_VERSION: &str = "evidence-judge-v1";
+/// How a local runtime is asked to constrain its verdict.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StructuredOutput {
+    /// OpenAI-compatible `json_schema` carrying the strict verdict schema.
+    #[default]
+    JsonSchema,
+    /// Generic JSON object mode, for runtimes without schema support.
+    JsonObject,
+}
+
+const POLICY_VERSION: &str = "evidence-judge-v2";
 const MAX_RESPONSE_BYTES: usize = 65_536;
+const CONFLICTS_AWAIT_REVIEW: &str =
+    "Conflicting memories are quarantined until a person reviews this proposal";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -40,6 +61,7 @@ pub struct JudgeConfig {
     pub acceptance_threshold: f64,
     pub endpoint: String,
     pub model: String,
+    pub structured_output: StructuredOutput,
     pub interval_seconds: u64,
     pub timeout_seconds: u64,
     pub batch_size: usize,
@@ -58,6 +80,7 @@ impl Default for JudgeConfig {
             acceptance_threshold: 0.98,
             endpoint: "http://127.0.0.1:11434/v1/chat/completions".to_owned(),
             model: String::new(),
+            structured_output: StructuredOutput::JsonSchema,
             interval_seconds: 300,
             timeout_seconds: 90,
             batch_size: 2,
@@ -139,9 +162,11 @@ pub struct JudgePacket {
     pub task: Value,
     pub evidence: Vec<JudgeEvidence>,
     pub source_anchors: Value,
-    /// Binds the complete original material, including omitted artifact bytes.
+    /// Binds the complete original material, including omitted artifact bytes,
+    /// and the live source state; a change during inference makes a result stale.
     pub source_digest: String,
-    /// Binds source digest, prompt policy, model, endpoint and inference budgets.
+    /// Dedupe key: binds the proposal, task and evidence material, the gate
+    /// result, prompt policy, model, endpoint and inference budgets.
     pub digest: String,
     pub attempt: u32,
     pub blocked_reason: Option<String>,
@@ -255,7 +280,9 @@ impl JudgeStore {
                 };
                 let mut packet = self.prepare(config, review)?;
                 if let Some(previous) = self.latest(&packet.review.id, &packet.digest)? {
-                    if previous.outcome != "runtime_error"
+                    // Decisions and deferrals are final for an unchanged review;
+                    // only runtime failures and stale results retry, within bounds.
+                    if !retryable(&previous.outcome)
                         || previous.attempt >= config.max_retries
                         || previous.retry_after_ms.is_some_and(|time| time > now_ms())
                     {
@@ -272,79 +299,12 @@ impl JudgeStore {
         Ok(packets)
     }
 
-    fn live_sources(
-        &self,
-        review: &LessonReview,
-        evidence_revision: Option<&str>,
-    ) -> Result<(Value, Option<String>)> {
-        let (roots, files) = self.database.with_reader(|connection| {
-            let mut aliases = connection.prepare("SELECT path FROM project_aliases WHERE project_id=?1 ORDER BY observed_at_ms DESC,path LIMIT 4")?;
-            let roots = aliases.query_map([review.project_id.as_str()], |row| row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
-            let mut paths = connection.prepare(
-                "SELECT DISTINCT touched.value,f.content_digest,s.head FROM attempts a
-                 JOIN json_each(a.files_json) touched
-                 LEFT JOIN indexed_files f ON f.project_id=?2 AND f.path=touched.value
-                 LEFT JOIN structural_scans s ON s.id=f.scan_id
-                 WHERE a.task_id=?1 ORDER BY touched.value LIMIT 65")?;
-            let files = paths.query_map(params![review.task_id.as_str(),review.project_id.as_str()], |row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,Option<String>>(2)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
-            Ok((roots, files))
-        })?;
-        if files.len() > 64 {
-            return Ok((
-                json!({"too_many_files":true}),
-                Some("Source episode exceeds the 64-file live verification limit".to_owned()),
-            ));
-        }
-        let root = roots
-            .iter()
-            .map(std::path::PathBuf::from)
-            .find(|root| root.is_dir())
-            .and_then(|root| root.canonicalize().ok());
-        let Some(root) = root else {
-            return Ok((
-                json!({"checkout":"unavailable","files":files}),
-                (!files.is_empty()).then(|| {
-                    "Source checkout unavailable; cannot establish current file contents".to_owned()
-                }),
-            ));
-        };
-        let head = live_head(&root);
-        let mut issue = head.as_ref().err().map(std::string::ToString::to_string);
-        let head = head.ok().flatten();
-        if head
-            .as_deref()
-            .zip(evidence_revision)
-            .is_some_and(|(current, observed)| current != observed)
-        {
-            issue = Some("Source task revision differs from the live checkout; verify current behavior again".to_owned());
-        }
-        let mut stamps = Vec::new();
-        let mut remaining = 4 * 1024 * 1024;
-        for (path, indexed_digest, indexed_head) in files {
-            let observed = live_file_digest(&root, &path, &mut remaining);
-            match &observed {
-                Ok(digest) => {
-                    if indexed_digest.as_ref() != Some(digest) {
-                        issue = Some("Touched file differs from indexed source or has no indexed anchor; index and verify it again".to_owned());
-                    }
-                    if head
-                        .as_deref()
-                        .zip(indexed_head.as_deref())
-                        .is_some_and(|(current, indexed)| current != indexed)
-                    {
-                        issue = Some("Indexed source revision differs from the live checkout; index and verify it again".to_owned());
-                    }
-                }
-                Err(error) => issue = Some(error.to_string()),
-            }
-            stamps.push(json!({"path":path,"indexed_digest":indexed_digest,"indexed_revision":indexed_head,
-                "live_digest":observed.as_ref().ok(),"error":observed.as_ref().err().map(std::string::ToString::to_string)}));
-        }
-        Ok((json!({"checkout":root,"head":head,"files":stamps}), issue))
-    }
-
     #[allow(clippy::too_many_lines)]
-    fn prepare(&self, config: &JudgeConfig, review: LessonReview) -> Result<JudgePacket> {
+    fn prepare(&self, config: &JudgeConfig, mut review: LessonReview) -> Result<JudgePacket> {
+        // Related memories are a set; recency ordering must not change the packet.
+        review
+            .related_memories
+            .sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
         let experience =
             ExperienceStore::with_redactor(self.database.clone(), self.redactor.clone());
         let task = experience.get_task(&review.task_id)?;
@@ -359,29 +319,18 @@ impl JudgeStore {
             let mut statement = connection.prepare("SELECT evidence_id FROM verified_supporting_evidence WHERE project_id=?1 AND task_id=?2 ORDER BY evidence_id")?;
             Ok(statement.query_map(params![review.project_id.as_str(), review.task_id.as_str()], |row| row.get::<_, String>(0))?.collect::<std::result::Result<Vec<_>, _>>()?)
         })?;
-        let mut source_anchors = self.database.with_reader(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT DISTINCT f.path,f.content_digest,s.head,f.indexed_at_ms FROM indexed_files f
-                 JOIN structural_scans s ON s.id=f.scan_id
-                 JOIN attempts a ON a.task_id=?2
-                 JOIN json_each(a.files_json) touched ON touched.value=f.path
-                 WHERE f.project_id=?1 ORDER BY f.path LIMIT 64")?;
-            let files = statement.query_map(params![review.project_id.as_str(), review.task_id.as_str()], |row| Ok(json!({
-                "path": row.get::<_, String>(0)?, "content_digest": row.get::<_, String>(1)?, "revision": row.get::<_, Option<String>>(2)?, "indexed_at_ms": row.get::<_, i64>(3)?
-            })))?.collect::<std::result::Result<Vec<_>, _>>()?;
-            let scan: Option<(Option<String>, String)> = connection.query_row(
-                "SELECT head,diff_fingerprint FROM structural_scans WHERE project_id=?1 ORDER BY completed_at_ms DESC,id DESC LIMIT 1",
-                [review.project_id.as_str()], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
-            Ok(json!({"files": files, "current_scan": scan}))
-        })?;
-        let (live, freshness_issue) = self.live_sources(
-            &review,
+        // Touched files resolve inside registered checkouts; the latest project
+        // scan is volatile and irrelevant to these files, so it is not included.
+        let sources = sources::live_sources(
+            &self.database,
+            &review.project_id,
+            &review.task_id,
             task.as_ref().and_then(|task| task.final_commit.as_deref()),
         )?;
-        if let Some(reason) = freshness_issue {
+        if let Some(reason) = sources.issue {
             blocked_reason = Some(reason);
         }
-        source_anchors["live"] = live;
+        let source_anchors = json!({"files": sources.indexed, "live": sources.live});
         let indexed_sources: Vec<IndexedSource> = source_anchors["files"]
             .as_array()
             .into_iter()
@@ -414,7 +363,9 @@ impl JudgeStore {
                             .commit_hash
                             .as_deref()
                             .zip(source_anchors["live"]["head"].as_str())
-                            .is_some_and(|(observed, current)| observed != current)
+                            .is_some_and(|(observed, current)| {
+                                !sources::same_revision(observed, current)
+                            })
                     {
                         blocked_reason = Some("Evidence revision differs from the live checkout; verify current behavior again".to_owned());
                     }
@@ -457,9 +408,18 @@ impl JudgeStore {
         {
             blocked_reason = Some("Lesson expired; verify the current behavior again".to_owned());
         }
-        let source_digest = digest(
-            &json!({"review": review, "task": task, "evidence": source_records, "anchors": source_anchors}),
-        )?;
+        if !MemoryStore::new(self.database.clone())
+            .suspect_with_reason(&review.project_id, &review_conflict_reason(&review.id))?
+            .is_empty()
+        {
+            blocked_reason = Some(CONFLICTS_AWAIT_REVIEW.to_owned());
+        }
+        // The proposal, task and evidence material changes only when someone
+        // revises the proposal or the evidence (or its eligibility) changes.
+        let material_digest =
+            digest(&json!({"review": review, "task": task, "evidence": source_records}))?;
+        let source_digest =
+            digest(&json!({"material": material_digest, "anchors": source_anchors["live"]}))?;
         let mut safe_review = review;
         if safe_review.claim.len() > 4096 || safe_review.rationale.len() > 4096 {
             blocked_reason = Some(
@@ -484,9 +444,13 @@ impl JudgeStore {
         if !screened.is_empty() {
             blocked_reason = Some(crate::security::hold_reason(&screened));
         }
-        let packet_digest = digest(&json!({"source": source_digest, "policy": POLICY_VERSION,
+        // Live source state is deliberately absent: a deterministic deferral is
+        // recorded once per gate result, and a model verdict once per material.
+        let packet_digest = digest(&json!({"material": material_digest,
+            "gate": blocked_reason, "policy": POLICY_VERSION,
             "provider": config.provider, "acceptance_threshold": config.acceptance_threshold,
             "endpoint": config.endpoint, "model": config.model,
+            "structured_output": config.structured_output,
             "max_input_bytes": config.max_input_bytes, "max_output_tokens": config.max_output_tokens}))?;
         // Unflagged digests stay unchanged; a screen revision re-evaluates held packets.
         let packet_digest = if screened.is_empty() {
@@ -511,7 +475,6 @@ impl JudgeStore {
     /// Every acceptance still passes the existing provenance and promotion gates.
     /// # Errors
     /// Returns persistence errors; invalid or stale judgments are durably deferred.
-    #[allow(clippy::too_many_lines)]
     pub fn apply(
         &self,
         config: &JudgeConfig,
@@ -524,83 +487,10 @@ impl JudgeStore {
                 return Ok(previous);
             }
         }
-        let product = ProductStore::new(self.database.clone(), self.redactor.clone());
-        let current = product.review_by_id(&packet.review.id)?;
-        let canonical = current
-            .filter(|review| review.status == "pending")
-            .map(|review| self.prepare(config, review))
-            .transpose()?;
-        let fresh = canonical
-            .as_ref()
-            .is_some_and(|current| current.digest == packet.digest);
-        // Citation checks always use current canonical observations, even if an
-        // internal caller changes a prepared packet in transit.
-        let canonical_packet = canonical.as_ref().unwrap_or(packet);
-        let (outcome, reason) = if !fresh {
-            ("stale".to_owned(), "Proposal, evidence or indexed sources changed during judgment; result was not applied".to_owned())
-        } else if !config.enabled {
-            (
-                "deferred".to_owned(),
-                "Automatic judge is disabled".to_owned(),
-            )
-        } else if let Some(reason) = &canonical_packet.blocked_reason {
-            ("deferred".to_owned(), reason.clone())
-        } else if let Some(error) = &evaluation.error {
-            ("runtime_error".to_owned(), error.clone())
-        } else if let Some(verdict) = &evaluation.verdict {
-            match validate_verdict(canonical_packet, verdict) {
-                Err(error) => ("deferred".to_owned(), error.to_string()),
-                Ok(()) => match verdict.decision {
-                    VerdictDecision::Defer => ("deferred".to_owned(), verdict.reason.clone()),
-                    VerdictDecision::Accept | VerdictDecision::Reject => {
-                        let cited: Vec<_> = verdict
-                            .citations
-                            .iter()
-                            .map(|c| c.evidence_id.clone())
-                            .collect();
-                        let request = ReviewRequest {
-                            id: canonical_packet.review.id.clone(),
-                            expected_updated_at_ms: canonical_packet.review.updated_at_ms,
-                            decision: if verdict.decision == VerdictDecision::Accept {
-                                Decision::Accept
-                            } else {
-                                Decision::Reject
-                            },
-                            claim: Some(verdict.claim.clone()),
-                            rationale: Some(format!(
-                                "Automatic evidence review: {}",
-                                verdict.reason
-                            )),
-                            contradicts: Vec::new(),
-                            reviewed_related: true,
-                            acknowledge_security_flags: false,
-                        };
-                        match product.review_with_evidence(
-                            &request,
-                            if verdict.decision == VerdictDecision::Accept {
-                                Some(&cited)
-                            } else {
-                                None
-                            },
-                        ) {
-                            Ok(review) => (review.status, verdict.reason.clone()),
-                            Err(error) => (
-                                "deferred".to_owned(),
-                                format!("Existing evidence/promotion gate refused: {error}"),
-                            ),
-                        }
-                    }
-                },
-            }
-        } else {
-            (
-                "runtime_error".to_owned(),
-                "Runtime returned neither a verdict nor an error".to_owned(),
-            )
-        };
+        let (outcome, reason) = self.decide(config, packet, evaluation)?;
         let recorded_at_ms = now_ms();
-        let retry_after_ms = (outcome == "runtime_error" && packet.attempt < config.max_retries)
-            .then(|| {
+        let retry_after_ms =
+            (retryable(&outcome) && packet.attempt < config.max_retries).then(|| {
                 recorded_at_ms
                     .saturating_add(i64::try_from(config.retry_seconds * 1000).unwrap_or(i64::MAX))
             });
@@ -643,6 +533,124 @@ impl JudgeStore {
         Ok(audit)
     }
 
+    fn decide(
+        &self,
+        config: &JudgeConfig,
+        packet: &JudgePacket,
+        evaluation: &JudgeEvaluation,
+    ) -> Result<(String, String)> {
+        let deferred = |reason: &str| Ok(("deferred".to_owned(), reason.to_owned()));
+        let product = ProductStore::new(self.database.clone(), self.redactor.clone());
+        let current = product
+            .review_by_id(&packet.review.id)?
+            .filter(|review| review.status == "pending");
+        if !config.enabled && current.is_some() {
+            return deferred("Automatic judge is disabled");
+        }
+        if let (Some(_), Some(reason)) = (&current, &packet.blocked_reason) {
+            // A deterministic gate deferral applies nothing, so it needs no
+            // snapshot comparison that could only race the index watcher.
+            return deferred(reason);
+        }
+        // Citation checks always use current canonical observations, even if an
+        // internal caller changes a prepared packet in transit.
+        let canonical = current
+            .map(|review| self.prepare(config, review))
+            .transpose()?
+            .filter(|current| {
+                current.digest == packet.digest && current.source_digest == packet.source_digest
+            });
+        let Some(canonical) = canonical else {
+            return Ok(("stale".to_owned(), "Proposal, evidence or indexed sources changed during judgment; result was not applied".to_owned()));
+        };
+        if let Some(reason) = &canonical.blocked_reason {
+            return deferred(reason);
+        }
+        if let Some(error) = &evaluation.error {
+            return Ok(("runtime_error".to_owned(), error.clone()));
+        }
+        let Some(verdict) = &evaluation.verdict else {
+            return Ok((
+                "runtime_error".to_owned(),
+                "Judge runtime returned neither a verdict nor an error".to_owned(),
+            ));
+        };
+        match validate_verdict(&canonical, verdict) {
+            Err(VerdictIssue::Malformed(detail)) => {
+                return Ok(("runtime_error".to_owned(), malformed(&detail)));
+            }
+            Err(VerdictIssue::Gate(reason)) => return deferred(&reason),
+            Ok(()) => {}
+        }
+        if verdict.decision != VerdictDecision::Reject && !verdict.contradicts_memory_ids.is_empty()
+        {
+            let quarantined = self.quarantine_conflicts(&canonical.review, verdict)?;
+            return deferred(&format!(
+                "{CONFLICTS_AWAIT_REVIEW}; {quarantined} conflicting memories were marked suspect. {}",
+                verdict.reason
+            ));
+        }
+        let decision = match verdict.decision {
+            VerdictDecision::Defer => return deferred(&verdict.reason),
+            VerdictDecision::Accept => Decision::Accept,
+            VerdictDecision::Reject => Decision::Reject,
+        };
+        let cited: Vec<_> = verdict
+            .citations
+            .iter()
+            .map(|c| c.evidence_id.clone())
+            .collect();
+        let accept = matches!(decision, Decision::Accept);
+        let request = ReviewRequest {
+            id: canonical.review.id.clone(),
+            expected_updated_at_ms: canonical.review.updated_at_ms,
+            decision,
+            // A rejection keeps the proposal's own wording; only an accepted
+            // verdict may narrow the claim.
+            claim: accept.then(|| verdict.claim.clone()),
+            rationale: Some(format!("Automatic evidence review: {}", verdict.reason)),
+            contradicts: Vec::new(),
+            reviewed_related: true,
+            acknowledge_security_flags: false,
+        };
+        Ok(
+            match product.review_with_evidence(&request, accept.then_some(cited.as_slice())) {
+                Ok(review) => (review.status, verdict.reason.clone()),
+                Err(error) => (
+                    "deferred".to_owned(),
+                    format!("Existing evidence/promotion gate refused: {error}"),
+                ),
+            },
+        )
+    }
+
+    /// Mark the active memories a verdict names as conflicting `suspect` and
+    /// keep the proposal pending for a person. Nothing is deleted; the review
+    /// decision later confirms the contradiction or restores the memories.
+    fn quarantine_conflicts(&self, review: &LessonReview, verdict: &JudgeVerdict) -> Result<usize> {
+        let memories = MemoryStore::with_redactor(self.database.clone(), self.redactor.clone());
+        let reason = review_conflict_reason(&review.id);
+        let mut quarantined = 0;
+        let mut seen = Vec::new();
+        for id in &verdict.contradicts_memory_ids {
+            if seen.contains(&id) {
+                continue;
+            }
+            seen.push(id);
+            let Some(memory) = memories.get(id)? else {
+                continue;
+            };
+            if memory.project_id != review.project_id {
+                continue;
+            }
+            if memory.status == MemoryStatus::Active {
+                memories.mark_status(id, MemoryStatus::Suspect, &reason)?;
+                quarantined += 1;
+            }
+        }
+        Ok(quarantined)
+    }
+
     fn latest(&self, review_id: &str, packet_digest: &str) -> Result<Option<JudgmentAudit>> {
         self.database.with_reader(|connection| {
             let raw: Option<String> = connection.query_row("SELECT result_json FROM lesson_judgments WHERE review_id=?1 AND packet_digest=?2 ORDER BY attempt DESC LIMIT 1", params![review_id, packet_digest], |row| row.get(0)).optional()?;
@@ -660,6 +668,12 @@ impl JudgeStore {
             rows.into_iter().map(|raw| serde_json::from_str(&raw).map_err(Error::from)).collect()
         })
     }
+}
+
+/// Runtime failures and results invalidated by a concurrent change are retried
+/// within `max_retries`; every other outcome is final for its packet digest.
+fn retryable(outcome: &str) -> bool {
+    matches!(outcome, "runtime_error" | "stale")
 }
 
 /// The indexed version of one file the source task touched.
@@ -689,73 +703,17 @@ fn observed_indexed_sources(
     })
 }
 
-fn live_head(root: &std::path::Path) -> Result<Option<String>> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "--verify", "HEAD"])
-        .output()
-        .map_err(|error| invalid(&format!("Cannot read live Git HEAD: {error}")))?;
-    if !output.status.success() {
-        if root.join(".git").exists() {
-            return Err(invalid("Cannot resolve live Git HEAD"));
-        }
-        return Ok(None);
-    }
-    let head = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if !(head.len() == 40 || head.len() == 64) || !head.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(invalid("Live Git HEAD is not a commit hash"));
-    }
-    Ok(Some(head))
+/// Why a parsed model answer cannot become a decision.
+#[derive(Debug)]
+enum VerdictIssue {
+    /// The answer breaks the output contract: a model/runtime failure.
+    Malformed(String),
+    /// A well-formed verdict that fails a deterministic acceptance gate.
+    Gate(String),
 }
 
-fn live_file_digest(
-    root: &std::path::Path,
-    relative: &str,
-    remaining: &mut usize,
-) -> Result<String> {
-    use std::io::Read as _;
-    let path = std::path::Path::new(relative);
-    if path.as_os_str().is_empty()
-        || !path
-            .components()
-            .all(|component| matches!(component, std::path::Component::Normal(_)))
-    {
-        return Err(invalid(
-            "Source path must remain inside the registered checkout",
-        ));
-    }
-    let canonical = root
-        .join(path)
-        .canonicalize()
-        .map_err(|_| invalid("Touched source file is unavailable"))?;
-    if !canonical.starts_with(root) {
-        return Err(invalid(
-            "Touched source resolves outside the registered checkout",
-        ));
-    }
-    if !canonical
-        .metadata()
-        .map_err(|_| invalid("Touched source metadata unavailable"))?
-        .is_file()
-    {
-        return Err(invalid("Touched source must be a regular file"));
-    }
-    let limit = (*remaining).min(512 * 1024);
-    let mut bytes = Vec::new();
-    std::fs::File::open(&canonical)
-        .map_err(|_| invalid("Touched source file cannot be read"))?
-        .take(u64::try_from(limit + 1).unwrap_or(u64::MAX))
-        .read_to_end(&mut bytes)
-        .map_err(|_| invalid("Touched source file cannot be read"))?;
-    if bytes.len() > limit {
-        return Err(invalid(
-            "Touched source exceeds bounded live verification budget",
-        ));
-    }
-    *remaining -= bytes.len();
-    Ok(crate::experience::sha256(&bytes))
+fn malformed(detail: &str) -> String {
+    format!("Malformed judge output: {detail}")
 }
 
 /// Screen every packet field the judge model reads for injection shapes. The
@@ -790,41 +748,58 @@ fn injection_findings(
     crate::security::screen_fields(fields)
 }
 
-fn validate_verdict(packet: &JudgePacket, verdict: &JudgeVerdict) -> Result<()> {
+fn validate_verdict(
+    packet: &JudgePacket,
+    verdict: &JudgeVerdict,
+) -> std::result::Result<(), VerdictIssue> {
     if verdict.claim.trim().is_empty()
         || verdict.claim.len() > 4096
         || verdict.reason.trim().is_empty()
         || verdict.reason.len() > 4096
         || verdict.citations.len() > 32
-        || verdict.contradicts_memory_ids.len() > 8
+        || verdict.contradicts_memory_ids.len() > schema::MAX_CONTRADICTIONS
     {
-        return Err(invalid("Judge verdict has missing or oversized fields"));
+        return Err(VerdictIssue::Malformed(
+            "verdict has missing or oversized fields".to_owned(),
+        ));
+    }
+    // Only presented, non-identical related memories can be named as conflicts.
+    if verdict.contradicts_memory_ids.iter().any(|id| {
+        !packet
+            .review
+            .related_memories
+            .iter()
+            .any(|memory| !memory.exact && memory.id == *id)
+    }) {
+        return Err(VerdictIssue::Malformed(
+            "verdict names a conflicting memory the review did not present".to_owned(),
+        ));
     }
     if verdict.decision != VerdictDecision::Accept {
         return Ok(());
     }
-    if !verdict.contradicts_memory_ids.is_empty() {
-        return Err(invalid(
-            "Conflicting memories need new verification; automatic review cannot override them",
-        ));
-    }
     if verdict.citations.is_empty() {
-        return Err(invalid(
-            "Acceptance requires exact excerpts of independent source evidence",
+        return Err(VerdictIssue::Gate(
+            "Acceptance requires exact excerpts of independent source evidence".to_owned(),
         ));
     }
     for citation in &verdict.citations {
-        let source = packet
+        let Some(source) = packet
             .evidence
             .iter()
             .find(|e| e.id == citation.evidence_id && e.eligible)
-            .ok_or_else(|| invalid("Judge cited nonexistent, ineligible or wrong-task evidence"))?;
+        else {
+            return Err(VerdictIssue::Gate(
+                "Judge cited nonexistent, ineligible or wrong-task evidence".to_owned(),
+            ));
+        };
         if citation.quote.trim().len() < 8
             || citation.quote.len() > 2048
             || !source.artifact_excerpt.contains(&citation.quote)
         {
-            return Err(invalid(
-                "Judge citation must be an exact 8–2048 byte excerpt of the observed artifact",
+            return Err(VerdictIssue::Gate(
+                "Judge citation must be an exact 8–2048 byte excerpt of the observed artifact"
+                    .to_owned(),
             ));
         }
     }
@@ -840,7 +815,13 @@ pub async fn evaluate(config: &JudgeConfig, packet: &JudgePacket) -> JudgeEvalua
         Ok(evaluation) => evaluation,
         Err(error) => JudgeEvaluation {
             verdict: None,
-            error: Some(error.to_string()),
+            error: Some(format!(
+                "Judge runtime failure: {}",
+                match &error {
+                    Error::Config(message) => message.clone(),
+                    other => other.to_string(),
+                }
+            )),
             usage: JudgeUsage::default(),
             duration_ms: 0,
         },
@@ -887,10 +868,16 @@ async fn evaluate_inner(config: &JudgeConfig, packet: &JudgePacket) -> Result<Ju
     let client = builder
         .build()
         .map_err(|e| invalid(&format!("judge client: {e}")))?;
+    // Schema-constrained decoding makes unknown, misplaced or empty fields and
+    // unpresented IDs ungeneratable; strict parsing below still applies.
+    let response_format = match config.structured_output {
+        StructuredOutput::JsonSchema => schema::response_format(packet)?,
+        StructuredOutput::JsonObject => json!({"type":"json_object"}),
+    };
     let mut response = client.post(endpoint).json(&json!({
         "model": config.model, "messages": [{"role":"system","content":SYSTEM_PROMPT},{"role":"user","content":data}],
         "stream": false, "temperature": 0, "max_tokens": config.max_output_tokens,
-        "response_format": {"type":"json_object"}
+        "response_format": response_format
     })).send().await.map_err(|e| invalid(&format!("judge runtime: {e}")))?;
     if !response.status().is_success() {
         return Err(invalid(&format!(
@@ -951,6 +938,7 @@ fn parse_response(bytes: &[u8]) -> Result<JudgeEvaluation> {
             .filter(|cost| cost.is_finite() && *cost >= 0.0),
     };
     // Usage is retained even for malformed, truncated or tool-calling answers.
+    // A malformed answer is a model failure, retried within the bounded policy.
     let result = parse_verdict(&body);
     Ok(match result {
         Ok(verdict) => JudgeEvaluation {
@@ -959,37 +947,37 @@ fn parse_response(bytes: &[u8]) -> Result<JudgeEvaluation> {
             usage,
             duration_ms: 0,
         },
-        Err(error) => JudgeEvaluation {
+        Err(detail) => JudgeEvaluation {
             verdict: None,
-            error: Some(error.to_string()),
+            error: Some(malformed(&detail)),
             usage,
             duration_ms: 0,
         },
     })
 }
 
-fn parse_verdict(body: &Value) -> Result<JudgeVerdict> {
+fn parse_verdict(body: &Value) -> std::result::Result<JudgeVerdict, String> {
     let choice = body
         .get("choices")
         .and_then(Value::as_array)
         .and_then(|choices| choices.first())
-        .ok_or_else(|| invalid("judge runtime returned no choice"))?;
+        .ok_or("judge runtime returned no choice")?;
     if choice
         .get("finish_reason")
         .and_then(Value::as_str)
         .is_some_and(|reason| reason != "stop")
     {
-        return Err(invalid("judge runtime did not complete a bounded response"));
+        return Err("judge runtime did not complete a bounded response".to_owned());
     }
     if choice.pointer("/message/tool_calls").is_some() {
-        return Err(invalid("judge runtime attempted a tool call"));
+        return Err("judge runtime attempted a tool call".to_owned());
     }
     let content = choice
         .pointer("/message/content")
         .and_then(Value::as_str)
-        .ok_or_else(|| invalid("judge runtime returned no text"))?;
+        .ok_or("judge runtime returned no text")?;
     // Strict JSON only; no markdown extraction that could hide a second verdict.
-    Ok(serde_json::from_str(content)?)
+    serde_json::from_str(content).map_err(|error| error.to_string())
 }
 
 const SYSTEM_PROMPT: &str = r#"You judge proposed reusable lessons for an engineer's local memory.
@@ -1821,7 +1809,7 @@ mod tests {
                     .success()
             );
         }
-        let head = live_head(&root).expect("head").expect("commit");
+        let head = sources::live_head(&root).expect("head").expect("commit");
         fixture
             .store
             .database

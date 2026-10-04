@@ -231,6 +231,19 @@ source digest are checked again immediately before applying the decision. Touche
 files are checked against the live checkout, with bounded reads, rather than relying
 only on an index refresh. Changed or unavailable sources cause deferral.
 
+Touched paths can be relative to the checkout or absolute. The judge reads a path only
+inside a registered checkout of the project, including linked worktrees, or of an
+explicitly linked repository. Symlinked spellings, such as `/tmp` and `/private/tmp`,
+resolve to the same checkout. Any other path blocks automatic review. Relative paths
+use the checkout the task worked in: the one named by absolute paths, else a checkout
+whose HEAD matches the recorded task revision, else the checkout holding the recorded
+files, preferring the primary checkout. Abbreviated revisions of at least seven
+hexadecimal digits match. Each file must match its indexed content. Deferral reasons
+distinguish a missing file (deleted, renamed or not a path), a checkout or file the
+daemon may not read (including macOS privacy refusals; `engram doctor` shows the fix),
+another I/O failure, a file that differs from the index and a file without an index
+anchor.
+
 Evidence must also have observed the indexed version of every touched file. It
 qualifies when it was recorded after that file was indexed, or when a native hook
 recorded the file's SHA-256 beside the verification and it equals the indexed
@@ -240,9 +253,20 @@ must be newer than every touched file's indexed version. The hook records only
 runs whose exit status the client reported; see the user guide on
 [verification evidence from hooks](USER_GUIDE.md#verification-evidence-from-hooks).
 
-Every decision, citation, attempt, error and reported usage is audited. Unchanged
-deferred proposals are not repeatedly billed; attach new evidence or revise the
-proposal to trigger another review. Runtime errors have a bounded retry count.
+Every decision, citation, attempt, error and reported usage is audited. A review is
+judged again only when its proposal, task or evidence changes, or when a source check
+reaches a different result. Index scans, memory recency and unrelated commits do not
+start another review. Unchanged deferred proposals are not repeatedly billed; attach
+new evidence or revise the proposal to trigger another review. Runtime errors and
+results invalidated by a source change during inference have a bounded retry count.
+Malformed model output counts as a runtime error, not a decision.
+
+If the judge names related memories that conflict with a supported or uncertain
+proposal, it marks those active memories suspect and leaves the proposal pending.
+Suspect memories are not injected, and nothing is deleted. The judge does not decide
+that proposal again; a person reviews it in **Knowledge**. Accepting it with the
+contradiction checked marks the old memory contradicted. Any other decision returns
+the quarantined memories to active.
 Human review remains available. Neither automatic nor human lesson approval implies
 the user accepted the task. Previously quarantined memories need fresh evidence and
 a new proposal; they are not silently revalidated.
@@ -267,6 +291,12 @@ and time. A model's semantic judgment can still be wrong; inspect audit samples 
 test on held-out supported/unsupported lessons before trusting a new model widely.
 Proposals whose text or evidence matches prompt-injection patterns are held for
 human review and never sent to the model; see [SECURITY.md](SECURITY.md).
+
+Requests carry the verdict JSON schema as an OpenAI-compatible `response_format` of
+type `json_schema`. The schema allows only the packet's evidence and memory IDs, so a
+runtime that enforces it cannot produce unknown fields, empty claims or invented IDs.
+Engram still parses and validates every answer strictly. For a runtime without schema
+support, set `structured_output = "json_object"` under `[judge]`.
 
 A small Apple Silicon runtime can serve the local judge separately from a coding
 model. The tested MTPLX configuration uses a 4-bit Qwen3.5-4B model on port 8011:
@@ -299,7 +329,9 @@ python3 scripts/eval_local_judge.py \
 
 The harness makes no brain writes. Its exit status fails for incorrect decisions,
 malformed outputs and runtime errors, and its report keeps raw decisions separate
-from citation validation. See the [measured local setup and limitations](perf-evidence/2026-09-24-local-judge/README.md).
+from citation validation. It uses the production schema; `--response-format json_object`
+reproduces unconstrained output. See the [measured local setup and limitations](perf-evidence/2026-09-24-local-judge/README.md)
+and the [structured-output comparison](perf-evidence/2026-10-04-judge/README.md).
 
 TypeSafe's Jev uses a hosted typed-decision API. The optional adapter asks atomic
 questions about reuse, scope, compatibility and support by exact evidence excerpts.

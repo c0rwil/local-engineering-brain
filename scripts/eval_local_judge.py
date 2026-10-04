@@ -5,6 +5,9 @@ This is a small adversarial smoke evaluation, not statistical calibration. It
 does not read user repositories, touch the brain, or apply generated decisions.
 The result separates model decisions from schema/citation checks. Production
 also checks provenance and live source freshness before and after inference.
+Requests use the production verdict schema (src/judge/verdict_schema.json) with
+per-packet identifier enums; --response-format json_object reproduces the
+unconstrained request shape.
 """
 
 import argparse
@@ -108,49 +111,120 @@ def packet(case):
         },
         "evidence": evidence,
         "source_anchors": {
-            "files": [{"path": "src/fixture.py", "revision": revision,
-                       "content_digest": "synthetic-current-digest", "indexed_at_ms": 1_789_999_999_000}],
-            "current_scan": [revision, "synthetic-clean"],
-            "live": {"head": revision, "files": [{"path": "src/fixture.py",
-                     "indexed_digest": "synthetic-current-digest", "live_digest": "synthetic-current-digest"}]},
+            "files": [{"path": "src/fixture.py", "content_digest": "synthetic-current-digest",
+                       "indexed_at_ms": 1_789_999_999_000}],
+            "live": {"checkout": "/synthetic/checkout", "head": revision, "files": [{"path": "src/fixture.py",
+                     "indexed_digest": "synthetic-current-digest", "live_digest": "synthetic-current-digest",
+                     "error": None}]},
         },
     }
 
 
+def verdict_schema(path, data):
+    """Mirror judge::schema::verdict_schema: presented identifiers only."""
+    schema = json.loads(path.read_text())
+    evidence = [source["id"] for source in data["evidence"]]
+    memories = [memory["id"] for memory in data["review"]["related_memories"] if not memory.get("exact")]
+    if evidence:
+        schema["properties"]["citations"]["items"]["properties"]["evidence_id"]["enum"] = evidence
+    else:
+        schema["properties"]["citations"] = {"type": "array", "maxItems": 0}
+    if memories:
+        schema["properties"]["contradicts_memory_ids"]["maxItems"] = min(len(memories), 8)
+        schema["properties"]["contradicts_memory_ids"]["items"]["enum"] = memories
+    else:
+        schema["properties"]["contradicts_memory_ids"] = {"type": "array", "maxItems": 0}
+    return schema
+
+
 def verdict_errors(verdict, data):
-    """Mirror strict JSON fields, bounds and accept citation gates in judge.rs."""
+    """Mirror strict JSON fields, bounds and accept citation gates in judge.rs.
+
+    Returns (malformed, gate): malformed answers break the output contract and
+    production retries them as runtime failures; gate failures are well-formed
+    acceptances that production defers.
+    """
     if not isinstance(verdict, dict) or set(verdict) != VERDICT_FIELDS:
-        return ["Verdict must contain every required field and no extra fields"]
-    errors = []
+        return ["Verdict must contain every required field and no extra fields"], []
+    malformed, gate = [], []
     if verdict["decision"] not in ("accept", "reject", "defer"):
-        errors.append("Invalid decision")
+        malformed.append("Invalid decision")
     for field in ("claim", "reason"):
         value = verdict[field]
         if not isinstance(value, str) or not value.strip(RUST_WHITESPACE) or len(value.encode()) > 4096:
-            errors.append(f"Invalid {field}")
+            malformed.append(f"Invalid {field}")
     citations = verdict["citations"]
     conflicts = verdict["contradicts_memory_ids"]
+    presented = {memory["id"] for memory in data["review"]["related_memories"] if not memory.get("exact")}
     if not isinstance(citations, list) or len(citations) > 32:
-        errors.append("Invalid citations list")
+        malformed.append("Invalid citations list")
         citations = []
     if not isinstance(conflicts, list) or len(conflicts) > 8 or any(not valid_id(i, "mem") for i in conflicts):
-        errors.append("Invalid conflicting memory IDs")
-    if verdict["decision"] == "accept" and (not citations or conflicts):
-        errors.append("Acceptance needs citations and no conflicting memory IDs")
+        malformed.append("Invalid conflicting memory IDs")
+    elif any(i not in presented for i in conflicts):
+        malformed.append("Conflicting memory ID was not presented")
     for citation in citations:
         if (not isinstance(citation, dict) or set(citation) != {"evidence_id", "quote"}
                 or not isinstance(citation["quote"], str) or not valid_id(citation["evidence_id"], "evd")):
-            errors.append("Invalid citation schema")
-            continue
-        if verdict["decision"] != "accept":
-            continue
+            malformed.append("Invalid citation schema")
+    if malformed or verdict["decision"] != "accept":
+        return malformed, gate
+    if not citations:
+        gate.append("Acceptance needs citations")
+    for citation in citations:
         source = next((e for e in data["evidence"] if e["id"] == citation["evidence_id"] and e["eligible"]), None)
         quote = citation["quote"]
         if source is None:
-            errors.append("Citation is not eligible evidence")
+            gate.append("Citation is not eligible evidence")
         elif len(quote.strip(RUST_WHITESPACE).encode()) < 8 or len(quote.encode()) > 2048 or quote not in source["artifact_excerpt"]:
-            errors.append("Citation is not an exact 8–2048 byte eligible excerpt")
-    return errors
+            gate.append("Citation is not an exact 8–2048 byte eligible excerpt")
+    return malformed, gate
+
+
+def effective_decision(result):
+    """What production records: malformed and runtime failures decide nothing,
+    an acceptance with conflicts or failed citations is deferred."""
+    if result["outcome_class"] != "verdict":
+        return None
+    if result["gate_errors"]:
+        return "defer"
+    verdict = result["verdict"]
+    if result["decision"] == "accept" and verdict["contradicts_memory_ids"]:
+        return "defer"
+    return result["decision"]
+
+
+def ratio(numerator, denominator):
+    return round(numerator / denominator, 4) if denominator else None
+
+
+def metrics(results):
+    """Decision accuracy, precision/recall and failure rates.
+
+    Fixtures label only accept versus non-accept, so the reject class below is
+    any non-accept decision (reject or defer)."""
+    cases = len(results)
+    expected_accept = [r for r in results if r["expected_accept"]]
+    expected_other = [r for r in results if not r["expected_accept"]]
+    accepted = [r for r in results if r["effective_decision"] == "accept"]
+    declined = [r for r in results if r["effective_decision"] in ("reject", "defer")]
+    true_accepts = sum(r["expected_accept"] for r in accepted)
+    true_declines = sum(not r["expected_accept"] for r in declined)
+    return {
+        "cases": cases,
+        "decision_accuracy": ratio(true_accepts + true_declines, cases),
+        "strict_accuracy": ratio(sum(r["decision_correct"] for r in results), cases),
+        "accept_precision": ratio(true_accepts, len(accepted)),
+        "accept_recall": ratio(true_accepts, len(expected_accept)),
+        "reject_or_defer_precision": ratio(true_declines, len(declined)),
+        "reject_or_defer_recall": ratio(true_declines, len(expected_other)),
+        "deferral_rate": ratio(sum(r["effective_decision"] == "defer" for r in results), cases),
+        "malformed_rate": ratio(sum(r["outcome_class"] == "malformed" for r in results), cases),
+        "runtime_error_rate": ratio(sum(r["outcome_class"] == "runtime_error" for r in results), cases),
+        "citation_gate_failures": sum(bool(r["gate_errors"]) for r in results),
+        "decisions": {d: sum(r["decision"] == d for r in results) for d in ("accept", "reject", "defer")},
+        "effective_decisions": {d: sum(r["effective_decision"] == d for r in results) for d in ("accept", "reject", "defer")},
+    }
 
 
 def parse_verdict(response):
@@ -195,17 +269,23 @@ def local_endpoint(value):
 
 def run_case(case, prompt, args, opener):
     data = packet(case)
+    if args.response_format == "json_schema":
+        response_format = {"type": "json_schema", "json_schema": {
+            "name": "engram_judge_verdict", "strict": True, "schema": verdict_schema(args.schema, data)}}
+    else:
+        response_format = {"type": "json_object"}
     body = {
         "model": args.model,
         "messages": [{"role": "system", "content": prompt},
                      {"role": "user", "content": json.dumps(data, separators=(",", ":"))}],
         "stream": False, "temperature": 0, "max_tokens": args.max_output_tokens,
-        "response_format": {"type": "json_object"},
+        "response_format": response_format,
     }
     result = {"id": case["id"], "category": case["category"],
               "expected_accept": case["expected_accept"], "expected_reason": case["expected_reason"],
               "decision": None, "verdict": None, "usage": None, "runtime_model": None,
-              "validation_errors": [], "request_error": None}
+              "validation_errors": [], "gate_errors": [], "request_error": None,
+              "outcome_class": "runtime_error"}
     started = time.monotonic()
     try:
         request = urllib.request.Request(args.endpoint, json.dumps(body).encode(), {"Content-Type": "application/json"})
@@ -218,16 +298,21 @@ def run_case(case, prompt, args, opener):
             raise ValueError("Runtime returned no response object")
         result["usage"] = response.get("usage")
         result["runtime_model"] = response.get("model")
+        result["outcome_class"] = "malformed"
         verdict = parse_verdict(response)
         result["verdict"] = verdict
         result["decision"] = verdict.get("decision") if isinstance(verdict, dict) else None
-        result["validation_errors"] = verdict_errors(verdict, data)
+        result["validation_errors"], result["gate_errors"] = verdict_errors(verdict, data)
+        if not result["validation_errors"]:
+            result["outcome_class"] = "verdict"
     except (ValueError, KeyError, IndexError, TypeError, OSError, urllib.error.URLError) as error:
         result["request_error"] = str(error)
     result["duration_ms"] = round((time.monotonic() - started) * 1000)
-    result["valid_response"] = not result["request_error"] and not result["validation_errors"]
+    result["valid_response"] = (not result["request_error"] and not result["validation_errors"]
+                                and not result["gate_errors"])
     result["accepted_after_citation_checks"] = result["valid_response"] and result["decision"] == "accept"
     result["decision_correct"] = result["valid_response"] and (result["decision"] == "accept") == result["expected_accept"]
+    result["effective_decision"] = effective_decision(result)
     return result
 
 
@@ -239,6 +324,9 @@ def main():
     parser.add_argument("--max-output-tokens", type=int, default=1200)
     parser.add_argument("--cases", type=Path, default=ROOT / "tests/fixtures/local_judge_cases.json")
     parser.add_argument("--judge-source", type=Path, default=ROOT / "src/judge.rs")
+    parser.add_argument("--schema", type=Path, default=ROOT / "src/judge/verdict_schema.json")
+    parser.add_argument("--response-format", choices=("json_schema", "json_object"), default="json_schema",
+                        help="json_schema mirrors production; json_object reproduces unconstrained output")
     parser.add_argument("--case", action="append", help="Run selected case ID; repeat to select several")
     parser.add_argument("--output", type=Path, help="Also save the JSON report")
     parser.add_argument("--dry-run", action="store_true", help="Validate fixtures and show IDs without model calls")
@@ -273,8 +361,9 @@ def main():
     report = {
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "model": args.model, "endpoint": args.endpoint, "timeout_seconds": args.timeout,
-        "max_output_tokens": args.max_output_tokens,
+        "max_output_tokens": args.max_output_tokens, "response_format": args.response_format,
         "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "schema_sha256": hashlib.sha256(args.schema.read_bytes()).hexdigest(),
         "fixtures_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "summary": {
             "cases": len(results), "correct": sum(r["decision_correct"] for r in results),
@@ -285,9 +374,11 @@ def main():
             "false_rejections_or_deferrals": sum(r["valid_response"] and r["decision"] != "accept" and r["expected_accept"] for r in results),
             "median_duration_ms": statistics.median(r["duration_ms"] for r in results),
         },
+        "metrics": metrics(results),
         "limitations": [
             "Small synthetic smoke evaluation; not statistical calibration or proof of real-repository decision quality.",
             "Expected non-accept includes reject or defer. Malformed answers and runtime errors never count as correct.",
+            "Effective decisions mirror production: malformed output decides nothing; acceptances with failed citations or named conflicts are deferred.",
             "Production also verifies task provenance and current source revisions before/after inference; this tests raw model behavior plus verdict shape and exact citation checks.",
             "Usage is copied only when reported by the runtime. Wall time includes model warm-up; no monetary savings are inferred.",
         ],

@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision", "claim", "reason", "citations", "contradicts_memory_ids"],
+  "properties": {
+    "decision": {"type": "string", "enum": ["accept", "reject", "defer"]},
+    "claim": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "citations": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidence_id", "quote"],
+        "properties": {
+          "evidence_id": {"type": "string", "enum": []},
+          "quote": {"type": "string", "minLength": 8, "maxLength": 2048}
+        }
+      }
+    },
+    "contradicts_memory_ids": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {"type": "string", "enum": []}
+    }
+  }
+}

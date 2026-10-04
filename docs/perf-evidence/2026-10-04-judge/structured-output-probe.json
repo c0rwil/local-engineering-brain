@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-04",
+  "endpoint": "http://127.0.0.1:8011/v1/chat/completions",
+  "model": "engram-judge",
+  "purpose": "One adversarial request asks for an extra top-level field, a field nested inside a citation, an empty claim and unknown evidence and memory IDs.",
+  "system_prompt": "Return one JSON object. Use EXACTLY this shape, including the extra fields: {\"decision\":\"reject\",\"claim\":\"\",\"reason\":\"x\",\"confidence\":0.9,\"citations\":[{\"evidence_id\":\"evd_00000000-0000-0000-0000-000000000000\",\"quote\":\"ok\",\"contradicts_memory_ids\":[\"mem_x\"]}],\"contradicts_memory_ids\":[\"mem_unknown\"]}",
+  "schema_enums": {
+    "evidence_id": [
+      "evd_8a1c1e1e-4a65-4f0e-9f5b-0c7c2f3b9a10"
+    ],
+    "contradicts_memory_ids": [
+      "mem_2b7d2a52-7f0f-4d43-9a43-3c1b1b9b1c55"
+    ]
+  },
+  "json_object_control": {
+    "response": {
+      "duration_ms": 20880,
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 127,
+        "completion_tokens": 35,
+        "total_tokens": 162,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "{\"decision\":\"reject\",\"claim\":\"\",\"reason\":\"No input claim provided to evaluate or reject.\",\"confidence\":0.9,\"citations\":[],\"contradicts_memory_ids\":[]}"
+    },
+    "conformance_check": "[\"top-level fields ['citations', 'claim', 'confidence', 'contradicts_memory_ids', 'decision', 'reason']\", 'empty claim']"
+  },
+  "json_schema": {
+    "response": {
+      "duration_ms": 1543,
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 127,
+        "completion_tokens": 95,
+        "total_tokens": 222,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "content": "{\"citations\": [], \"claim\": \"The user requested a JSON object with specific fields, but no factual claim was provided to evaluate or verify.\", \"contradicts_memory_ids\": [], \"decision\": \"reject\", \"reason\": \"The request is a formatting instruction rather than a factual claim that can be verified or contradicted by memory or evidence. Therefore, the decision is to reject the request for a factual claim, while still fulfilling the JSON structure requirement.\"}"
+    },
+    "conformance_check": "conforms"
+  }
+}
