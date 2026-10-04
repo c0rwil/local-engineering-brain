@@ -161,6 +161,11 @@ impl McpServer {
             "engram_review_lesson" => {
                 let request: crate::product::lessons::ReviewRequest =
                     serde_json::from_value(arguments.clone())?;
+                if request.acknowledge_security_flags {
+                    return Err(Error::Config(
+                        "acknowledge_security_flags is reserved for a human reviewer; flagged lessons are accepted in the web Knowledge inbox or with the CLI".to_owned(),
+                    ));
+                }
                 self.client
                     .lesson_mutate(&crate::product::lessons::LessonMutation::Review(request))
                     .await?
@@ -945,6 +950,25 @@ mod tests {
                 .div_ceil(4)
                 <= 100
         );
+    }
+
+    #[tokio::test]
+    async fn agents_cannot_acknowledge_security_flags() {
+        let server = super::McpServer::new(
+            "/nonexistent/engram-test.sock",
+            std::time::Duration::from_secs(1),
+            1 << 20,
+        );
+        let error = server
+            .call_tool(Some(&serde_json::json!({
+                "name": "engram_review_lesson",
+                "arguments": {"id": "review_fixture", "expected_updated_at_ms": 1,
+                    "decision": "accept", "reviewed_related": true,
+                    "acknowledge_security_flags": true}
+            })))
+            .await
+            .expect_err("agent acknowledgment");
+        assert!(error.to_string().contains("reserved for a human reviewer"));
     }
 
     #[test]

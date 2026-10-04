@@ -425,6 +425,13 @@ Similarity alone does not establish a contradiction. Explicitly identifying a
 contradiction quarantines the old claim. Accepted lessons do not mark the task
 accepted by the user.
 
+A proposal whose claim, rationale or evidence matches a prompt-injection pattern
+shows a **Possible prompt injection** notice with the matched rules. The judge does
+not review it. Edit the flagged text out, or tick the acknowledgment and accept it
+as written; that acceptance is recorded as a human override. `engram doctor`
+reports validated memories that match these patterns without changing them. See
+[prompt injection and memory poisoning](SECURITY.md).
+
 A proposal can include `expires_at_ms` for temporary operational knowledge.
 Expired memories stop injecting. Reverification can renew that expiry through a
 new successful task and a new review; rejected or quarantined duplicates require

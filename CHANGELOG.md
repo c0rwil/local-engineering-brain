@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   annotated: their brain arms ran with prefix-only injection due to the
   clone-identity fracture (see perf-evidence 2026-08-31).
 
+### Security
+
+- Prompt-injection screen for lesson proposals and stored memories. Flagged
+  proposals are held for human review and never sent to the judge model;
+  accepting flagged text needs an explicit human acknowledgment, which MCP
+  agents cannot give, and is recorded as a human override. Evidence-gated
+  promotion refuses flagged text. `engram doctor` reports flagged validated
+  memories without changing them. Rendered context escapes hidden characters
+  and framing markup instead of deleting them. See `docs/SECURITY.md`.
+
 Everything below is the current state of the unreleased **0.1.0** pre-release.
 Nothing has shipped under a version tag yet, so there is no comparison base:
 the entries describe the shape of the product as it stands and the changes made

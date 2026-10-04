@@ -719,7 +719,8 @@ pub fn render_session_brief(
     if open.is_empty() && last_completed.is_none() {
         return None;
     }
-    let mut brief = format!("# Engram session brief — {project_name}\n");
+    let inline = crate::security::neutralize_inline;
+    let mut brief = format!("# Engram session brief — {}\n", inline(project_name));
     if !open.is_empty() {
         brief.push_str("Open episodes from earlier sessions (resume or close them):\n");
         for (id, prompt, started_at_ms) in open.iter().take(3) {
@@ -728,12 +729,16 @@ pub fn render_session_brief(
                 prompt.truncate(cut);
             }
             let age_hours = (now_ms.saturating_sub(*started_at_ms)) / 3_600_000;
-            let _ = writeln!(brief, "- [{id}] {prompt} ({age_hours}h ago)");
+            let _ = writeln!(brief, "- [{id}] {} ({age_hours}h ago)", inline(&prompt));
         }
     }
     if let Some((status, prompt)) = last_completed {
         let prompt: String = prompt.chars().take(90).collect();
-        let _ = writeln!(brief, "Last completed episode: {status} — {prompt}");
+        let _ = writeln!(
+            brief,
+            "Last completed episode: {status} — {}",
+            inline(&prompt)
+        );
     }
     Some(brief)
 }
@@ -750,14 +755,18 @@ pub fn render_file_shape(
     if symbols.is_empty() && callers.is_empty() {
         return None;
     }
+    // Labels and imports come from repository files: keep each on one line
+    // with hidden characters and framing markup escaped.
+    let inline = crate::security::neutralize_inline;
     let mut brief = format!(
-        "# Indexed reference data: {file_path}\nVerify current source before relying on these symbols and relationships.\n"
+        "# Indexed reference data: {}\nVerify current source before relying on these symbols and relationships.\n",
+        inline(file_path)
     );
     if !symbols.is_empty() {
         let listed: Vec<String> = symbols
             .iter()
             .take(20)
-            .map(|(kind, label)| format!("{label} ({kind})"))
+            .map(|(kind, label)| format!("{} ({})", inline(label), inline(kind)))
             .collect();
         let _ = writeln!(brief, "Defines: {}", listed.join(", "));
     }
@@ -765,7 +774,7 @@ pub fn render_file_shape(
         let listed: Vec<String> = callers
             .iter()
             .take(12)
-            .map(|(label, file)| format!("{label} [{file}]"))
+            .map(|(label, file)| format!("{} [{}]", inline(label), inline(file)))
             .collect();
         let _ = writeln!(brief, "Called from elsewhere by: {}", listed.join(", "));
     }
@@ -776,7 +785,7 @@ pub fn render_file_shape(
             imports
                 .iter()
                 .take(12)
-                .cloned()
+                .map(|import| inline(import))
                 .collect::<Vec<_>>()
                 .join(", ")
         );

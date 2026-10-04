@@ -94,6 +94,9 @@ impl DoctorReport {
             }),
         }
         report.checks.push(blob_store_check(database));
+        report
+            .checks
+            .push(crate::security::validated_memory_check(database));
         report.finish()
     }
 
