@@ -64,7 +64,9 @@ link for review; it is not enough to auto-apply a dependency), and render in the
 
 ## 4. The living encyclopedia
 
-While the daemon runs, http://127.0.0.1:11436 serves the workspace browser:
+While the daemon runs, http://127.0.0.1:11436 serves the workspace browser. Use
+`127.0.0.1` or `localhost`: other host names are refused with HTTP 421, which
+protects the loopback listener from DNS rebinding.
 
 - **Service map** — every tracked repo, its links, edge labels.
 - **Service pages** — click any card: synthesized architecture guide

@@ -225,6 +225,88 @@ async fn webhook_repo_updated(
     })))
 }
 
+/// The served application: [`router`] plus, for a loopback bind, a guard that
+/// answers only requests addressed to this listener. A page on another site
+/// can point its own DNS name at 127.0.0.1 (DNS rebinding), but the browser
+/// still sends that name in `Host`, and its own origin in `Origin`.
+/// Non-loopback binds keep the bearer-token gate alone.
+///
+/// # Errors
+///
+/// Returns a config error when a non-loopback bind has no token.
+pub fn app(config: &Config, port: u16) -> Result<Router> {
+    let bind = config.web.bind.as_str();
+    let loopback = bind == "127.0.0.1" || bind == "localhost" || bind == "::1";
+    if !loopback && config.web.token.is_none() {
+        return Err(Error::Config(
+            "binding the browser beyond loopback requires [web] token".to_owned(),
+        ));
+    }
+    let router = router(config);
+    Ok(if loopback {
+        router.layer(axum::middleware::from_fn_with_state(port, loopback_only))
+    } else {
+        router
+    })
+}
+
+/// Reject requests whose `Host` is not a loopback name or address with this
+/// listener's port, and state-changing requests whose `Origin`, when sent, is
+/// not such a loopback origin. Clients without `Origin` (curl, scripts) pass.
+async fn loopback_only(
+    State(port): State<u16>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let headers = request.headers();
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok());
+    if !host.is_some_and(|host| loopback_authority(host, port)) {
+        return (
+            axum::http::StatusCode::MISDIRECTED_REQUEST,
+            "request is not addressed to this loopback listener",
+        )
+            .into_response();
+    }
+    let changes_state = !matches!(
+        *request.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+    );
+    if changes_state && let Some(origin) = headers.get(axum::http::header::ORIGIN) {
+        let same = origin
+            .to_str()
+            .ok()
+            .and_then(|origin| origin.strip_prefix("http://"))
+            .is_some_and(|authority| loopback_authority(authority, port));
+        if !same {
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                "cross-origin requests cannot change workspace state",
+            )
+                .into_response();
+        }
+    }
+    next.run(request).await
+}
+
+/// `localhost`, a 127.0.0.0/8 address or `[::1]`, with exactly `port`.
+fn loopback_authority(authority: &str, port: u16) -> bool {
+    if authority.is_empty() || authority.contains(['@', '/', '\\', '?', '#']) {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(&format!("http://{authority}/")) else {
+        return false;
+    };
+    let loopback = match url.host() {
+        Some(url::Host::Domain(name)) => name == "localhost",
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    };
+    loopback && url.port_or_known_default() == Some(port)
+}
+
 /// Serve the workspace browser until the task is cancelled.
 ///
 /// # Errors
@@ -233,13 +315,7 @@ async fn webhook_repo_updated(
 /// has no token.
 pub async fn serve(config: Config, port: u16) -> Result<()> {
     let bind = config.web.bind.clone();
-    let loopback = bind == "127.0.0.1" || bind == "localhost" || bind == "::1";
-    if !loopback && config.web.token.is_none() {
-        return Err(Error::Config(
-            "binding the browser beyond loopback requires [web] token".to_owned(),
-        ));
-    }
-    let app = router(&config);
+    let app = app(&config, port)?;
     // A restarting daemon races the previous instance releasing the port
     // (`daemon stop` returns before the process exits). Retry the bind for a
     // bounded window instead of silently running without the browser for the
@@ -689,6 +765,154 @@ mod tests {
             .unwrap();
             assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
         }
+    }
+
+    fn guarded_request(
+        method: &str,
+        path: &str,
+        host: Option<&str>,
+        origin: Option<&str>,
+    ) -> axum::http::Request<axum::body::Body> {
+        let mut builder = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/json");
+        if let Some(host) = host {
+            builder = builder.header("host", host);
+        }
+        if let Some(origin) = origin {
+            builder = builder.header("origin", origin);
+        }
+        builder.body(axum::body::Body::from("{}")).expect("request")
+    }
+
+    async fn status_of(
+        app: &Router,
+        request: axum::http::Request<axum::body::Body>,
+    ) -> axum::http::StatusCode {
+        tower::ServiceExt::oneshot(app.clone(), request)
+            .await
+            .expect("response")
+            .status()
+    }
+
+    /// A config whose daemon socket does not exist, so no test reaches a daemon.
+    fn isolated_config(temp: &tempfile::TempDir) -> Config {
+        let mut config = Config::default();
+        config.daemon.socket_path = temp.path().join("absent.sock");
+        config
+    }
+
+    #[tokio::test]
+    async fn loopback_listener_answers_only_its_own_host_and_origin() {
+        use axum::http::StatusCode;
+        let temp = tempfile::TempDir::new().expect("temp");
+        let app = app(&isolated_config(&temp), 11_436).expect("loopback app");
+        for host in [
+            "127.0.0.1:11436",
+            "localhost:11436",
+            "LOCALHOST:11436",
+            "[::1]:11436",
+            "127.0.0.2:11436",
+        ] {
+            let request = guarded_request("GET", "/", Some(host), None);
+            assert_eq!(status_of(&app, request).await, StatusCode::OK, "{host}");
+        }
+        // DNS rebinding names the attacker's host; other ports and wildcard
+        // addresses are other listeners.
+        for host in [
+            None,
+            Some("evil.example:11436"),
+            Some("localhost.evil.example:11436"),
+            Some("127.0.0.1:9999"),
+            Some("127.0.0.1"),
+            Some("0.0.0.0:11436"),
+            Some("user@127.0.0.1:11436"),
+        ] {
+            let request = guarded_request("GET", "/", host, None);
+            assert_eq!(
+                status_of(&app, request).await,
+                StatusCode::MISDIRECTED_REQUEST,
+                "{host:?}"
+            );
+        }
+        for origin in [
+            "http://evil.example",
+            "null",
+            "https://127.0.0.1:11436",
+            "http://localhost:3000",
+        ] {
+            let request = guarded_request(
+                "POST",
+                "/api/product/lessons",
+                Some("127.0.0.1:11436"),
+                Some(origin),
+            );
+            assert_eq!(
+                status_of(&app, request).await,
+                StatusCode::FORBIDDEN,
+                "{origin}"
+            );
+        }
+        // Same-origin and Origin-less writes reach the route, which rejects
+        // this empty body itself before contacting a daemon.
+        for origin in [
+            Some("http://127.0.0.1:11436"),
+            Some("http://localhost:11436"),
+            None,
+        ] {
+            let request = guarded_request(
+                "POST",
+                "/api/product/lessons",
+                Some("127.0.0.1:11436"),
+                origin,
+            );
+            let status = status_of(&app, request).await;
+            assert!(
+                status != StatusCode::FORBIDDEN && status != StatusCode::MISDIRECTED_REQUEST,
+                "{origin:?} -> {status}"
+            );
+        }
+        // Reads are not guarded by Origin; the browser's same-origin policy applies.
+        let request = guarded_request(
+            "GET",
+            "/",
+            Some("127.0.0.1:11436"),
+            Some("http://evil.example"),
+        );
+        assert_eq!(status_of(&app, request).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn token_gate_and_non_loopback_binds_are_unchanged() {
+        use axum::http::StatusCode;
+        let temp = tempfile::TempDir::new().expect("temp");
+        let mut config = isolated_config(&temp);
+        config.web.token = Some("test-token".to_owned());
+        let loopback = app(&config, 11_436).expect("loopback app");
+        let request = guarded_request("GET", "/api/judge", Some("evil.example:11436"), None);
+        assert_eq!(
+            status_of(&loopback, request).await,
+            StatusCode::MISDIRECTED_REQUEST
+        );
+        let request = guarded_request("GET", "/api/judge", Some("127.0.0.1:11436"), None);
+        assert_eq!(
+            status_of(&loopback, request).await,
+            StatusCode::UNAUTHORIZED
+        );
+        // A team server is reached by its own name; the token alone gates data.
+        config.web.bind = "0.0.0.0".to_owned();
+        let team = app(&config, 11_436).expect("non-loopback bind with a token");
+        let host = Some("engram.internal.example:11436");
+        let request = guarded_request("GET", "/", host, None);
+        assert_eq!(status_of(&team, request).await, StatusCode::OK);
+        let request = guarded_request("GET", "/api/judge", host, Some("http://evil.example"));
+        assert_eq!(status_of(&team, request).await, StatusCode::UNAUTHORIZED);
+        config.web.token = None;
+        assert!(
+            app(&config, 11_436).is_err(),
+            "non-loopback binds still require a token"
+        );
     }
 
     #[tokio::test]
