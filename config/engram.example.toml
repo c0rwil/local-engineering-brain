@@ -82,6 +82,11 @@ max_attempts = 5
 # referenced by usage events, such as acknowledged deliveries, are kept.
 # Allowed range: 1..=3650 days.
 context_run_retention_days = 90
+# Succeeded and dead job rows that finished longer ago than this are deleted
+# by the same daily job. Pending, running and failed (awaiting retry) rows
+# are kept. A removed job's dedupe key can be enqueued again.
+# Allowed range: 1..=3650 days.
+job_retention_days = 30
 
 [semantic]
 # Used only when [context] semantic_retrieval = true. The vector sidecar is

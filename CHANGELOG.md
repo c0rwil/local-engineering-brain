@@ -201,7 +201,15 @@ not yet stable, and the schema version is 7.
   refresh. A graph change now schedules one export per repository per
   `[vault] refresh_interval_secs` window (default 300 seconds), run when the
   window closes. Changes in the same window share it. Shadow origin views
-  no longer export a vault folder of their own, matching the full vault build.
+  and hidden projects (`internal.hidden`) no longer export a vault folder of
+  their own, matching the full vault build. A project hidden after its
+  refresh was queued is skipped when the job runs; a requested export still
+  runs.
+- Job history no longer grows without bound. The daily `consolidation_gc`
+  job deletes succeeded and dead job rows that finished more than
+  `[jobs] job_retention_days` ago (default 30) in bounded batches and reports
+  `job_rows_deleted`. Pending, running and failed rows stay. No table
+  references job rows, and a test fails if one starts to.
 - The judge's live source checks run Git locally only: no lazy fetch from a
   partial clone's remote (`GIT_NO_LAZY_FETCH=1`), no credential prompt and
   no optional index lock. Project-state and commit-ancestry checks use the

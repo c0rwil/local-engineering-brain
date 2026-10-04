@@ -283,7 +283,7 @@ impl JobQueue {
         let request = EnqueueJob {
             job_type: JobType::VaultExport,
             project_id: Some(project_id.clone()),
-            payload: serde_json::json!({}),
+            payload: serde_json::json!({ "automatic": true }),
             dedupe_key: format!("vault_export:{project_id}:{refresh_interval_secs}s-{window}"),
             max_attempts,
         };
@@ -769,9 +769,18 @@ impl JobExecutor {
         }))
     }
 
-    /// Re-export the derived Obsidian vault for the job's project.
+    /// Re-export the derived Obsidian vault for the job's project. An
+    /// automatic refresh skips a project that became hidden (or is a derived
+    /// view) after it was queued; a requested export always runs.
     fn run_vault_export(&self, job: &JobRecord) -> Result<serde_json::Value> {
         let project_id = required_project(job)?;
+        if job.payload["automatic"] == serde_json::Value::Bool(true)
+            && !crate::vault::exports_project(&self.database, &project_id)?
+        {
+            return Ok(serde_json::json!({
+                "skipped": "the vault does not export this project (hidden or a derived view)"
+            }));
+        }
         let root = self.vault_root.clone().ok_or_else(|| {
             Error::Config("vault export requires vault.enabled with a root".to_owned())
         })?;
@@ -795,11 +804,6 @@ impl JobExecutor {
         Ok(serde_json::to_value(&report)?)
     }
 
-    /// Bounded consolidation GC (spec section 16): delete `context_runs`
-    /// (their `context_items` cascade) older than the configured retention in
-    /// bounded batches, then unlink orphaned blob files that `engram doctor`
-    /// would report. Each batch is its own scheduler mutation so interactive
-    /// writes interleave freely.
     /// Hook hygiene folded into the daily GC: session files older than a
     /// week are deleted, and tasks left open that long are marked abandoned
     /// so episode stats stay meaningful.
@@ -870,68 +874,56 @@ impl JobExecutor {
         (files_removed, abandoned)
     }
 
+    /// Run one bounded delete in batches, each its own scheduler mutation so
+    /// interactive writes interleave, until a batch comes back short or
+    /// `GC_MAX_BATCHES` ran. Returns the rows deleted and whether rows may
+    /// remain for the next run.
+    fn delete_in_batches(
+        &self,
+        cutoff_ms: i64,
+        delete: fn(&Database, i64, usize) -> Result<u64>,
+    ) -> Result<(u64, bool)> {
+        let mut deleted = 0_u64;
+        for _ in 0..GC_MAX_BATCHES {
+            let database = self.database.clone();
+            let batch = self
+                .scheduler
+                .submit(MutationPriority::BackgroundLearning, move || {
+                    delete(&database, cutoff_ms, GC_BATCH_ROWS)
+                })?
+                .wait()?;
+            deleted = deleted.saturating_add(batch);
+            if usize::try_from(batch).unwrap_or(usize::MAX) < GC_BATCH_ROWS {
+                return Ok((deleted, false));
+            }
+        }
+        Ok((deleted, true))
+    }
+
+    /// Bounded consolidation GC (spec section 16): delete `context_runs`
+    /// (their `context_items` cascade), hook tool and verification
+    /// observations older than the context-run retention, and finished job
+    /// rows older than the job retention, in bounded batches; then unlink
+    /// orphaned blob files that `engram doctor` would report and run the
+    /// hook-session hygiene.
     fn run_consolidation_gc(&self, now_ms: i64) -> Result<serde_json::Value> {
-        let retention_ms =
-            i64::from(self.config.context_run_retention_days).saturating_mul(86_400_000);
-        let cutoff_ms = now_ms.saturating_sub(retention_ms);
-        let mut deleted_runs = 0_u64;
-        let mut truncated = true;
-        for _ in 0..GC_MAX_BATCHES {
-            let database = self.database.clone();
-            let batch = self
-                .scheduler
-                .submit(MutationPriority::BackgroundLearning, move || {
-                    delete_context_run_batch(&database, cutoff_ms, GC_BATCH_ROWS)
-                })?
-                .wait()?;
-            deleted_runs = deleted_runs.saturating_add(batch);
-            if usize::try_from(batch).unwrap_or(usize::MAX) < GC_BATCH_ROWS {
-                truncated = false;
-                break;
-            }
-        }
-        // Hook tool observations follow the same retention window.
-        let mut deleted_observations = 0_u64;
-        let mut observations_truncated = true;
-        for _ in 0..GC_MAX_BATCHES {
-            let database = self.database.clone();
-            let batch = self
-                .scheduler
-                .submit(MutationPriority::BackgroundLearning, move || {
-                    crate::effectiveness::delete_tool_observation_batch(
-                        &database,
-                        cutoff_ms,
-                        GC_BATCH_ROWS,
-                    )
-                })?
-                .wait()?;
-            deleted_observations = deleted_observations.saturating_add(batch);
-            if usize::try_from(batch).unwrap_or(usize::MAX) < GC_BATCH_ROWS {
-                observations_truncated = false;
-                break;
-            }
-        }
-        // So do hook-observed verification runs.
-        let mut deleted_verifications = 0_u64;
-        let mut verifications_truncated = true;
-        for _ in 0..GC_MAX_BATCHES {
-            let database = self.database.clone();
-            let batch = self
-                .scheduler
-                .submit(MutationPriority::BackgroundLearning, move || {
-                    crate::effectiveness::delete_verification_observation_batch(
-                        &database,
-                        cutoff_ms,
-                        GC_BATCH_ROWS,
-                    )
-                })?
-                .wait()?;
-            deleted_verifications = deleted_verifications.saturating_add(batch);
-            if usize::try_from(batch).unwrap_or(usize::MAX) < GC_BATCH_ROWS {
-                verifications_truncated = false;
-                break;
-            }
-        }
+        let cutoff = |days: u32| now_ms.saturating_sub(i64::from(days).saturating_mul(86_400_000));
+        let context_cutoff = cutoff(self.config.context_run_retention_days);
+        let (deleted_runs, runs_truncated) =
+            self.delete_in_batches(context_cutoff, delete_context_run_batch)?;
+        // Hook tool observations and verification runs follow the same window.
+        let (deleted_observations, observations_truncated) = self.delete_in_batches(
+            context_cutoff,
+            crate::effectiveness::delete_tool_observation_batch,
+        )?;
+        let (deleted_verifications, verifications_truncated) = self.delete_in_batches(
+            context_cutoff,
+            crate::effectiveness::delete_verification_observation_batch,
+        )?;
+        let (deleted_jobs, jobs_truncated) = self.delete_in_batches(
+            cutoff(self.config.job_retention_days),
+            delete_finished_job_batch,
+        )?;
         let gc_database = self.database.clone();
         let orphans_removed = self
             .scheduler
@@ -949,10 +941,14 @@ impl JobExecutor {
             "context_runs_deleted": deleted_runs,
             "tool_observations_deleted": deleted_observations,
             "verification_observations_deleted": deleted_verifications,
+            "job_rows_deleted": deleted_jobs,
             "orphan_blobs_removed": orphans_removed,
             "hook_session_files_removed": hook_session_files_removed,
             "stale_open_tasks_abandoned": stale_open_tasks_abandoned,
-            "truncated": truncated || observations_truncated || verifications_truncated,
+            "truncated": runs_truncated
+                || observations_truncated
+                || verifications_truncated
+                || jobs_truncated,
         }))
     }
 
@@ -1077,6 +1073,30 @@ pub fn delete_context_run_batch(database: &Database, cutoff_ms: i64, limit: usiz
                      SELECT 1 FROM usage_events u WHERE u.context_run_id = context_runs.id
                    )
                  ORDER BY created_at_ms, id LIMIT ?2
+             )",
+            params![cutoff_ms, limit],
+        )?;
+        u64::try_from(deleted).map_err(|_| Error::Config("GC batch exceeds u64".to_owned()))
+    })
+}
+
+/// Delete up to `limit` succeeded or dead job rows that finished before
+/// `cutoff_ms`, oldest first. Pending, running and failed (awaiting retry)
+/// rows stay. No table references `jobs`, so a deleted row leaves nothing
+/// dangling; its dedupe key becomes free for a new enqueue.
+///
+/// # Errors
+///
+/// Returns an error on storage failure.
+pub fn delete_finished_job_batch(database: &Database, cutoff_ms: i64, limit: usize) -> Result<u64> {
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    database.write_immediate(|transaction| {
+        let deleted = transaction.execute(
+            "DELETE FROM jobs WHERE id IN (
+                 SELECT id FROM jobs
+                 WHERE status IN ('succeeded','dead')
+                   AND COALESCE(completed_at_ms, updated_at_ms) < ?1
+                 ORDER BY COALESCE(completed_at_ms, updated_at_ms), id LIMIT ?2
              )",
             params![cutoff_ms, limit],
         )?;
@@ -1730,6 +1750,220 @@ mod tests {
         assert_ne!(elsewhere.id, after_dead.id, "windows are per project");
 
         assert!(queue.enqueue_vault_refresh(&project, 0, 3, 0).is_err());
+    }
+
+    const DAY_MS: i64 = 86_400_000;
+
+    /// An `fts_integrity` row labelled by its dedupe key, never due.
+    fn insert_job(
+        transaction: &rusqlite::Transaction<'_>,
+        label: &str,
+        status: &str,
+        updated_at_ms: i64,
+        completed_at_ms: Option<i64>,
+    ) -> Result<()> {
+        transaction.execute(
+            "INSERT INTO jobs(id, project_id, job_type, priority, status, payload_json,
+                 dedupe_key, attempts, max_attempts, not_before_ms, created_at_ms,
+                 updated_at_ms, completed_at_ms)
+             VALUES (?1, NULL, 'fts_integrity', 10, ?2, '{}', ?3, 1, 3, ?4, 0, ?5, ?6)",
+            params![
+                JobId::new().as_str(),
+                status,
+                label,
+                i64::MAX,
+                updated_at_ms,
+                completed_at_ms
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Finished job rows past the retention window are deleted in bounded
+    /// batches; unfinished rows and recent history stay.
+    #[test]
+    fn gc_deletes_finished_job_rows_past_their_retention() {
+        let (_temp, database) = database();
+        let now = 100 * DAY_MS;
+        database
+            .write_immediate(|transaction| {
+                insert_job(
+                    transaction,
+                    "old-succeeded",
+                    "succeeded",
+                    0,
+                    Some(now - 40 * DAY_MS),
+                )?;
+                insert_job(transaction, "old-dead", "dead", 0, Some(now - 31 * DAY_MS))?;
+                // Completion time missing: the last update dates the row.
+                insert_job(
+                    transaction,
+                    "old-undated",
+                    "succeeded",
+                    now - 45 * DAY_MS,
+                    None,
+                )?;
+                insert_job(
+                    transaction,
+                    "recent-succeeded",
+                    "succeeded",
+                    0,
+                    Some(now - 29 * DAY_MS),
+                )?;
+                insert_job(transaction, "recent-dead", "dead", 0, Some(now - DAY_MS))?;
+                // Unfinished rows stay however old they are.
+                for status in ["pending", "running", "failed"] {
+                    insert_job(
+                        transaction,
+                        &format!("old-{status}"),
+                        status,
+                        now - 60 * DAY_MS,
+                        None,
+                    )?;
+                }
+                // More than one 500-row batch.
+                for ordinal in 0..600 {
+                    let label = format!("bulk-{ordinal:04}");
+                    insert_job(transaction, &label, "succeeded", 0, Some(now - 50 * DAY_MS))?;
+                }
+                Ok(())
+            })
+            .expect("job fixtures");
+        let queue = JobQueue::new(database.clone());
+        queue
+            .enqueue(&enqueue_request(JobType::ConsolidationGc, "day-100"), now)
+            .expect("gc job");
+        let gc = queue.claim_due(now).expect("claim").expect("gc due");
+        assert_eq!(gc.job_type, JobType::ConsolidationGc);
+
+        let result = executor(&database).execute(&gc, now).expect("gc");
+        assert_eq!(result["job_rows_deleted"], 603, "{result}");
+        assert_eq!(result["truncated"], false);
+        let remaining: Vec<String> = database
+            .with_reader(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT dedupe_key FROM jobs WHERE job_type = 'fts_integrity' ORDER BY 1",
+                )?;
+                let rows = statement
+                    .query_map([], |row| row.get(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(rows)
+            })
+            .expect("remaining");
+        assert_eq!(
+            remaining,
+            [
+                "old-failed",
+                "old-pending",
+                "old-running",
+                "recent-dead",
+                "recent-succeeded"
+            ]
+        );
+        assert_eq!(
+            queue.get(&gc.id).expect("get").expect("row").status,
+            JobStatus::Running,
+            "the running cleanup job keeps its row"
+        );
+        // A deleted row's dedupe key can be enqueued again.
+        let again = queue
+            .enqueue(
+                &enqueue_request(JobType::FtsIntegrity, "old-succeeded"),
+                now,
+            )
+            .expect("re-enqueue");
+        assert_eq!(again.status, JobStatus::Pending);
+    }
+
+    /// Retention deletes `jobs` rows outright, which is safe only while no
+    /// table references them. A new reference must be exempted from retention.
+    #[test]
+    fn no_table_references_job_rows() {
+        let (_temp, database) = database();
+        let referencing: Vec<String> = database
+            .with_reader(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT m.name FROM sqlite_master m, pragma_foreign_key_list(m.name) f
+                     WHERE m.type = 'table' AND f.\"table\" = 'jobs'",
+                )?;
+                let rows = statement
+                    .query_map([], |row| row.get(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(rows)
+            })
+            .expect("schema");
+        assert!(
+            referencing.is_empty(),
+            "tables reference jobs; exempt referenced rows in delete_finished_job_batch: {referencing:?}"
+        );
+    }
+
+    #[test]
+    fn automatic_vault_exports_skip_projects_the_vault_does_not_export() {
+        let temp = TempDir::new().expect("temp dir");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let registry = ProjectRegistry::new(database.clone());
+        let [shown, hidden, unhidden, view] = ["shown", "hidden", "unhidden", "view"].map(|name| {
+            let root = temp.path().join(name);
+            std::fs::create_dir_all(&root).expect("project dir");
+            registry
+                .resolve_or_register(&root)
+                .expect("project")
+                .project
+                .id
+        });
+        registry
+            .set_fact(&hidden, "internal.hidden", "true", None)
+            .expect("hide");
+        registry
+            .set_fact(&unhidden, "internal.hidden", "false", None)
+            .expect("unhide");
+        registry
+            .set_fact(&view, "internal.view_of", shown.as_str(), None)
+            .expect("view");
+        for (project, exported) in [
+            (&shown, true),
+            (&hidden, false),
+            (&unhidden, true),
+            (&view, false),
+        ] {
+            assert_eq!(
+                crate::vault::exports_project(&database, project).expect("eligibility"),
+                exported,
+                "{project}"
+            );
+        }
+
+        let vault = temp.path().join("vault");
+        let executor = executor(&database).with_vault_root(Some(vault.clone()));
+        let queue = JobQueue::new(database);
+        let automatic = queue
+            .enqueue_vault_refresh(&hidden, 300, 3, 1_000)
+            .expect("automatic refresh");
+        let skipped = executor.execute(&automatic, 300_000).expect("skip");
+        assert!(skipped["skipped"].is_string(), "{skipped}");
+        assert!(!vault.join("hidden").exists(), "nothing exported");
+        let shown_refresh = queue
+            .enqueue_vault_refresh(&shown, 300, 3, 1_000)
+            .expect("automatic refresh");
+        executor.execute(&shown_refresh, 300_000).expect("export");
+        assert!(vault.join("shown/INDEX.md").is_file());
+
+        // An export someone requested still runs for a hidden project.
+        let requested = queue
+            .enqueue(
+                &EnqueueJob {
+                    job_type: JobType::VaultExport,
+                    project_id: Some(hidden.clone()),
+                    payload: serde_json::json!({}),
+                    dedupe_key: "requested".to_owned(),
+                    max_attempts: 3,
+                },
+                1_000,
+            )
+            .expect("requested export");
+        executor.execute(&requested, 2_000).expect("export");
+        assert!(vault.join("hidden/INDEX.md").is_file());
     }
 
     fn executor(database: &Database) -> JobExecutor {

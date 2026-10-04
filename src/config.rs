@@ -324,6 +324,10 @@ pub struct JobsConfig {
     /// daily `consolidation_gc` job in bounded batches (spec section 16).
     /// Hook tool observations follow the same window.
     pub context_run_retention_days: u32,
+    /// Succeeded and dead `jobs` rows that finished longer ago than this are
+    /// deleted by the daily `consolidation_gc` job. Pending, running and
+    /// failed (awaiting retry) rows are never deleted.
+    pub job_retention_days: u32,
 }
 
 impl Default for JobsConfig {
@@ -333,6 +337,7 @@ impl Default for JobsConfig {
             poll_interval_ms: 5_000,
             max_attempts: 5,
             context_run_retention_days: 90,
+            job_retention_days: 30,
         }
     }
 }
@@ -807,6 +812,11 @@ impl Config {
         {
             return Err(Error::Config(
                 "jobs.context_run_retention_days must be between 1 and 3650".to_owned(),
+            ));
+        }
+        if self.jobs.job_retention_days == 0 || self.jobs.job_retention_days > 3_650 {
+            return Err(Error::Config(
+                "jobs.job_retention_days must be between 1 and 3650".to_owned(),
             ));
         }
         // The vault refresh window schedules automatic `vault_export` jobs.
@@ -1517,6 +1527,7 @@ mod tests {
         assert_eq!(config.jobs.poll_interval_ms, 5_000);
         assert_eq!(config.jobs.max_attempts, 5);
         assert_eq!(config.jobs.context_run_retention_days, 90);
+        assert_eq!(config.jobs.job_retention_days, 30);
         assert_eq!(
             config.vault.refresh_interval_secs,
             VaultConfig::default().refresh_interval_secs
@@ -1541,6 +1552,11 @@ mod tests {
                 "retention.toml",
                 "[jobs]\ncontext_run_retention_days = 0\n",
                 "context_run_retention_days",
+            ),
+            (
+                "job-retention.toml",
+                "[jobs]\njob_retention_days = 3651\n",
+                "job_retention_days",
             ),
             (
                 "vault.toml",
