@@ -190,6 +190,16 @@ impl MutationScheduler {
     pub fn stats(&self) -> SchedulerStats {
         self.metrics.snapshot()
     }
+
+    /// Accepted mutations that have not finished yet (queued or running).
+    /// A graceful shutdown waits for this to reach zero, because some
+    /// endpoints acknowledge a write once it is queued.
+    #[must_use]
+    pub fn pending(&self) -> u64 {
+        let submitted = self.metrics.submitted.load(AtomicOrdering::SeqCst);
+        let completed = self.metrics.completed.load(AtomicOrdering::SeqCst);
+        submitted.saturating_sub(completed)
+    }
 }
 
 impl<T> MutationHandle<T> {

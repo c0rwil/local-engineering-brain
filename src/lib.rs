@@ -25,6 +25,7 @@ pub mod ids;
 pub mod jobs;
 pub mod judge;
 pub mod learning;
+pub mod lifecycle;
 pub mod linkscan;
 pub mod mcp;
 pub mod memory;

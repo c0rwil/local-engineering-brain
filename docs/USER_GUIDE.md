@@ -30,6 +30,11 @@ database at `~/.engram/brain.sqlite`. You never manage it directly;
 `engram daemon status` / `engram daemon stop` / `engram daemon restart` exist
 when you need them. `engram daemon status` shows the daemon's process id and,
 when an Engram client auto-started it, the process chain that started it.
+One daemon owns a database at a time: it holds `brain.sqlite.daemon.lock` for
+its whole life. On stop it keeps its socket open and answers `draining` while
+it finishes in-flight requests, the background job, a judge call and queued
+writes; clients wait for it rather than start a second daemon, and
+`engram daemon stop` returns once the process has exited.
 Configuration lives at `~/.config/engram/config.toml`
 (see `config/engram.example.toml` for every section).
 
@@ -352,8 +357,8 @@ knowledge never ping-pongs back.
 | Verify a backup | `engram backup verify` |
 | See what would inject and why | `engram context "…" --path <repo> --json` |
 | Regenerate the architecture guide | `engram architect --claude` |
-| Restart the daemon from this terminal | `engram daemon restart` (waits up to `--wait-secs`, default 120, for in-flight work) |
-| Stop everything | `engram daemon stop` |
+| Restart the daemon from this terminal | `engram daemon restart` (waits up to `--wait-secs`, default 150, for in-flight work) |
+| Stop everything | `engram daemon stop` (waits up to `--wait-secs`, default 150, for the process to exit; `0` returns at once) |
 
 Never copy `brain.sqlite` with `cp` — WAL contents are lost. Backups only.
 
@@ -393,6 +398,29 @@ Never copy `brain.sqlite` with `cp` — WAL contents are lost. Backups only.
   and trust the Engram entries.
 - **`project_identity` warns** — see
   [Duplicate project registrations](#duplicate-project-registrations).
+- **"draining: engramd pid N is finishing in-flight work"** — that daemon was
+  asked to stop and is finishing its work (at most about two minutes for
+  requests, the background job and a judge call, then ten seconds for queued
+  writes). Clients wait up to ten seconds for it and then fail this way;
+  retry once it has exited, or wait with `engram daemon stop`.
+- **`engramd` exits with "another engramd (pid N) holds …daemon.lock"** — a
+  daemon for the same database is still running or exiting; a second one
+  never starts beside it. The next client call starts one after it exits. A
+  starting daemon waits 10 s for the previous one by default
+  (`ENGRAM_DAEMON_START_WAIT_MS` changes it).
+
+### Upgrading from a build without the daemon lock (one time)
+
+Builds before the daemon lock close their socket as soon as a stop begins
+but keep the database open while they finish in-flight work. A new daemon
+refuses to start while such a process still has the database open and names
+its pid. `scripts/install.sh` and `engram update` handle this: they install
+the new release, then stop the old daemon with the new client and wait for its
+process to exit. When upgrading by hand:
+
+1. `engram daemon stop` (an older client returns at once).
+2. Wait until the old process has exited: `pgrep -x engramd` prints nothing.
+3. Start the new build: any `engram` command, or `engram daemon status`.
 
 ### Duplicate project registrations
 

@@ -58,12 +58,35 @@ fn run(cli: Cli) -> engram::Result<()> {
     }
     config.validate()?;
 
+    // One daemon per database, for the whole life of this process: taken
+    // before migrations and job recovery, released only after the runtime and
+    // every thread that could still write have stopped.
+    let lock = engram::lifecycle::DaemonLock::acquire(
+        &config.storage.db_path,
+        engram::lifecycle::start_wait(),
+    )?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("engramd-runtime")
         .build()
         .map_err(|error| engram::Error::Daemon(format!("failed to start runtime: {error}")))?;
-    runtime.block_on(engram::daemon::serve_until(config, async {
-        let _ = tokio::signal::ctrl_c().await;
-    }))
+    let served = runtime.block_on(engram::daemon::serve_with_lock(config, &lock, async {
+        let terminate = async {
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(mut signal) => {
+                    signal.recv().await;
+                }
+                Err(_) => std::future::pending::<()>().await,
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            () = terminate => {}
+        }
+    }));
+    // Blocking work that outlived the drain must not keep the process (and
+    // the lock) alive indefinitely.
+    runtime.shutdown_timeout(std::time::Duration::from_secs(5));
+    drop(lock);
+    served
 }

@@ -649,8 +649,12 @@ enum DaemonAction {
         #[arg(long)]
         json: bool,
     },
-    /// Ask the daemon to finish in-flight requests and stop.
+    /// Ask the daemon to finish in-flight requests and stop, then wait for
+    /// its process to exit.
     Stop {
+        /// Seconds to wait for the daemon process to exit (0: do not wait).
+        #[arg(long, default_value_t = 150)]
+        wait_secs: u64,
         #[arg(long)]
         json: bool,
     },
@@ -658,7 +662,7 @@ enum DaemonAction {
     /// it inherits this terminal's environment and macOS folder access.
     Restart {
         /// Seconds to wait for the old daemon to finish in-flight work.
-        #[arg(long, default_value_t = 120)]
+        #[arg(long, default_value_t = 150)]
         wait_secs: u64,
         #[arg(long)]
         json: bool,
@@ -3633,9 +3637,8 @@ fn run_update(check: bool) -> Result<bool> {
         ));
     }
     println!(
-        "Updated. Restart the daemon when convenient (`engram daemon stop`; the next \
-         CLI call starts the new binary) — running sessions keep the binary they \
-         started with."
+        "Updated. The installer stopped the previous daemon; the next CLI call starts \
+         the new binary. Running sessions keep the binary they started with."
     );
     Ok(true)
 }
@@ -4308,36 +4311,66 @@ fn run_daemon_action(
             if *json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
-                match (report.stopped_previous, report.previous_pid) {
-                    (true, Some(previous)) => println!("Stopped engramd pid {previous}"),
-                    (true, None) => println!("Stopped the previous engramd"),
-                    (false, _) => println!("No daemon was running"),
-                }
-                if let Some(pid) = report.pid {
-                    println!("Started engramd pid {pid}");
-                }
-                if let Some(launcher) = &report.launcher {
-                    println!("Started by: {launcher}");
-                }
-                if !report.started_by_this_process {
-                    println!(
-                        "Warning: another client started the daemon during the restart; it \
-                         runs with that client's folder access. Run `engram daemon restart` \
-                         again if `engram doctor` still reports unreadable checkouts."
-                    );
-                }
+                print_restart_report(&report);
             }
             Ok(report.started_by_this_process)
         }
-        DaemonAction::Stop { json } => {
-            block_on(client.shutdown())?;
+        DaemonAction::Stop { wait_secs, json } => {
+            let report = block_on(engram::autostart::stop_daemon(
+                &config,
+                Duration::from_secs(*wait_secs),
+            ))?;
             if *json {
-                println!("{}", serde_json::json!({"shutdown_requested": true}));
+                println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
-                println!("Daemon shutdown requested");
+                print_stop_report(&report, *wait_secs);
             }
-            Ok(true)
+            Ok(report.exited != Some(false))
         }
+    }
+}
+
+fn print_restart_report(report: &engram::autostart::RestartReport) {
+    match (report.stopped_previous, report.previous_pid) {
+        (true, Some(previous)) => println!("Stopped engramd pid {previous}"),
+        (true, None) => println!("Stopped the previous engramd"),
+        (false, _) => println!("No daemon was running"),
+    }
+    if let Some(pid) = report.pid {
+        println!("Started engramd pid {pid}");
+    }
+    if let Some(launcher) = &report.launcher {
+        println!("Started by: {launcher}");
+    }
+    if let Some(displaced) = report.displaced_pid {
+        println!(
+            "Replaced engramd pid {displaced}, which another client had started while the old \
+             daemon was exiting"
+        );
+    }
+    if !report.started_by_this_process {
+        println!(
+            "Warning: another client started the daemon during the restart; it runs with that \
+             client's folder access. Run `engram daemon restart` again if `engram doctor` still \
+             reports unreadable checkouts."
+        );
+    }
+}
+
+fn print_stop_report(report: &engram::autostart::StopReport, wait_secs: u64) {
+    let process = report
+        .pid
+        .map_or_else(|| "engramd".to_owned(), |pid| format!("engramd pid {pid}"));
+    match (report.stopped, report.exited) {
+        (false, _) => println!("No daemon is answering"),
+        (true, None) => println!("Asked {process} to stop"),
+        (true, Some(true)) if report.replaced => {
+            println!("{process} stopped listening, and another daemon now serves the socket");
+        }
+        (true, Some(true)) => println!("{process} stopped after {} ms", report.waited_ms),
+        (true, Some(false)) => println!(
+            "{process} is still finishing in-flight work after {wait_secs} s; it exits on its own"
+        ),
     }
 }
 
