@@ -178,7 +178,8 @@ not yet stable, and the schema version is 7.
   The effectiveness ledger counts every recognized run (schema 20,
   `verification_observations`: kind, cause and note only). `engram
   effectiveness` reports the recordable share overall and before and after
-  each conversation's first note.
+  each conversation's first note. The browser's Effectiveness tab shows the
+  same ledger per repository under "Recordable verification runs".
 
 ### Changed
 
@@ -195,6 +196,18 @@ not yet stable, and the schema version is 7.
   backups) no longer leaves a partial, world-readable file that looks like a
   backup: the copy is written to a hidden 0600 file and renamed when
   complete.
+- Automatic vault refreshes recur. The `vault_export` job was keyed per
+  project only, so the first export, or a dead one, blocked every later
+  refresh. A graph change now schedules one export per repository per
+  `[vault] refresh_interval_secs` window (default 300 seconds), run when the
+  window closes. Changes in the same window share it. Shadow origin views
+  no longer export a vault folder of their own, matching the full vault build.
+- The judge's live source checks run Git locally only: no lazy fetch from a
+  partial clone's remote (`GIT_NO_LAZY_FETCH=1`), no credential prompt and
+  no optional index lock. Project-state and commit-ancestry checks use the
+  same environment. Git work for one review has a five-second limit. When Git
+  exceeds it, the judge kills the process and defers the review with a reason
+  that says so, and the next pass checks it again.
 - A second daemon could start while the first was still draining: the first
   closed its listener at once, a hook auto-started another daemon, and both
   held the database (a new build migrated under the old one, and job recovery

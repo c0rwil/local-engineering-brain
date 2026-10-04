@@ -184,9 +184,12 @@ impl DoctorReport {
                     "Obsidian vault at {} (auto-refresh {})",
                     config.vault.root.display(),
                     if config.vault.auto_refresh {
-                        "on"
+                        format!(
+                            "at most once per {} s window",
+                            config.vault.refresh_interval_secs
+                        )
                     } else {
-                        "off"
+                        "off".to_owned()
                     }
                 )
             } else {

@@ -3444,22 +3444,22 @@ async fn index_project(
         }
     }
 
-    // Derived vault refresh: a durable, deduped background job keyed per
-    // project, so vault notes and diagrams track every graph change without
-    // blocking the index response. Requires jobs + vault to both be enabled.
-    if state.config.vault.enabled && state.config.vault.auto_refresh && state.config.jobs.enabled {
+    // Derived vault refresh: a durable background job per project and refresh
+    // window, so vault notes and diagrams track graph changes without blocking
+    // the index response. Requires jobs + vault to both be enabled.
+    if state.config.vault.enabled
+        && state.config.vault.auto_refresh
+        && state.config.jobs.enabled
+        && !is_view_project
+    {
         let queue = JobQueue::new(state.database.clone());
-        let enqueue = EnqueueJob {
-            job_type: JobType::VaultExport,
-            project_id: Some(resolved.project.id.clone()),
-            payload: serde_json::json!({}),
-            dedupe_key: format!("vault_export:{}", resolved.project.id),
-            max_attempts: state.config.jobs.max_attempts,
-        };
+        let project_id = resolved.project.id.clone();
+        let interval = state.config.vault.refresh_interval_secs;
+        let max_attempts = state.config.jobs.max_attempts;
         let _ = state
             .scheduler
             .submit(MutationPriority::BackgroundLearning, move || {
-                queue.enqueue(&enqueue, job_time_ms())
+                queue.enqueue_vault_refresh(&project_id, interval, max_attempts, job_time_ms())
             });
     }
     Ok(Json(ProjectIndexResponse {

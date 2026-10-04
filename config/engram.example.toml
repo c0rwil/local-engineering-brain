@@ -229,6 +229,9 @@ root = "~/.engram/vault"
 # Re-export automatically (durable background job) after every structural
 # scan, so notes and diagrams track the code.
 auto_refresh = true
+# Graph changes within one window share one automatic export, which runs
+# when the window closes (60..=86400 seconds).
+refresh_interval_secs = 300
 
 [links]
 # After each index, scan the repo's own manifests (Cargo path deps, npm

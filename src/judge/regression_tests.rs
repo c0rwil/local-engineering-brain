@@ -1204,3 +1204,96 @@ fn changed_files_and_unknown_revisions_keep_the_revision_gate() {
     let untouched = lab.complete(Vec::new(), Some(&current), true, CLAIM);
     assert!(reason(&untouched).contains("revision differs"));
 }
+
+/// A Git stand-in for `Lab::store`: commands naming `hang` record their
+/// environment and PID, then sleep; everything else runs the real Git.
+#[cfg(unix)]
+fn slow_git(lab: &Lab, hang: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let real = std::process::Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("locate git");
+    let real = String::from_utf8_lossy(&real.stdout).trim().to_owned();
+    assert!(!real.is_empty(), "git on PATH");
+    let directory = lab.temp.path().join("slow-git");
+    std::fs::create_dir_all(&directory).expect("shim directory");
+    let script = directory.join("git");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncase \" $* \" in\n  *\" {hang} \"*)\n    \
+             printf '%s %s %s\\n' \"$GIT_NO_LAZY_FETCH\" \"$GIT_TERMINAL_PROMPT\" \"$GIT_OPTIONAL_LOCKS\" > \"$(dirname \"$0\")/env\"\n    \
+             echo $$ > \"$(dirname \"$0\")/pid\"\n    exec sleep 30;;\nesac\nexec '{real}' \"$@\"\n"
+        ),
+    )
+    .expect("shim");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    script
+}
+
+/// Prepare under a slow Git and return the reason, elapsed time and whether
+/// the stand-in is still running.
+#[cfg(unix)]
+fn prepare_with_slow_git(
+    lab: &mut Lab,
+    review: &str,
+    hang: &str,
+) -> (Option<String>, std::time::Duration, bool) {
+    let script = slow_git(lab, hang);
+    lab.store.git = sources::GitRunner {
+        program: Some(script.clone()),
+        budget: std::time::Duration::from_millis(400),
+    };
+    let started = std::time::Instant::now();
+    let reason = lab.packet(review).blocked_reason;
+    let elapsed = started.elapsed();
+    lab.store.git = sources::GitRunner::DEFAULT;
+    let directory = script.parent().expect("shim directory");
+    assert_eq!(
+        std::fs::read_to_string(directory.join("env"))
+            .expect("the shim ran")
+            .trim(),
+        "1 0 0",
+        "local-only Git environment"
+    );
+    let pid = std::fs::read_to_string(directory.join("pid")).expect("pid");
+    let alive = std::process::Command::new("kill")
+        .args(["-0", pid.trim()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("kill -0")
+        .success();
+    (reason, elapsed, alive)
+}
+
+#[cfg(unix)]
+#[test]
+fn the_git_watchdog_kills_a_hung_head_read_and_defers() {
+    let mut lab = Lab::new(true);
+    let review = lab.complete(vec!["src/auth.rs".to_owned()], None, true, CLAIM);
+    let (reason, elapsed, alive) = prepare_with_slow_git(&mut lab, &review, "rev-parse");
+    assert_eq!(reason.as_deref(), Some(sources::GIT_TIMEOUT));
+    assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
+    assert!(!alive, "the hung Git child was killed");
+    // The next pass with a responsive Git checks the review again.
+    assert_eq!(lab.packet(&review).blocked_reason, None);
+}
+
+#[cfg(unix)]
+#[test]
+fn the_git_watchdog_kills_a_hung_revision_comparison_and_defers() {
+    let mut lab = Lab::new(true);
+    let recorded = git(&lab.root, &["rev-parse", "HEAD"]);
+    let review = lab.complete(vec!["src/auth.rs".to_owned()], Some(&recorded), true, CLAIM);
+    lab.commit("README.md", b"notes\n", "unrelated");
+    let (reason, elapsed, alive) = prepare_with_slow_git(&mut lab, &review, "cat-file");
+    assert_eq!(
+        reason.as_deref(),
+        Some(sources::GIT_TIMEOUT),
+        "a timed-out comparison is not reported as a revision difference"
+    );
+    assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
+    assert!(!alive, "the hung Git child was killed");
+    assert_eq!(lab.packet(&review).blocked_reason, None);
+}
