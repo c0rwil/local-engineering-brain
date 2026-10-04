@@ -77,6 +77,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.os }}
+      # Hermetic retrieval regression gate: an isolated engramd indexes the
+      # synthetic repository in tests/fixtures/retrieval_repo and checks ranking,
+      # definition hits, no filler, budgets and zero off-mode injection. The full
+      # run below includes it too; this step fails fast and prints the report.
+      - name: retrieval regression gate
+        run: cargo test --locked --test retrieval_regression -- --nocapture
       # This is the release gate from README.md verbatim, except that the two
       # latency/RSS assertions in tests/performance.rs are filtered out at the
       # libtest level. They still compile here (so a broken perf test is
