@@ -417,6 +417,42 @@ fn lazy_hooks_route_edits_and_verification_to_target_and_close_every_project() {
     cli(state, &["daemon", "stop"], None);
 }
 
+#[cfg(unix)]
+#[test]
+fn session_start_names_an_unreadable_repository_instead_of_staying_silent() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let temp = TempDir::new().expect("temp");
+    let root = temp.path();
+    let repo = root.join("locked");
+    std::fs::create_dir(&repo).unwrap();
+    let init = Command::new("git")
+        .args(["init", "-q"])
+        .arg(&repo)
+        .output()
+        .expect("git init");
+    assert!(init.status.success());
+    std::fs::set_permissions(&repo, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&repo).is_ok() {
+        // Running as root: file modes are not enforced, nothing to observe.
+        std::fs::set_permissions(&repo, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let brief = cli(
+        root,
+        &["hook", "session-start"],
+        Some(json!({"session_id":"locked-session", "cwd":repo})),
+    );
+    std::fs::set_permissions(&repo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    cli(root, &["daemon", "stop"], None);
+    assert!(
+        brief.contains("Engram cannot read this repository"),
+        "{brief}"
+    );
+    assert!(brief.contains(repo.to_str().unwrap()), "{brief}");
+    assert!(brief.contains("engram doctor"), "{brief}");
+}
+
 #[test]
 fn hooks_count_real_tool_ids_and_final_usage_once_without_guessing_cost() {
     let temp = TempDir::new().expect("temp");

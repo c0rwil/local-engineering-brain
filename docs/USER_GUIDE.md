@@ -27,7 +27,9 @@ engram doctor                      # every check should PASS
 
 The daemon (`engramd`) auto-starts on the first CLI call and owns the canonical
 database at `~/.engram/brain.sqlite`. You never manage it directly;
-`engram daemon status` / `engram daemon stop` exist when you need them.
+`engram daemon status` / `engram daemon stop` / `engram daemon restart` exist
+when you need them. `engram daemon status` shows the daemon's process id and,
+when an Engram client auto-started it, the process chain that started it.
 Configuration lives at `~/.config/engram/config.toml`
 (see `config/engram.example.toml` for every section).
 
@@ -102,6 +104,13 @@ Codex's hook installer writes `$CODEX_HOME/hooks.json` (normally
 uses an absolute executable path for GUI sessions. Open `/hooks` to review and
 trust the installed definitions; newly installed or changed hooks do not run
 until trusted. Start a new local session after connecting MCP.
+
+`engram doctor` reports Engram hooks that Codex will not run (`codex_hooks`):
+never trusted, changed since they were trusted, or disabled. It compares the
+trust hashes Codex keeps in `$CODEX_HOME/config.toml` with the installed
+definitions, using the rule Codex CLI 0.155.0-alpha.2.6 applies; `/hooks` in
+Codex stays the authority. A reinstall that changes a definition (for example
+a different executable path) needs trust again.
 
 | Client | Native connection |
 |---|---|
@@ -210,6 +219,7 @@ knowledge never ping-pongs back.
 | Verify a backup | `engram backup verify` |
 | See what would inject and why | `engram context "…" --path <repo> --json` |
 | Regenerate the architecture guide | `engram architect --claude` |
+| Restart the daemon from this terminal | `engram daemon restart` (waits up to `--wait-secs`, default 120, for in-flight work) |
 | Stop everything | `engram daemon stop` |
 
 Never copy `brain.sqlite` with `cp` — WAL contents are lost. Backups only.
@@ -219,13 +229,67 @@ Never copy `brain.sqlite` with `cp` — WAL contents are lost. Backups only.
 - **Hook prints nothing in a repo** — the repo isn't registered
   (`engram index <repo>`), or the daemon is down (`engram doctor`).
 - **Stale responses after upgrading** — restart the daemon
-  (`engram daemon stop`; the next CLI call auto-starts the new binary).
+  (`engram daemon restart`, or `engram daemon stop` and let the next CLI call
+  auto-start the new binary).
 - **Encyclopedia looks stale in the browser** — the page is no-cache, but
   a long-lived tab may need a reload; the data underneath refreshes on the
   watcher cadence.
 - **A memory looks wrong** — Forget it in the browser or via MCP
   `engram_forget`; if it was drift (the code changed under it), it is already
   quarantined automatically.
+- **`checkout_access` fails, or a hook or tool reports "macOS privacy
+  permission denied for … in engramd"** — the daemon cannot read that
+  repository. On macOS a process inherits privacy (TCC) folder access from
+  the app that started it, and an agent hook can auto-start `engramd` from an
+  app that may not read `~/Documents`, `~/Desktop` or `~/Downloads`. Indexing,
+  identity, Git state and evidence-review source checks then fail for those
+  repositories. `engram doctor` names the denied paths and the process chain
+  that started the daemon. Fix it with `engram daemon restart` from a terminal
+  that can read the folders, or grant `engramd` access in System Settings >
+  Privacy & Security (Full Disk Access or Files and Folders). Each reinstall
+  puts `engramd` at a new path under `~/.local/share/engram/releases/`, so such
+  a grant likely does not survive reinstalling. Engram does not restart the
+  daemon on its own: a restart interrupts every connected session, and two
+  apps with different folder grants would keep replacing each other's daemon.
+- **`codex_hooks` warns** — Codex has not trusted Engram's hooks, so Codex
+  sessions run without context injection or capture. Open Codex, run `/hooks`
+  and trust the Engram entries.
+- **`project_identity` warns** — see
+  [Duplicate project registrations](#duplicate-project-registrations).
+
+### Duplicate project registrations
+
+`engram doctor` warns when live checkouts of one repository (same canonical
+`origin` remote and root commit) belong to different project ids. This
+happens when a project was registered without its Git identity (for example
+while the daemon could not read Git), so a later clone could not be matched
+to it, or when separate clones carry different `.engram/project.toml` pins.
+Knowledge recorded under one id is not visible from the other.
+
+Engram never merges or re-identifies projects automatically. A project
+registered without Git identity gets its root commit and canonical remote
+recorded once Git is readable; its id does not change. The remote is recorded
+only when no other active project could be the same repository, so with
+duplicates neither claims it, and a later clone without metadata registers as
+a new project instead of silently joining one of them. Until a merge command
+exists:
+
+- Work in one checkout. `engram memory list --path <checkout>` shows the
+  memories each id holds.
+- Do not point one checkout's `project.toml` at the other id. Each recorded
+  checkout path belongs to exactly one project, so that checkout would stop
+  resolving.
+- Deleting a clone you no longer use clears the warning; its records stay
+  under its id.
+
+A safe merge command would need: an explicit choice of surviving and retired
+id; evidence that both are the same repository (the doctor's remote and root
+commit match); a backup and a dry run that counts the rows to move; one
+single-writer transaction that re-scopes project-keyed rows (memories, tasks,
+attempts, evidence, context runs, facts, links and checkout paths) with
+explicit rules for key collisions; an auditable merge event plus a tombstone
+for the retired id so replay reproduces the result; rewritten pins for the
+retired checkouts; and a re-index instead of moving derived indexes.
 
 ## Capturing operations lessons
 

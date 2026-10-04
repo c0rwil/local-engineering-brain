@@ -320,6 +320,13 @@ pub struct HealthResponse {
     /// Absent when derived caching is disabled or the daemon predates it.
     #[serde(default)]
     pub cache: Option<WorldCacheHealth>,
+    /// Daemon process id; absent from daemons that predate it.
+    #[serde(default)]
+    pub pid: Option<u32>,
+    /// The process chain that auto-started this daemon, when known. On macOS
+    /// the daemon inherits privacy access from it.
+    #[serde(default)]
+    pub launcher: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -849,6 +856,11 @@ impl ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "scheduler_unavailable",
                 true,
+            ),
+            Error::AccessDenied { .. } => (
+                StatusCode::FORBIDDEN,
+                crate::error::ACCESS_DENIED_CODE,
+                false,
             ),
             Error::InvalidProjectId(_)
             | Error::InvalidDomainId { .. }
@@ -2238,6 +2250,8 @@ async fn health(State(state): State<DaemonState>) -> Json<HealthResponse> {
         rss_hard_limit_bytes: hard,
         memory_pressure: classify_memory_pressure(rss_bytes, soft, hard),
         cache: state.world_cache.as_ref().map(|cache| cache.health()),
+        pid: Some(std::process::id()),
+        launcher: std::env::var(crate::autostart::LAUNCHER_ENV).ok(),
     })
 }
 

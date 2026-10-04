@@ -623,6 +623,15 @@ enum DaemonAction {
         #[arg(long)]
         json: bool,
     },
+    /// Stop the daemon gracefully and start a new one from this terminal, so
+    /// it inherits this terminal's environment and macOS folder access.
+    Restart {
+        /// Seconds to wait for the old daemon to finish in-flight work.
+        #[arg(long, default_value_t = 120)]
+        wait_secs: u64,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1925,7 +1934,8 @@ fn run_doctor(overrides: &ConfigOverrides, socket: Option<&Path>, json: bool) ->
         block_on(client(&config).doctor())?
     } else {
         DoctorReport::run(&config)
-    };
+    }
+    .with_agent_checks();
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -2478,8 +2488,23 @@ fn run_hook_event(
             if !engram::agenthooks::claim_once(&state_dir, &session_id, "brief") {
                 return Ok(true); // a concurrent hook (user + project level) already briefed
             }
-            let Ok(lookup) = block_on(client.lookup_project(&cwd)) else {
-                return Ok(true);
+            let lookup = match block_on(client.lookup_project(&cwd)) {
+                Ok(lookup) => lookup,
+                Err(error) => {
+                    // The one failure worth a line: the daemon cannot read
+                    // this repository, so every other hook stays silent here.
+                    // Like the enrollment hint, a folder this hook can see is
+                    // not in a Git repository stays silent.
+                    let plain_folder = std::fs::read_dir(&cwd).is_ok()
+                        && !cwd.ancestors().any(|dir| dir.join(".git").exists());
+                    if engram::error::is_access_denied(&error) && !plain_folder {
+                        emit(
+                            "SessionStart",
+                            &engram::error::access_denied_hook_notice(&error),
+                        );
+                    }
+                    return Ok(true);
+                }
             };
             let Some(project) = lookup.project else {
                 // Untracked repo: one opt-in line (never auto-enroll). Only
@@ -3759,8 +3784,12 @@ fn run_daemon_action(
     // whole point of stopping is that the socket serves an OLD build, and
     // refusing creates a chicken-and-egg lockout (observed). Status and
     // stop talk to whatever answers the socket; auto-start still applies
-    // to status so it can report a freshly started daemon.
-    if !matches!(action, DaemonAction::Stop { .. }) {
+    // to status so it can report a freshly started daemon. Restart replaces
+    // whatever answers, so it must not auto-start one first either.
+    if !matches!(
+        action,
+        DaemonAction::Stop { .. } | DaemonAction::Restart { .. }
+    ) {
         require_daemon(&config)?;
     }
     let client = client(&config);
@@ -3792,8 +3821,43 @@ fn run_daemon_action(
                         health.memory_pressure
                     );
                 }
+                if let Some(pid) = health.pid {
+                    println!("PID:       {pid}");
+                }
+                if let Some(launcher) = &health.launcher {
+                    println!("Started by: {launcher}");
+                }
             }
             Ok(true)
+        }
+        DaemonAction::Restart { wait_secs, json } => {
+            let report = block_on(engram::autostart::restart_daemon(
+                &config,
+                Duration::from_secs(*wait_secs),
+            ))?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                match (report.stopped_previous, report.previous_pid) {
+                    (true, Some(previous)) => println!("Stopped engramd pid {previous}"),
+                    (true, None) => println!("Stopped the previous engramd"),
+                    (false, _) => println!("No daemon was running"),
+                }
+                if let Some(pid) = report.pid {
+                    println!("Started engramd pid {pid}");
+                }
+                if let Some(launcher) = &report.launcher {
+                    println!("Started by: {launcher}");
+                }
+                if !report.started_by_this_process {
+                    println!(
+                        "Warning: another client started the daemon during the restart; it \
+                         runs with that client's folder access. Run `engram daemon restart` \
+                         again if `engram doctor` still reports unreadable checkouts."
+                    );
+                }
+            }
+            Ok(report.started_by_this_process)
         }
         DaemonAction::Stop { json } => {
             block_on(client.shutdown())?;
