@@ -85,6 +85,10 @@ pub enum Error {
     #[error("{message}")]
     AccessDenied { path: PathBuf, message: String },
 
+    /// A project merge was refused; the message says why. Nothing changed.
+    #[error("merge refused: {0}")]
+    MergeRefused(String),
+
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
 

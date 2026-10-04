@@ -115,6 +115,8 @@ const API_USAGE_RECORD: &str = "/api/v1/effectiveness/usage";
 const API_TOOL_OBSERVATION: &str = "/api/v1/effectiveness/tool";
 const API_JUDGE_STATUS: &str = "/api/v1/judge";
 const API_JUDGE_RUN: &str = "/api/v1/judge/run";
+const API_PROJECT_MERGE: &str = "/api/v1/projects/merge";
+const API_PROJECT_MERGE_FINALIZE: &str = "/api/v1/projects/merge/finalize";
 
 /// Language builtins and assertion macros say nothing about what a module
 /// DOES; the module-detail calls list excludes them.
@@ -208,7 +210,13 @@ struct DaemonState {
     draining: Arc<std::sync::atomic::AtomicBool>,
     /// Requests admitted and not yet answered.
     in_flight: Arc<std::sync::atomic::AtomicUsize>,
+    /// Survivor of every merged project id. Requests that still carry a
+    /// merged id are redirected to its survivor.
+    merged_projects: MergedProjects,
 }
+
+type MergedProjects =
+    Arc<std::sync::RwLock<Arc<std::collections::BTreeMap<String, String>>>>;
 
 /// Bounded derived cache over graph read endpoints. Values are never
 /// canonical: keys carry a per-project generation that graph mutations bump
@@ -425,6 +433,42 @@ pub struct ProjectIndexRequest {
     /// The daemon derives a bounded delta and falls back to a full native scan.
     #[serde(default)]
     pub ensure_fresh: bool,
+}
+
+/// Merge one project into another (`engram project merge`), or plan it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectMergeRequest {
+    /// The survivor: a project id, a project name, or an absolute checkout path.
+    pub into: String,
+    /// The project to retire: a project id, name, or absolute checkout path.
+    pub from: String,
+    /// Only plan: report what would move, collide and be rebuilt.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ProjectMergeResponse {
+    Planned {
+        plan: Box<crate::merge::MergePlan>,
+    },
+    Merged {
+        outcome: Box<crate::merge::MergeOutcome>,
+    },
+    AlreadyMerged {
+        outcome: Box<crate::merge::MergeOutcome>,
+    },
+}
+
+/// Finish merges into a survivor after its re-index.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MergeFinalizeRequest {
+    pub project_id: ProjectId,
+    /// Attach waiting memory anchors, or mark their memories for
+    /// revalidation. Leave false while some checkout could not be re-indexed.
+    #[serde(default)]
+    pub resolve_anchors: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -880,6 +924,7 @@ impl ApiError {
                 crate::error::ACCESS_DENIED_CODE,
                 false,
             ),
+            Error::MergeRefused(_) => (StatusCode::CONFLICT, "merge_refused", false),
             Error::InvalidProjectId(_)
             | Error::InvalidDomainId { .. }
             | Error::InvalidProjectMetadata { .. }
@@ -1469,6 +1514,33 @@ impl DaemonClient {
         .await
     }
 
+    /// Plan or execute a project merge. Execution takes a backup first and
+    /// waits for the merge transaction, so there is no client deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns `merge_refused` errors with the reason, or transport errors.
+    pub async fn merge_projects(
+        &self,
+        request: &ProjectMergeRequest,
+    ) -> Result<ProjectMergeResponse> {
+        self.request(hyper::Method::POST, API_PROJECT_MERGE, Some(request))
+            .await
+    }
+
+    /// Finish merges into a survivor after its re-index.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport or storage errors.
+    pub async fn finalize_merge(
+        &self,
+        request: &MergeFinalizeRequest,
+    ) -> Result<crate::merge::FinalizeOutcome> {
+        self.request(hyper::Method::POST, API_PROJECT_MERGE_FINALIZE, Some(request))
+            .await
+    }
+
     /// Verify a backup using normal schema and integrity checks.
     ///
     /// # Errors
@@ -1919,6 +1991,8 @@ fn requires_terminal_ack(method: &hyper::Method, path: &str) -> bool {
         || path == API_JOBS
         || path == API_SYNTHESIS_RUN
         || path == API_SKILL_PROMOTE
+        || path == API_PROJECT_MERGE
+        || path == API_PROJECT_MERGE_FINALIZE
 }
 
 /// Longest a graceful shutdown waits for in-flight requests, the background
@@ -2006,7 +2080,9 @@ where
     let blocking_concurrency = usize::from(config.daemon.read_connections)
         .checked_add(usize::from(config.daemon.background_concurrency))
         .ok_or_else(|| Error::Config("blocking concurrency exceeds this platform".to_owned()))?;
+    let merged = database.with_reader(crate::merge::redirects)?;
     let state = DaemonState {
+        merged_projects: Arc::new(std::sync::RwLock::new(Arc::new(merged))),
         judge_slot: Arc::new(Semaphore::new(1)),
         judge_stopping: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         config: Arc::new(config.clone()),
@@ -2138,6 +2214,12 @@ where
         .route(API_MODULE_SYMBOLS, post(project_module_symbols))
         .route(API_ORIGIN_REFRESH, post(origin_refresh_handler))
         .route(API_MEMORY_PROVENANCE, post(memory_provenance_handler))
+        .route(API_PROJECT_MERGE, post(merge_projects))
+        .route(API_PROJECT_MERGE_FINALIZE, post(finalize_merge))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            redirect_merged_projects,
+        ))
         .layer(DefaultBodyLimit::max(
             usize::try_from(config.daemon.max_request_bytes)
                 .map_err(|_| Error::Config("request limit exceeds this platform".to_owned()))?,
@@ -2470,6 +2552,231 @@ async fn drain_gate(
         return ApiError::draining().into_response();
     }
     next.run(request).await
+}
+
+/// Redirect requests that still carry a merged project id (a stale pin, a
+/// hook sidecar written before the merge, an MCP client that cached it) to
+/// its survivor: JSON strings that are exactly a merged id are rewritten in
+/// place. The merge endpoints themselves see the ids they were given.
+async fn redirect_merged_projects(
+    State(state): State<DaemonState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let redirects = state
+        .merged_projects
+        .read()
+        .map(|guard| Arc::clone(&guard))
+        .unwrap_or_default();
+    let path = request.uri().path();
+    if redirects.is_empty()
+        || request.method() == hyper::Method::GET
+        || path == API_PROJECT_MERGE
+        || path == API_PROJECT_MERGE_FINALIZE
+    {
+        return next.run(request).await;
+    }
+    let limit = usize::try_from(state.config.daemon.max_request_bytes).unwrap_or(usize::MAX);
+    let (parts, body) = request.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, limit).await else {
+        return ApiError {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            body: ApiErrorBody {
+                code: "payload_too_large".to_owned(),
+                message: format!("request body exceeds {limit} bytes"),
+                retryable: false,
+            },
+        }
+        .into_response();
+    };
+    let bytes = crate::merge::redirect_json_bytes(&bytes, &redirects).map_or(bytes, Bytes::from);
+    next.run(axum::extract::Request::from_parts(
+        parts,
+        axum::body::Body::from(bytes),
+    ))
+    .await
+}
+
+enum PreparedMerge {
+    AlreadyMerged(Box<crate::merge::MergeOutcome>),
+    Ready(Box<crate::merge::MergePlan>),
+}
+
+/// Resolve both selectors, refuse invalid parties, probe every recorded
+/// checkout for identity evidence and plan the merge. Read-only.
+fn prepare_merge(database: &Database, request: &ProjectMergeRequest) -> Result<PreparedMerge> {
+    let registry = ProjectRegistry::new(database.clone());
+    let survivor = crate::merge::resolve_selector(&registry, &request.into)?;
+    let retired = crate::merge::resolve_selector(&registry, &request.from)?;
+    let from_path = Path::new(request.from.trim());
+    let earlier = database.with_reader(|connection| {
+        // A repeated merge whose --from names a checkout path that the merge
+        // moved to the survivor.
+        if survivor == retired && from_path.is_absolute() {
+            let path = from_path
+                .canonicalize()
+                .unwrap_or_else(|_| from_path.to_path_buf());
+            if let Some(original) = crate::merge::merge_that_moved(
+                connection,
+                &survivor,
+                &path.to_string_lossy(),
+            )? {
+                return crate::merge::earlier_merge(connection, &survivor, &original);
+            }
+        }
+        crate::merge::earlier_merge(connection, &survivor, &retired)
+    })?;
+    if let Some(outcome) = earlier {
+        return Ok(PreparedMerge::AlreadyMerged(Box::new(outcome)));
+    }
+    let (survivor_party, retired_party) = database.with_reader(|connection| {
+        crate::merge::check_parties(connection, &survivor, &retired)?;
+        Ok((
+            crate::merge::party(connection, &survivor)?,
+            crate::merge::party(connection, &retired)?,
+        ))
+    })?;
+    let evidence = crate::merge::identity_evidence(&survivor_party, &retired_party);
+    let plan = database.with_reader(|connection| {
+        let snapshot = connection.unchecked_transaction()?;
+        let plan = crate::merge::plan(&snapshot, &survivor_party, &retired_party, evidence)?;
+        snapshot.commit()?;
+        Ok(plan)
+    })?;
+    Ok(PreparedMerge::Ready(Box::new(plan)))
+}
+
+/// Longest the identity probe of a merge may take (Git on every checkout).
+const MERGE_PROBE_DEADLINE: Duration = Duration::from_secs(300);
+
+async fn merge_projects(
+    State(state): State<DaemonState>,
+    Json(request): Json<ProjectMergeRequest>,
+) -> std::result::Result<Json<ProjectMergeResponse>, ApiError> {
+    let database = state.database.clone();
+    let dry_run = request.dry_run;
+    let prepared = run_blocking_with_timeout(&state, MERGE_PROBE_DEADLINE, move || {
+        prepare_merge(&database, &request)
+    })
+    .await?;
+    let plan = match prepared {
+        PreparedMerge::AlreadyMerged(outcome) => {
+            return Ok(Json(ProjectMergeResponse::AlreadyMerged { outcome }));
+        }
+        PreparedMerge::Ready(plan) if dry_run => {
+            return Ok(Json(ProjectMergeResponse::Planned { plan }));
+        }
+        PreparedMerge::Ready(plan) => plan,
+    };
+    if let Some(refusal) = &plan.identity.refusal {
+        return Err(ApiError::from_core(&Error::MergeRefused(refusal.clone())));
+    }
+    let backup = state
+        .config
+        .storage
+        .db_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("backups")
+        .join(format!(
+            "pre-merge-{}-{}.sqlite",
+            &plan.retired.id.as_str()[4..12],
+            job_time_ms()
+        ));
+    let input = crate::merge::MergeExecution {
+        survivor: plan.survivor.id.clone(),
+        retired: plan.retired.id.clone(),
+        identity: plan.identity.clone(),
+        backup_path: Some(backup.display().to_string()),
+    };
+    let database = state.database.clone();
+    // One scheduler job: no write lands between the backup and the merge.
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::CorrectnessCritical, move || {
+            let earlier = database.with_reader(|connection| {
+                crate::merge::earlier_merge(connection, &input.survivor, &input.retired)
+            })?;
+            if let Some(outcome) = earlier {
+                return Ok((outcome, false));
+            }
+            database.backup(&backup)?;
+            crate::merge::execute(&database, &input).map(|outcome| (outcome, true))
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    let (outcome, merged) = wait_for_mutation(&state, handle).await?;
+    after_merge(&state, &outcome);
+    let outcome = Box::new(outcome);
+    Ok(Json(if merged {
+        ProjectMergeResponse::Merged { outcome }
+    } else {
+        ProjectMergeResponse::AlreadyMerged { outcome }
+    }))
+}
+
+/// Make a committed merge visible: redirect its retired id from now on,
+/// invalidate cached graph reads, re-scope writes queued behind the merge,
+/// and re-embed model vectors the merge dropped.
+fn after_merge(state: &DaemonState, outcome: &crate::merge::MergeOutcome) {
+    match state.database.with_reader(crate::merge::redirects) {
+        Ok(redirects) => {
+            if let Ok(mut guard) = state.merged_projects.write() {
+                *guard = Arc::new(redirects);
+            }
+        }
+        Err(error) => eprintln!("engramd: could not reload merged project ids: {error}"),
+    }
+    if let Some(cache) = &state.world_cache {
+        cache.bump(&outcome.survivor);
+        cache.bump(&outcome.retired);
+    }
+    let database = state.database.clone();
+    let survivor = outcome.survivor.clone();
+    let _ = state
+        .scheduler
+        .submit(MutationPriority::Analytics, move || {
+            crate::merge::finalize(&database, &survivor, false).map(drop)
+        });
+    let dropped_vectors = outcome
+        .audit
+        .rebuilt
+        .get("memory_vectors")
+        .copied()
+        .unwrap_or(0);
+    if dropped_vectors > 0 && state.config.jobs.enabled {
+        let queue = JobQueue::new(state.database.clone());
+        let enqueue = EnqueueJob {
+            job_type: JobType::SemanticRebuild,
+            project_id: Some(outcome.survivor.clone()),
+            payload: serde_json::json!({"reason": "project merge re-scoped memory vectors"}),
+            dedupe_key: format!("merge-{}", outcome.merge_event_id),
+            max_attempts: state.config.jobs.max_attempts,
+        };
+        let _ = state
+            .scheduler
+            .submit(MutationPriority::BackgroundLearning, move || {
+                queue.enqueue(&enqueue, job_time_ms())
+            });
+    }
+}
+
+async fn finalize_merge(
+    State(state): State<DaemonState>,
+    Json(request): Json<MergeFinalizeRequest>,
+) -> std::result::Result<Json<crate::merge::FinalizeOutcome>, ApiError> {
+    let database = state.database.clone();
+    let survivor = request.project_id.clone();
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::CorrectnessCritical, move || {
+            crate::merge::finalize(&database, &survivor, request.resolve_anchors)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    let outcome = wait_for_mutation(&state, handle).await?;
+    if let Some(cache) = &state.world_cache {
+        cache.bump(&request.project_id);
+    }
+    Ok(Json(outcome))
 }
 
 /// Time every served request into its endpoint-group histogram. One relaxed
@@ -5314,6 +5621,7 @@ mod tests {
             started: Instant::now(),
             draining: Arc::new(AtomicBool::new(false)),
             in_flight: Arc::new(AtomicUsize::new(0)),
+            merged_projects: MergedProjects::default(),
         };
         // Hold the writer so writes acknowledged at enqueue pile up behind it,
         // as tool observations do behind higher-priority work.

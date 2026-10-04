@@ -118,6 +118,42 @@ impl ProjectRegistry {
         }
     }
 
+    #[must_use]
+    pub const fn database(&self) -> &Database {
+        &self.database
+    }
+
+    /// The active project `id` names: itself, or the survivor it was merged
+    /// into (following later merges). A checkout whose pin still holds a
+    /// merged id resolves to the survivor this way.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors.
+    pub fn find_following_merges(&self, id: &ProjectId) -> Result<Option<ProjectRecord>> {
+        let mut current = id.clone();
+        for _ in 0..16 {
+            if let Some(project) = self.find_by_id(&current)? {
+                return Ok(Some(project));
+            }
+            let next = self.database.with_reader(|connection| {
+                connection
+                    .query_row(
+                        "SELECT merged_into FROM projects WHERE id = ?1",
+                        [current.as_str()],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .optional()
+                    .map_err(Error::from)
+            })?;
+            match next.flatten() {
+                Some(survivor) => current = ProjectId::parse(&survivor)?,
+                None => return Ok(None),
+            }
+        }
+        Ok(None)
+    }
+
     /// Resolve a project, registering and persisting a UUID when it is new.
     ///
     /// # Errors
@@ -160,7 +196,7 @@ impl ProjectRegistry {
             identity_root: _,
         } = Self::observe(requested_path)?;
         if let Some(metadata) = &metadata {
-            return self.find_by_id(&metadata.project_id);
+            return self.find_following_merges(&metadata.project_id);
         }
         if let Some(remote) = git
             .as_ref()
@@ -241,7 +277,8 @@ impl ProjectRegistry {
 
         let mut project = if let Some(metadata) = &metadata {
             let derived_view = metadata.derived_view.unwrap_or(false);
-            self.find_by_id(&metadata.project_id)?
+            // A pin that still holds a merged id belongs to the survivor.
+            self.find_following_merges(&metadata.project_id)?
                 .unwrap_or_else(|| ProjectRecord {
                     id: metadata.project_id.clone(),
                     name: metadata.name.clone().unwrap_or_else(|| project_name(&root)),
@@ -1133,6 +1170,169 @@ fn read_project_metadata(root: &Path) -> Result<Option<ProjectMetadataFile>> {
             path,
             message: error.to_string(),
         })
+}
+
+/// What a merge did, or would do, to one project pin.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PinState {
+    /// The pin held the retired id and now holds the survivor's.
+    Rewritten,
+    /// Dry run: the pin holds the retired id and would be rewritten.
+    WouldRewrite,
+    /// The pin already holds the survivor's id.
+    AlreadySurvivor,
+    /// The pin holds another project's id and was left alone.
+    OtherProject,
+    /// The checkout has no project pin.
+    NoPin,
+    /// The checkout path no longer exists.
+    Missing,
+    /// The operating system refused access (on macOS, privacy settings).
+    Denied,
+    /// Any other failure, described in `detail`.
+    Failed,
+}
+
+/// One project pin of a merged checkout.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PinRewrite {
+    pub checkout: PathBuf,
+    /// The `project.toml` file, when the checkout has one.
+    pub file: Option<PathBuf>,
+    pub state: PinState,
+    pub detail: Option<String>,
+}
+
+/// Point the project pins (`.engram/project.toml`, legacy `.leb/project.toml`,
+/// in the checkout and in its primary worktree) of a checkout that a merge
+/// moved at the survivor. A pin is replaced atomically and only while it
+/// still holds the retired id; with `dry_run` nothing is written.
+#[must_use]
+pub fn rewrite_merged_pins(
+    checkout: &Path,
+    retired: &ProjectId,
+    survivor: &ProjectId,
+    survivor_name: &str,
+    dry_run: bool,
+) -> Vec<PinRewrite> {
+    let entry = |file: Option<PathBuf>, state: PinState, detail: Option<String>| PinRewrite {
+        checkout: checkout.to_path_buf(),
+        file,
+        state,
+        detail,
+    };
+    match fs::symlink_metadata(checkout) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return vec![entry(None, PinState::Missing, None)];
+        }
+        Err(error) => return vec![entry(None, pin_failure(&error), Some(error.to_string()))],
+    }
+    let mut roots = vec![checkout.to_path_buf()];
+    if let Ok(Some(primary)) = primary_worktree_root(checkout) {
+        roots.push(primary);
+    }
+    let mut results = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for root in roots {
+        for directory in [".engram", ".leb"] {
+            let file = root.join(directory).join("project.toml");
+            if !seen.insert(file.clone()) {
+                continue;
+            }
+            match fs::symlink_metadata(&file) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    results.push(entry(Some(file), pin_failure(&error), Some(error.to_string())));
+                    continue;
+                }
+            }
+            let (state, detail) =
+                rewrite_pin_file(&file, retired, survivor, survivor_name, dry_run);
+            results.push(entry(Some(file), state, detail));
+        }
+    }
+    if results.is_empty() {
+        results.push(entry(None, PinState::NoPin, None));
+    }
+    results
+}
+
+fn pin_failure(error: &std::io::Error) -> PinState {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        PinState::Denied
+    } else {
+        PinState::Failed
+    }
+}
+
+fn read_pin(file: &Path) -> std::result::Result<ProjectMetadataFile, (PinState, String)> {
+    let contents =
+        fs::read_to_string(file).map_err(|error| (pin_failure(&error), error.to_string()))?;
+    toml::from_str(&contents).map_err(|error| (PinState::Failed, format!("not a project pin: {error}")))
+}
+
+fn rewrite_pin_file(
+    file: &Path,
+    retired: &ProjectId,
+    survivor: &ProjectId,
+    survivor_name: &str,
+    dry_run: bool,
+) -> (PinState, Option<String>) {
+    let held = |metadata: &ProjectMetadataFile| -> Option<(PinState, Option<String>)> {
+        if metadata.project_id == *survivor {
+            Some((PinState::AlreadySurvivor, None))
+        } else if metadata.project_id != *retired {
+            Some((
+                PinState::OtherProject,
+                Some(format!("pins {}", metadata.project_id)),
+            ))
+        } else {
+            None
+        }
+    };
+    let mut metadata = match read_pin(file) {
+        Ok(metadata) => metadata,
+        Err((state, detail)) => return (state, Some(detail)),
+    };
+    if let Some(result) = held(&metadata) {
+        return result;
+    }
+    if dry_run {
+        return (PinState::WouldRewrite, None);
+    }
+    metadata.project_id = survivor.clone();
+    metadata.name = Some(survivor_name.to_owned());
+    let contents = match toml::to_string_pretty(&metadata) {
+        Ok(contents) => contents,
+        Err(error) => return (PinState::Failed, Some(error.to_string())),
+    };
+    let temporary = file.with_file_name(format!(".project.toml.{}.tmp", Uuid::new_v4()));
+    if let Err(error) = fs::write(&temporary, contents) {
+        return (pin_failure(&error), Some(error.to_string()));
+    }
+    // Replace the pin only while it still holds the retired id.
+    match read_pin(file) {
+        Ok(current) => {
+            if let Some(result) = held(&current) {
+                let _ = fs::remove_file(&temporary);
+                return result;
+            }
+        }
+        Err((state, detail)) => {
+            let _ = fs::remove_file(&temporary);
+            return (state, Some(detail));
+        }
+    }
+    match fs::rename(&temporary, file) {
+        Ok(()) => (PinState::Rewritten, None),
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            (pin_failure(&error), Some(error.to_string()))
+        }
+    }
 }
 
 fn persist_project_metadata(root: &Path, project: &ProjectRecord) -> Result<()> {
