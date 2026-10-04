@@ -76,8 +76,15 @@ sequences, Persian or Hebrew, are not flagged.
   output and commands, and source anchors are screened. A flagged proposal is not
   sent to the judge model, local or TypeSafe. It is deferred with a reason that
   starts with "Possible prompt injection" and lists the findings, and it stays
-  pending. The task prompt is not screened: it is the user's own request and, in
-  captured sessions, routinely contains agent-host markup.
+  pending.
+- **Task prompt, before inference.** Complete agent-host notices
+  (`<system-reminder>` blocks) are replaced with a placeholder; the judge receives
+  the same stripped prompt. A task created without a session, which is how MCP
+  `engram_task_start` and `engram task start` usually run, gets every rule. A
+  prompt captured in an agent session is normally the user's own request and
+  often quotes logs and commands, so it is screened for instruction override and
+  review manipulation only. A caller can declare a session ID, so this tier
+  reduces noise; it is not a boundary.
 - **Review inbox.** Every proposal carries `security_flags` computed from its claim
   and rationale. The web **Knowledge** tab shows them above the decision buttons;
   `engram product show --reviews` and MCP `engram_product` (operation `reviews`)
@@ -117,6 +124,22 @@ The judge system prompt also says that text addressing the reviewer, asking for 
 decision, claiming approval, imitating system, role or tool messages, or asking for
 commands, URLs or secrets is a manipulation attempt and never a reason to accept.
 
+### Workspace browser
+
+The Knowledge tab is where a person acknowledges flagged lessons, so the browser
+listener refuses requests that a web page on another site could make through DNS
+rebinding. When it binds loopback (the default, `127.0.0.1:11436`):
+
+- it answers only requests whose `Host` is `localhost`, a 127.0.0.0/8 address or
+  `[::1]`, with the listener's port. Other names get HTTP 421;
+- state-changing requests whose `Origin`, when sent, is not such a loopback
+  origin get HTTP 403. Clients that send no `Origin`, such as `curl`, are not
+  affected.
+
+Open the browser at http://127.0.0.1:11436 or http://localhost:11436. A custom
+host name that points at 127.0.0.1 is refused. A non-loopback bind, such as a team
+server, keeps requiring the bearer token and does not check `Host`.
+
 ## False positives
 
 Measured on 2026-10-04:
@@ -126,9 +149,13 @@ Measured on 2026-10-04:
   paragraphs matched. It documents the review field `accepted_by_user: true`.
 - One local workspace snapshot, aggregate counts only: 0 of 12 validated memories,
   0 of 74 memories, 0 of 140 lesson proposals, 0 of 491 evidence artifacts and 0 of
-  484 evidence commands matched. Captured task prompts matched in 18 of 360 cases,
-  all from agent-host `<system-reminder>` wrappers or Engram's own injected heading
-  inside the captured prompt. That is why the judge screen skips the task prompt.
+  484 evidence commands matched.
+- Task prompts in the same snapshot: every rule applied to the raw prompts matched
+  18 of 360, all of them prompts with a session: 17 through agent-host
+  `<system-reminder>` blocks and 1 through Engram's own heading quoted in a prompt.
+  With the notices removed and the session tier applied, as the judge now screens
+  them, 0 of 172 prompts without a session and 0 of 188 with one matched. Without
+  the session tier, the quoted heading would still match.
 
 These samples are small and contain no known attacks, so they do not measure
 detection rates. Legitimate text that is likely to be flagged:
@@ -155,6 +182,8 @@ A flag holds a proposal for a human; it never deletes or rejects it.
   as data but not neutralized. Relay messages between sessions are not screened.
   Knowledge replicated from a central server is not screened on arrival; validated
   replicas are covered by the doctor check.
+- The model proxy (`engram-proxy`, `127.0.0.1:11435`) does not check `Host` or
+  `Origin`; only the workspace browser does.
 
 ## Evaluating a judge model
 

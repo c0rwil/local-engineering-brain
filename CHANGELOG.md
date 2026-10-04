@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   promotion refuses flagged text. `engram doctor` reports flagged validated
   memories without changing them. Rendered context escapes hidden characters
   and framing markup instead of deleting them. See `docs/SECURITY.md`.
+- The judge screens task prompts too. Agent-host `<system-reminder>` notices
+  are removed before screening and before the model reads the prompt; prompts
+  without a session (MCP, CLI) get every rule, session-captured prompts the
+  judge-steering rules.
+- On a loopback bind, the workspace browser answers only loopback `Host`
+  names with its own port and refuses state-changing requests from another
+  `Origin` (DNS-rebinding protection). Non-loopback binds are unchanged.
 
 Everything below is the current state of the unreleased **0.1.0** pre-release.
 Nothing has shipped under a version tag yet, so there is no comparison base:

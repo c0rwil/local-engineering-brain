@@ -11,9 +11,9 @@ use crate::error::{Error, Result};
 pub mod injection;
 
 pub use injection::{
-    InjectionFinding, InjectionKind, SCREEN_VERSION, escape_char, hold_reason, is_invisible_format,
-    neutralize_block, neutralize_inline, screen_fields, screen_text, summarize,
-    validated_memory_check,
+    HOST_NOTICE_PLACEHOLDER, InjectionFinding, InjectionKind, SCREEN_VERSION, escape_char,
+    hold_reason, is_invisible_format, neutralize_block, neutralize_inline, screen_fields,
+    screen_task_prompt, screen_text, strip_host_wrappers, summarize, validated_memory_check,
 };
 
 const SECRET_MARKERS: &[&str] = &[
