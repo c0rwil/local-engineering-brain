@@ -36,6 +36,7 @@ pub mod projects;
 pub mod proxy;
 pub mod repository_context;
 pub mod retrieval;
+pub mod reverify;
 pub mod scheduler;
 pub mod security;
 pub mod semantic;

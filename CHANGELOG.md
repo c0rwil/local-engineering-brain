@@ -180,6 +180,17 @@ not yet stable, and the schema version is 7.
   effectiveness` reports the recordable share overall and before and after
   each conversation's first note. The browser's Effectiveness tab shows the
   same ledger per repository under "Recordable verification runs".
+- Operator-initiated re-verification: `engram review reverify [REVIEW_ID...
+  | --all [--project P]] [--dry-run] [--yes] [--json]`. The daemon plans,
+  read-only: each pending review's recorded test, lint, type-check and build
+  commands, refusals with reasons, the checkout and commit, and the judge's
+  gate now and with a passing run. With `--yes` the CLI runs each distinct
+  command once, under `nice` and a timeout, in a disposable worktree at the
+  primary checkout's HEAD. Results go through the hook endpoint with the
+  `engram-reverify` label and the touched files' digests, are attached to the
+  reviews, and start a judge pass. The judge reads those digests where it
+  reads hook digests but never applies the time rule to them. Only plain
+  verification commands run; see `docs/SECURITY.md` for the trust model.
 
 ### Changed
 

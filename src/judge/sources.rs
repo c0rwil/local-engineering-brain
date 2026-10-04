@@ -334,6 +334,96 @@ pub(super) fn live_sources(
     })
 }
 
+/// Files the task touched in its project's checkouts, relative to the
+/// repository root (see [`super::JudgeStore::task_source_files`]).
+/// # Errors
+/// Returns canonical-storage errors.
+pub(super) fn task_source_files(
+    database: &Database,
+    project_id: &ProjectId,
+    task_id: &TaskId,
+) -> Result<super::TaskSourceFiles> {
+    let recorded = load(database, project_id, task_id)?;
+    let (checkouts, _) = checkouts(project_id, &recorded);
+    let mut files = super::TaskSourceFiles {
+        too_many: recorded.touched.len() > MAX_TOUCHED_FILES,
+        ..super::TaskSourceFiles::default()
+    };
+    for path in recorded.touched.iter().take(MAX_TOUCHED_FILES) {
+        match locate(path, &checkouts) {
+            Location::Checkout(index, relative) if !checkouts[index].linked => {
+                if !files.files.contains(&relative) {
+                    files.files.push(relative);
+                }
+            }
+            Location::Relative(relative) => {
+                if !files.files.contains(&relative) {
+                    files.files.push(relative);
+                }
+            }
+            Location::Checkout(..) | Location::Outside | Location::Invalid => files.excluded += 1,
+        }
+    }
+    Ok(files)
+}
+
+/// SHA-256 of each path's content at `revision` in `root`, read through one
+/// bounded `git cat-file --batch` process. Paths absent at the revision, not
+/// regular blobs or over the read bounds are left out. `None` when the
+/// revision is not a commit hash or Git did not finish within its budget.
+pub(super) fn revision_digests(
+    git: &GitRunner,
+    root: &Path,
+    revision: &str,
+    paths: &[String],
+) -> Option<std::collections::BTreeMap<String, String>> {
+    let revision = normalized_revision(revision)?;
+    let mut digests = std::collections::BTreeMap::new();
+    if paths.is_empty() {
+        return Some(digests);
+    }
+    let Ok(child) = git
+        .command(root, &["cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+    else {
+        return Some(digests);
+    };
+    let paths = paths.to_vec();
+    let read = within_deadline(child, Instant::now() + git.budget, move |input, output| {
+        let (Some(mut input), Some(output)) = (input, output) else {
+            return digests;
+        };
+        let mut output = std::io::BufReader::new(output);
+        let mut remaining = LIVE_READ_BUDGET;
+        for path in &paths {
+            if path.contains(['\n', '\r']) {
+                continue;
+            }
+            match read_blob(
+                &mut input,
+                &mut output,
+                &format!("{revision}:{path}"),
+                &mut remaining,
+            ) {
+                Blob::Content(bytes) => {
+                    digests.insert(path.clone(), crate::experience::sha256(&bytes));
+                }
+                Blob::Absent => {}
+                // The stream position or the read budget is lost: stop.
+                Blob::Unreadable => break,
+            }
+        }
+        digests
+    });
+    match read {
+        Waited::Done(digests, _) => Some(digests),
+        Waited::TimedOut => None,
+        Waited::Failed => Some(std::collections::BTreeMap::new()),
+    }
+}
+
 #[derive(Default)]
 struct VerifiedFiles {
     indexed: Vec<Value>,

@@ -1056,6 +1056,80 @@ Delivery signals cite actual evidence and distinguish `verification`,
 `commit_landed`, `pr_merged` and `user_acceptance`. Never set `accepted_by_user`
 from a passing test, merge, landed commit or silence. Omit it when unknown.
 
+### Re-verify stalled reviews
+
+A pending proposal stays deferred when its evidence predates hook digests or
+ran against code that has changed since. The judge then cannot tell which bytes
+the run tested. `engram review reverify` runs the verification commands recorded
+on the proposal's source task again. It records the results with the provenance
+a native hook gives them.
+
+```sh
+engram review reverify REVIEW_ID...                    # plan for named reviews
+engram review reverify --all --project . --dry-run     # plan for one project
+engram review reverify --all --yes                     # run the plan, record results
+```
+
+It never runs on its own. Without `--yes` it only prints the plan (`--json` for
+the full plan). For each review the plan shows:
+
+- each recorded test, lint, type-check or build command, with its newest
+  passing run as the reference;
+- whether the command can run, or why it is refused;
+- the checkout and the commit it would run at;
+- why the judge defers the review now, and what would still block it if the
+  commands pass.
+
+With `--yes`:
+
+1. Each distinct command runs once per commit, from your shell environment,
+   under `nice`. It runs in a disposable checkout (`git worktree add --detach`)
+   of the project's primary checkout at its HEAD, in the system temp
+   directory. The checkout is removed afterwards. Uncommitted changes and
+   untracked files (virtualenvs, `node_modules`, build output) are not copied.
+   Repository hooks and LFS downloads are off while the checkout is created.
+2. A command stops at `--timeout-secs` (default 900). The whole process group
+   is stopped. Only the last 4 KiB of output is kept.
+3. A result with an exit code is recorded on the review's source task. It
+   carries the `engram-reverify` label, the commit in `metadata.head`, and the
+   SHA-256 of the files the task touched, read in the disposable checkout
+   before the command ran. A failing run is recorded as a failure. A run that
+   timed out records nothing.
+4. The new evidence is attached to the review. A judge pass starts when the
+   judge is enabled.
+
+Re-verification evidence certifies a touched file only when its digest equals
+the file's indexed content (or, for a file without an index anchor, its live
+content). Unlike a hook run in your checkout, its recording time says nothing
+about the bytes it tested. So a review stays deferred when your checkout has
+uncommitted changes in the touched files, when the task worked in a worktree
+that no longer exists, or when the task's recorded revision has diverged. The
+plan shows these cases.
+
+Only plain verification commands run. These are refused:
+
+- text the prompt-injection screen flags, text containing `[REDACTED]`, and
+  commands longer than 1,000 bytes;
+- variable, command and process expansion (`$`, backquotes, `<(`);
+- text Engram cannot read as plain shell, such as a note in parentheses;
+- network tools, remote Git operations, package installs, and URLs whose host
+  is not loopback;
+- destructive or privileged programs (`rm`, `mv`, `sudo`, `chmod`, `kill` and
+  similar);
+- file redirections other than to `/dev/null`, and paths outside the
+  disposable checkout (absolute paths, `~`, `..`);
+- commands without a recognized verification, and commands whose exit status
+  is hidden (see [verification evidence from hooks](#verification-evidence-from-hooks));
+- any other step. Allowed steps are verifications, assignments, `export`,
+  `set`, a relative `cd`, a virtualenv `activate`, `echo`, and `tail`, `cat`,
+  `wc`, `sort`, `uniq`, `cut`, `tr` or `tee` after a verification in a pipe.
+  `grep` and `head` in a pipe are refused because they can fail a passing run.
+
+Commands run at the root of the disposable checkout, or at their own relative
+`cd`. A command that ran in a subdirectory without a `cd` can fail there. Read
+the [trust model](SECURITY.md#re-verification-runs-recorded-commands) before
+you run it.
+
 For an isolated daemon, `engramd --config /absolute/path/config.toml` replaces the
 user configuration. Give it separate database, socket, vault and web-port paths;
 this is useful for local evaluation without touching the main workspace.

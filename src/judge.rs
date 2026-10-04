@@ -172,6 +172,39 @@ pub struct JudgePacket {
     pub blocked_reason: Option<String>,
 }
 
+/// A hypothetical passing re-verification, for [`JudgeStore::reverification_gate`].
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct PassingRun {
+    pub kind: String,
+    pub command: String,
+    /// Repository-relative paths and the SHA-256 the run would observe.
+    pub source_digests: std::collections::BTreeMap<String, String>,
+}
+
+/// The judge's deterministic gate for one pending proposal.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ReverificationGate {
+    /// Why the judge defers the proposal now; `None` means it would ask the
+    /// model.
+    pub current: Option<String>,
+    /// Whether a passing re-verification was previewed.
+    pub previewed: bool,
+    /// With that run attached: why the judge would still defer. `None` with
+    /// `previewed` means it would ask the model.
+    pub if_passing: Option<String>,
+}
+
+/// Files a source task touched, relative to the repository root.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct TaskSourceFiles {
+    pub files: Vec<String>,
+    /// Touched paths that cannot be read in a checkout of this project:
+    /// outside every existing checkout, in a linked repository, or invalid.
+    pub excluded: usize,
+    /// The task touched more files than live verification reads.
+    pub too_many: bool,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VerdictDecision {
@@ -305,8 +338,20 @@ impl JudgeStore {
         Ok(packets)
     }
 
+    fn prepare(&self, config: &JudgeConfig, review: LessonReview) -> Result<JudgePacket> {
+        self.prepare_with(config, review, None)
+    }
+
+    /// Prepare a packet; `hypothetical` is one more evidence record judged as
+    /// if it were attached and in `verified_supporting_evidence`. Only the
+    /// re-verification preview passes one; its packet is never applied.
     #[allow(clippy::too_many_lines)]
-    fn prepare(&self, config: &JudgeConfig, mut review: LessonReview) -> Result<JudgePacket> {
+    fn prepare_with(
+        &self,
+        config: &JudgeConfig,
+        mut review: LessonReview,
+        hypothetical: Option<crate::experience::EvidenceRecord>,
+    ) -> Result<JudgePacket> {
         // Related memories are a set; recency ordering must not change the packet.
         review
             .related_memories
@@ -357,11 +402,21 @@ impl JudgeStore {
         // Existing proposals are limited to 32 evidence IDs. Half of the prompt
         // budget is reserved for the rule, task, relationships and JSON framing.
         let excerpt_budget = config.max_input_bytes / 2 / review.evidence_ids.len().max(1);
-        for id in &review.evidence_ids {
-            match experience.get_evidence(id) {
+        let hypothetical_id = hypothetical.as_ref().map(|record| record.id.clone());
+        let lookups = review
+            .evidence_ids
+            .iter()
+            .map(|id| (id.clone(), experience.get_evidence(id)))
+            .chain(hypothetical.map(|record| (record.id.clone(), Ok(Some(record)))))
+            .collect::<Vec<_>>();
+        for (id, lookup) in lookups {
+            let id = &id;
+            match lookup {
                 Ok(Some(record)) => {
                     let redacted = self.redactor.redact_text(&record.artifact_text);
-                    let otherwise_eligible = eligible.iter().any(|other| other == id.as_str())
+                    let in_view = hypothetical_id.as_ref() == Some(id)
+                        || eligible.iter().any(|other| other == id.as_str());
+                    let otherwise_eligible = in_view
                         && record.project_id == review.project_id
                         && record.task_id.as_ref() == Some(&review.task_id)
                         && record.kind != "user_acceptance"
@@ -710,6 +765,85 @@ impl JudgeStore {
         })
     }
 
+    /// What blocks automatic review of a pending proposal now, and what would
+    /// still block it if one passing re-verification were attached. `passing`
+    /// describes that run; it is judged exactly like recorded evidence with
+    /// [`crate::agenthooks::REVERIFY_SOURCE`] provenance. `None` when the review
+    /// is missing or no longer pending. Reads only; nothing is applied.
+    /// # Errors
+    /// Returns canonical-storage errors.
+    pub fn reverification_gate(
+        &self,
+        config: &JudgeConfig,
+        review_id: &str,
+        passing: Option<&PassingRun>,
+    ) -> Result<Option<ReverificationGate>> {
+        let product = ProductStore::new(self.database.clone(), self.redactor.clone());
+        let Some(review) = product
+            .review_by_id(review_id)?
+            .filter(|review| review.status == "pending")
+        else {
+            return Ok(None);
+        };
+        let current = self.prepare(config, review.clone())?.blocked_reason;
+        let if_passing = passing
+            .map(|run| {
+                let record = crate::experience::EvidenceRecord {
+                    id: EvidenceId::new(),
+                    project_id: review.project_id.clone(),
+                    task_id: Some(review.task_id.clone()),
+                    attempt_id: None,
+                    kind: run.kind.clone(),
+                    strength: crate::experience::EvidenceStrength::Deterministic,
+                    commit_hash: None,
+                    command: Some(run.command.clone()),
+                    exit_code: Some(0),
+                    artifact_digest: String::new(),
+                    artifact_text: "passing re-verification (preview)".to_owned(),
+                    artifact_blob_digest: None,
+                    metadata: json!({"source": crate::agenthooks::REVERIFY_SOURCE,
+                        "source_digests": run.source_digests}),
+                    observed_at_ms: now_ms(),
+                };
+                self.prepare_with(config, review, Some(record))
+                    .map(|packet| packet.blocked_reason)
+            })
+            .transpose()?;
+        Ok(Some(ReverificationGate {
+            current,
+            previewed: passing.is_some(),
+            if_passing: if_passing.flatten(),
+        }))
+    }
+
+    /// The files a task touched in its project's checkouts, as paths relative
+    /// to the repository root, resolved the way the live source check resolves
+    /// them. Paths outside every existing checkout of the project, in linked
+    /// repositories or invalid are counted as excluded.
+    /// # Errors
+    /// Returns canonical-storage errors.
+    pub fn task_source_files(
+        &self,
+        project_id: &crate::ids::ProjectId,
+        task_id: &crate::ids::TaskId,
+    ) -> Result<TaskSourceFiles> {
+        sources::task_source_files(&self.database, project_id, task_id)
+    }
+
+    /// SHA-256 of each path's content at `revision` in the Git checkout
+    /// `root`, through bounded, local-only Git. Paths absent at the revision
+    /// or over the read bounds are left out. `None` when Git did not answer in
+    /// time.
+    #[must_use]
+    pub fn revision_digests(
+        &self,
+        root: &std::path::Path,
+        revision: &str,
+        paths: &[String],
+    ) -> Option<std::collections::BTreeMap<String, String>> {
+        sources::revision_digests(&self.git, root, revision, paths)
+    }
+
     /// Read recent durable decisions, citations, provider usage and retry status.
     /// # Errors
     /// Returns canonical-storage or persisted-JSON errors.
@@ -740,14 +874,18 @@ struct IndexedSource {
 /// recorded exactly that file content beside the verification. Re-indexing
 /// after a commit then keeps a run that tested the same bytes. Evidence from
 /// agents, the CLI or completions carries no hook digests and keeps the time
-/// rule; changed source never matches an older run's digest.
+/// rule; changed source never matches an older run's digest. A
+/// re-verification ran at a commit in a disposable worktree, not in the
+/// checkout that was indexed, so its time says nothing about the indexed
+/// bytes: only its recorded digests count.
 fn observed_indexed_sources(
     record: &crate::experience::EvidenceRecord,
     sources: &[IndexedSource],
 ) -> bool {
     let observed = crate::agenthooks::hook_source_digests(&record.metadata);
+    let by_time = !crate::agenthooks::is_reverification(&record.metadata);
     sources.iter().all(|source| {
-        record.observed_at_ms >= source.indexed_at_ms
+        (by_time && record.observed_at_ms >= source.indexed_at_ms)
             || observed
                 .as_ref()
                 .and_then(|digests| digests.get(&source.path))

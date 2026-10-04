@@ -116,6 +116,8 @@ const API_TOOL_OBSERVATION: &str = "/api/v1/effectiveness/tool";
 const API_VERIFICATION_OBSERVATION: &str = "/api/v1/effectiveness/verification";
 const API_JUDGE_STATUS: &str = "/api/v1/judge";
 const API_JUDGE_RUN: &str = "/api/v1/judge/run";
+const API_REVERIFY_PLAN: &str = "/api/v1/reviews/reverify/plan";
+const API_REVERIFY_ATTACH: &str = "/api/v1/reviews/reverify/attach";
 const API_PROJECT_MERGE: &str = "/api/v1/projects/merge";
 const API_PROJECT_MERGE_FINALIZE: &str = "/api/v1/projects/merge/finalize";
 
@@ -1092,6 +1094,29 @@ impl DaemonClient {
         )
         .await
     }
+
+    /// Plan the re-verification of pending reviews. Reads only.
+    /// # Errors
+    /// Returns an invalid request, storage or transport errors.
+    pub async fn reverify_plan(
+        &self,
+        request: &crate::reverify::PlanRequest,
+    ) -> Result<crate::reverify::Plan> {
+        self.request(hyper::Method::POST, API_REVERIFY_PLAN, Some(request))
+            .await
+    }
+
+    /// Attach recorded re-verification evidence to pending reviews and queue
+    /// a judge pass when the judge is enabled.
+    /// # Errors
+    /// Returns invalid attachments, storage or transport errors.
+    pub async fn reverify_attach(
+        &self,
+        request: &crate::reverify::AttachRequest,
+    ) -> Result<crate::reverify::AttachResult> {
+        self.request(hyper::Method::POST, API_REVERIFY_ATTACH, Some(request))
+            .await
+    }
     #[must_use]
     pub fn new(socket_path: impl Into<PathBuf>, timeout: Duration) -> Self {
         Self {
@@ -2052,6 +2077,8 @@ fn requires_terminal_ack(method: &hyper::Method, path: &str) -> bool {
         || path == API_SKILL_PROMOTE
         || path == API_PROJECT_MERGE
         || path == API_PROJECT_MERGE_FINALIZE
+        || path == API_REVERIFY_PLAN
+        || path == API_REVERIFY_ATTACH
 }
 
 /// Longest a graceful shutdown waits for in-flight requests, the background
@@ -2206,6 +2233,8 @@ where
         )
         .route(API_JUDGE_STATUS, get(judge_status))
         .route(API_JUDGE_RUN, post(judge_run))
+        .route(API_REVERIFY_PLAN, post(reverify_plan))
+        .route(API_REVERIFY_ATTACH, post(reverify_attach))
         .route("/api/v1/product/lessons", post(lesson_mutate))
         .route("/api/v1/product/query", post(product_query))
         .route("/api/v1/product/mutate", post(product_mutate))
@@ -5673,6 +5702,59 @@ async fn judge_run(
     Ok(Json(
         serde_json::json!({"queued":queued,"already_running":!queued}),
     ))
+}
+
+/// Longest a re-verification plan may take: each review's live source check
+/// runs up to twice, with bounded reads each.
+const REVERIFY_PLAN_DEADLINE: Duration = Duration::from_secs(600);
+
+async fn reverify_plan(
+    State(state): State<DaemonState>,
+    Json(request): Json<crate::reverify::PlanRequest>,
+) -> std::result::Result<Json<crate::reverify::Plan>, ApiError> {
+    let database = state.database.clone();
+    let redactor = state.redactor.clone();
+    let judge = state.config.judge.clone();
+    let deadline =
+        Duration::from_millis(state.config.daemon.request_timeout_ms).max(REVERIFY_PLAN_DEADLINE);
+    Ok(Json(
+        run_blocking_with_timeout(&state, deadline, move || {
+            crate::reverify::plan(&database, &redactor, &judge, &request)
+        })
+        .await?,
+    ))
+}
+
+async fn reverify_attach(
+    State(state): State<DaemonState>,
+    Json(request): Json<crate::reverify::AttachRequest>,
+) -> std::result::Result<Json<crate::reverify::AttachResult>, ApiError> {
+    let store = crate::product::ProductStore::new(state.database.clone(), state.redactor.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::Interactive, move || {
+            request
+                .attachments
+                .iter()
+                .map(|attachment| {
+                    store
+                        .attach_reverified_evidence(&attachment.review_id, &attachment.evidence_ids)
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    let reviews = wait_for_mutation(&state, handle).await?;
+    // The changed evidence makes each proposal's packet new, so the next pass
+    // judges it again. Start one now when the judge runs.
+    let judge_enabled = state.config.judge.enabled;
+    let judge_queued = judge_enabled
+        && admit_work(&state, MutationPriority::BackgroundLearning).is_ok()
+        && spawn_judge_pass(state);
+    Ok(Json(crate::reverify::AttachResult {
+        reviews,
+        judge_enabled,
+        judge_queued,
+    }))
 }
 
 fn spawn_judge_pass(state: DaemonState) -> bool {

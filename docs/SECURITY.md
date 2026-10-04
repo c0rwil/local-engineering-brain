@@ -147,6 +147,42 @@ unchanged. The proxy accepts only loopback binds. A non-loopback browser bind,
 such as a team server, keeps requiring the bearer token and does not check
 `Host`.
 
+## Re-verification runs recorded commands
+
+`engram review reverify --yes` executes command text that agents recorded as
+verification. That text came from agent sessions, so it can be wrong or planted.
+The trust model:
+
+- **Explicit, never automatic.** The daemon plans and never executes anything.
+  Commands run only in the CLI process of the person who passes `--yes`, with
+  that person's environment and permissions. No job or hook starts a re-run.
+- **You trust the repository's code at HEAD.** A test suite runs the
+  repository's code, build scripts and fixtures, as when you run the tests
+  yourself. Re-verify only repositories whose current HEAD you would test by
+  hand.
+- **The command text is constrained**, because that is the part an agent
+  session could plant. Only plain verification commands run: every step is a
+  recognized test, lint, type-check or build command, or a fixed set of setup
+  steps. The injection screen, redacted text, expansions (`$`, backquotes,
+  `<(`), network tools and non-loopback URLs, remote Git, package installs,
+  destructive or privileged programs, file redirections and paths outside the
+  disposable checkout are refused. The plan lists each refusal with its
+  reason, and the CLI screens each command again right before it runs.
+- **Isolation is limited.** Commands run in a disposable worktree of the
+  primary checkout at HEAD, never in your checkout, and the worktree is removed
+  afterwards. Repository hooks and LFS downloads are off while it is created.
+  The command itself runs as you without a sandbox: if the repository's code
+  reads your files, uses the network or writes elsewhere, it can. `nice`
+  lowers its priority, a timeout stops its whole process group, and only a
+  bounded output tail is kept.
+- **Provenance is auditable, not a boundary.** Only the hook endpoint attaches
+  the `engram-reverify` label and its digests, and the attach endpoint accepts
+  only labeled evidence from the proposal's own source task. Any process
+  running as you can reach both endpoints (see the threat model above).
+- **Failures stay failures.** A failing re-run is recorded and attached as a
+  failure, including one caused by files the clean checkout lacks, such as a
+  virtualenv. It never supports a lesson; the proposal stays deferred.
+
 ## False positives
 
 Measured on 2026-10-04:

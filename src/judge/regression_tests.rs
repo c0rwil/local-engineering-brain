@@ -955,6 +955,22 @@ impl Lab {
     /// Replace a review's evidence with one hook-observed verification whose
     /// hook-only provenance recorded these checkout-relative source digests.
     fn hook_evidence(&self, review: &str, revision: Option<&str>, digests: &[(&str, &[u8])]) {
+        self.labeled_evidence(
+            review,
+            revision,
+            crate::agenthooks::CLAUDE_HOOK_SOURCE,
+            digests,
+        );
+    }
+
+    /// [`Self::hook_evidence`] with any provenance label.
+    fn labeled_evidence(
+        &self,
+        review: &str,
+        revision: Option<&str>,
+        source: &str,
+        digests: &[(&str, &[u8])],
+    ) {
         let task: String = self
             .database
             .with_reader(|c| {
@@ -969,7 +985,7 @@ impl Lab {
             .iter()
             .map(|(path, bytes)| ((*path).to_owned(), json!(crate::experience::sha256(bytes))))
             .collect();
-        let metadata = json!({"source": crate::agenthooks::CLAUDE_HOOK_SOURCE,
+        let metadata = json!({"source": source,
             "exit_status": "success_event", "source_digests": digests});
         let record = ExperienceStore::new(self.database.clone())
             .record_evidence(
@@ -1103,6 +1119,103 @@ fn unindexed_files_without_matching_hook_digests_stay_deferred() {
     assert_eq!(
         lab.packet(&review).blocked_reason.as_deref(),
         Some(sources::NOT_INDEXED)
+    );
+}
+
+const NO_EVIDENCE: &str =
+    "No readable, independently verified evidence from the successful source task";
+
+/// A re-verification certifies touched files through its recorded digests,
+/// exactly where native hook digests do, and never through the time rule: it
+/// ran at a commit in a disposable worktree, not in the indexed checkout.
+#[test]
+fn reverification_evidence_certifies_files_only_by_matching_digests() {
+    use crate::agenthooks::{CLAUDE_HOOK_SOURCE, REVERIFY_SOURCE};
+    let lab = Lab::new(false);
+    std::fs::create_dir_all(lab.root.join("deploy")).expect("deploy");
+    std::fs::write(lab.root.join("deploy/app.yml"), CONFIG).expect("config");
+    let touched = || vec!["src/auth.rs".to_owned(), "deploy/app.yml".to_owned()];
+    let matching: &[(&str, &[u8])] = &[("src/auth.rs", SOURCE), ("deploy/app.yml", CONFIG)];
+    let reverified = lab.complete(touched(), None, false, CLAIM);
+    lab.labeled_evidence(&reverified, None, REVERIFY_SOURCE, matching);
+    assert!(
+        lab.packet(&reverified).blocked_reason.is_none(),
+        "matching digests certify indexed and unindexed files"
+    );
+    // A stale digest of the indexed file: a hook run recorded after the index
+    // still qualifies by time; a re-verification does not.
+    let stale: &[(&str, &[u8])] = &[
+        ("src/auth.rs", b"fn old() {}\n"),
+        ("deploy/app.yml", CONFIG),
+    ];
+    let hooked = lab.complete(touched(), None, false, CLAIM);
+    lab.labeled_evidence(&hooked, None, CLAUDE_HOOK_SOURCE, stale);
+    assert!(lab.packet(&hooked).blocked_reason.is_none());
+    let outdated = lab.complete(touched(), None, false, CLAIM);
+    lab.labeled_evidence(&outdated, None, REVERIFY_SOURCE, stale);
+    assert_eq!(
+        lab.packet(&outdated).blocked_reason.as_deref(),
+        Some(NO_EVIDENCE)
+    );
+    // An unindexed file follows the hook rule: its digest must match live.
+    let changed = lab.complete(touched(), None, false, CLAIM);
+    lab.labeled_evidence(
+        &changed,
+        None,
+        REVERIFY_SOURCE,
+        &[("src/auth.rs", SOURCE), ("deploy/app.yml", b"retries: 1\n")],
+    );
+    assert_eq!(
+        lab.packet(&changed).blocked_reason.as_deref(),
+        Some(sources::UNANCHORED_CHANGED)
+    );
+    // Any other label carries no digests the judge reads.
+    let unknown = lab.complete(touched(), None, false, CLAIM);
+    lab.labeled_evidence(&unknown, None, "engram-reverify-copy", matching);
+    assert_eq!(
+        lab.packet(&unknown).blocked_reason.as_deref(),
+        Some(sources::UNANCHORED_UNOBSERVED)
+    );
+}
+
+/// The re-verification preview judges a hypothetical passing run exactly
+/// like recorded evidence and changes nothing.
+#[test]
+fn the_reverification_preview_applies_the_recorded_evidence_rules() {
+    let lab = Lab::new(false);
+    let review = lab.complete(vec!["src/auth.rs".to_owned()], None, false, CLAIM);
+    let run = |bytes: &[u8]| PassingRun {
+        kind: "test_result".to_owned(),
+        command: "cargo test rejects_missing_token".to_owned(),
+        source_digests: std::collections::BTreeMap::from([(
+            "src/auth.rs".to_owned(),
+            crate::experience::sha256(bytes),
+        )]),
+    };
+    let gate = |passing: Option<&PassingRun>| {
+        lab.store
+            .reverification_gate(&lab.config, &review, passing)
+            .expect("gate")
+            .expect("pending review")
+    };
+    let passing = gate(Some(&run(SOURCE)));
+    assert_eq!(passing.current.as_deref(), Some(NO_EVIDENCE));
+    assert!(passing.previewed && passing.if_passing.is_none());
+    let stale = gate(Some(&run(b"fn old() {}\n")));
+    assert_eq!(stale.if_passing.as_deref(), Some(NO_EVIDENCE));
+    let unpreviewed = gate(None);
+    assert!(!unpreviewed.previewed && unpreviewed.if_passing.is_none());
+    assert_eq!(lab.judgments(), 0);
+    let evidence: i64 = lab
+        .database
+        .with_reader(|c| Ok(c.query_row("SELECT COUNT(*) FROM evidence", [], |r| r.get(0))?))
+        .expect("count");
+    assert_eq!(evidence, 0, "the preview records nothing");
+    assert!(
+        lab.store
+            .reverification_gate(&lab.config, "review_missing", None)
+            .expect("gate")
+            .is_none()
     );
 }
 

@@ -61,6 +61,37 @@ enum JudgeAction {
 }
 
 #[derive(Debug, Subcommand)]
+enum ReviewAction {
+    /// Run the verification commands recorded on pending reviews' source
+    /// tasks again, in a disposable worktree at the primary checkout's HEAD,
+    /// record the results with re-verification provenance and queue the
+    /// reviews for the judge. Without --yes this only prints the plan.
+    Reverify {
+        /// Pending review ids.
+        #[arg(value_name = "REVIEW_ID", conflicts_with = "all")]
+        reviews: Vec<String>,
+        /// Every pending review (of --project when given).
+        #[arg(long)]
+        all: bool,
+        /// Limit --all to one project, by path or id.
+        #[arg(long, value_name = "PATH_OR_ID", requires = "all")]
+        project: Option<String>,
+        /// Print the plan and run nothing (also the behaviour without --yes).
+        #[arg(long, conflicts_with = "yes")]
+        dry_run: bool,
+        /// Run the planned commands and record their results.
+        #[arg(long)]
+        yes: bool,
+        /// Wall time per command, in seconds.
+        #[arg(long, default_value_t = engram::reverify::DEFAULT_TIMEOUT_SECS,
+            value_parser = clap::value_parser!(u64).range(1..=86_400))]
+        timeout_secs: u64,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum Commands {
     /// Inspect durable usage, context delivery, and learning coverage.
     Effectiveness {
@@ -83,6 +114,11 @@ enum Commands {
     Judge {
         #[command(subcommand)]
         action: JudgeAction,
+    },
+    /// Act on pending lesson reviews.
+    Review {
+        #[command(subcommand)]
+        action: ReviewAction,
     },
     /// Check configuration, canonical storage, and local-only safety defaults.
     Doctor {
@@ -948,6 +984,7 @@ fn run(cli: Cli) -> Result<bool> {
             println!("{}", serde_json::to_string_pretty(&value)?);
             Ok(true)
         }
+        Commands::Review { action } => run_review(&overrides, socket_override.as_deref(), action),
         Commands::Product { action } => {
             run_product(&overrides, socket_override.as_deref(), &action)
         }
@@ -4836,6 +4873,84 @@ fn run_metrics(overrides: &ConfigOverrides, socket: Option<&Path>, json: bool) -
             "  neighbor entries/bytes {}/{}",
             cache.neighbors.entries, cache.neighbors.weighted_bytes
         );
+    }
+    Ok(true)
+}
+
+/// Plan, and with `--yes` run, the re-verification of pending reviews. The
+/// daemon plans (it reads only); this process runs the commands with the
+/// operator's own environment and records their results through the daemon.
+fn run_review(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    action: ReviewAction,
+) -> Result<bool> {
+    let ReviewAction::Reverify {
+        reviews,
+        all,
+        project,
+        dry_run,
+        yes,
+        timeout_secs,
+        json,
+    } = action;
+    let config = load_daemon_config(overrides, socket, None)?;
+    let client = client(&config);
+    // A project id names the project directly; anything else is a path.
+    let project_id = match project {
+        None => None,
+        Some(value) => Some(if let Ok(id) = engram::ids::ProjectId::parse(&value) {
+            id
+        } else {
+            let path = Path::new(&value)
+                .canonicalize()
+                .map_err(|source| engram::error::io_error_for_cli(Path::new(&value), source))?;
+            block_on(client.lookup_project(&path))?
+                .project
+                .map(|project| project.id)
+                .ok_or_else(|| {
+                    engram::Error::Config(format!("`{value}` is not a tracked project"))
+                })?
+        }),
+    };
+    let plan = block_on(client.reverify_plan(&engram::reverify::PlanRequest {
+        review_ids: reviews,
+        project_id,
+        all,
+    }))?;
+    if !yes {
+        if json {
+            println!("{}", serde_json::to_string_pretty(&plan)?);
+        } else {
+            for line in plan.lines() {
+                println!("{line}");
+            }
+            if !dry_run {
+                println!(
+                    "\nNothing ran. Re-run with --yes to run the {} planned commands.",
+                    plan.summary.runs
+                );
+            }
+        }
+        return Ok(true);
+    }
+    let execution = engram::reverify::execute(
+        &plan,
+        Duration::from_secs(timeout_secs),
+        &mut |request| block_on(client.record_hook_evidence(request)).map(|evidence| evidence.id),
+        &mut |request| block_on(client.reverify_attach(request)),
+    );
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &serde_json::json!({"plan": plan, "execution": execution})
+            )?
+        );
+    } else {
+        for line in execution.lines() {
+            println!("{line}");
+        }
     }
     Ok(true)
 }

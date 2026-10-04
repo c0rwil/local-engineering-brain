@@ -572,6 +572,98 @@ fn completion_attaches_the_latest_hook_run_per_command_beside_the_agents_copy() 
     );
 }
 
+/// Re-verified evidence reaches a pending proposal only from its own source
+/// task and only with the re-verification label; the update makes the
+/// proposal's judge packet new.
+#[test]
+fn reverified_evidence_attaches_only_from_the_source_task_with_its_label() {
+    let f = Fixture::new();
+    let experience = ExperienceStore::new(f.database.clone());
+    let project = f.project.project.id.clone();
+    let complete = |prompt: &str| {
+        let task = experience.start_task(&project, prompt, None).unwrap();
+        let completion: Completion = serde_json::from_value(
+            json!({"task_id":task.id,"outcome":"success","summary":"run returns 2",
+            "lessons":[{"claim":format!("{prompt} returns 2"),"rationale":"observed"}]}),
+        )
+        .unwrap();
+        let review = f.store.complete(&completion).unwrap().reviews[0].clone();
+        (task, review)
+    };
+    let (task, review) = complete("run");
+    let (other_task, _) = complete("other");
+    let record = |task: &crate::ids::TaskId, source: &str| {
+        experience
+            .record_evidence(
+                &project,
+                Some(task),
+                None,
+                "test_result",
+                EvidenceStrength::Deterministic,
+                None,
+                Some("cargo test"),
+                Some(0),
+                b"test result: ok. 1 passed",
+                &json!({"source": source}),
+            )
+            .unwrap()
+            .id
+    };
+    let reverified = record(&task.id, crate::agenthooks::REVERIFY_SOURCE);
+    let attached = f
+        .store
+        .attach_reverified_evidence(&review.id, &[reverified.clone(), reverified.clone()])
+        .unwrap();
+    assert_eq!(attached.evidence_ids, vec![reverified.clone()]);
+    assert!(attached.updated_at_ms > review.updated_at_ms);
+    // Attaching the same record again changes nothing.
+    let again = f
+        .store
+        .attach_reverified_evidence(&review.id, std::slice::from_ref(&reverified))
+        .unwrap();
+    assert_eq!(again.updated_at_ms, attached.updated_at_ms);
+    for (evidence, why) in [
+        (
+            record(&task.id, crate::agenthooks::CLAUDE_HOOK_SOURCE),
+            "another label",
+        ),
+        (
+            record(&other_task.id, crate::agenthooks::REVERIFY_SOURCE),
+            "another task",
+        ),
+    ] {
+        assert!(
+            f.store
+                .attach_reverified_evidence(&review.id, &[evidence])
+                .is_err(),
+            "{why}"
+        );
+    }
+    assert!(
+        f.store
+            .attach_reverified_evidence("review_missing", std::slice::from_ref(&reverified))
+            .is_err()
+    );
+    let full: Vec<_> = (0..32)
+        .map(|_| record(&task.id, crate::agenthooks::REVERIFY_SOURCE))
+        .collect();
+    assert!(
+        f.store
+            .attach_reverified_evidence(&review.id, &full)
+            .is_err(),
+        "a proposal keeps at most 32 evidence ids"
+    );
+    assert_eq!(
+        f.store
+            .review_by_id(&review.id)
+            .unwrap()
+            .unwrap()
+            .evidence_ids,
+        vec![reverified],
+        "a refused attachment changes nothing"
+    );
+}
+
 #[test]
 fn rejected_duplicates_stay_rejected_and_reverification_renews_expiry() {
     let f = Fixture::new();

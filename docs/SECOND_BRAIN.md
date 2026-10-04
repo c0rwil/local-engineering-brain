@@ -299,6 +299,29 @@ so these tasks stay deferred until a native hook records a verification. A diges
 that no longer matches means the file changed after the verification. Files in
 linked repositories still need an index anchor.
 
+### Re-verification evidence
+
+An operator can run a stalled proposal's recorded verification commands again
+with `engram review reverify` (see the
+[user guide](USER_GUIDE.md#re-verify-stalled-reviews)). The results carry the
+`engram-reverify` label and the SHA-256 of the touched files, read in a
+disposable worktree at the primary checkout's HEAD. The judge reads these
+digests exactly where it reads native hook digests. It never applies the time
+rule to them, because the run tested a commit, not the indexed checkout. The
+commit is kept in `metadata.head`; `commit_hash` stays empty, so a task that
+finished at an earlier commit keeps the evidence as support. Codex hook
+evidence whose status came from the rollout (`exit_status: "codex_rollout"`)
+keeps the native-hook rules. Only the hook endpoint can attach the
+re-verification label; client metadata loses it. A failing re-run is attached
+like any observation and never supports a lesson.
+
+The plan endpoint, `POST /api/v1/reviews/reverify/plan`, reads only. It
+previews the judge's deterministic gate with a hypothetical passing run.
+`POST /api/v1/reviews/reverify/attach` attaches labeled evidence from a
+proposal's own source task, at most 32 evidence IDs per proposal, and starts a
+judge pass when the judge is enabled. The scheduled `evidence_reverify` job is
+unrelated: it runs no commands.
+
 A recorded task or evidence revision older than the live HEAD is immaterial when
 every touched file has the same bytes at that revision, in the live checkout and in
 the index. The judge compares them with one bounded `git cat-file --batch` read and

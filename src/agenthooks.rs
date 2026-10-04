@@ -43,9 +43,21 @@ use crate::ids::{ProjectId, TaskId};
 pub const CLAUDE_HOOK_SOURCE: &str = "claude-code-hook";
 pub const CODEX_HOOK_SOURCE: &str = "codex-hook";
 pub const CURSOR_HOOK_SOURCE: &str = "cursor-hook";
+/// Evidence `metadata.source` of an operator-initiated re-verification
+/// (`engram review reverify`): a recorded verification run again in a
+/// disposable worktree at a commit, with digests of the files read there.
+pub const REVERIFY_SOURCE: &str = "engram-reverify";
+/// Labels whose source digests the judge accepts. Only the hook endpoint can
+/// attach them; client metadata loses them.
+const DIGEST_SOURCES: [&str; 4] = [
+    CLAUDE_HOOK_SOURCE,
+    CODEX_HOOK_SOURCE,
+    CURSOR_HOOK_SOURCE,
+    REVERIFY_SOURCE,
+];
 /// Verification output kept as the artifact. Runner summaries are at the end,
 /// so longer output keeps its tail.
-const VERIFICATION_EXCERPT_BYTES: usize = 4_096;
+pub(crate) const VERIFICATION_EXCERPT_BYTES: usize = 4_096;
 /// Bounds for the source digests recorded beside one verification.
 const SOURCE_DIGEST_FILES: usize = 64;
 const SOURCE_DIGEST_FILE_BYTES: u64 = 512 * 1024;
@@ -1337,7 +1349,7 @@ impl StatusHidden {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ShellOperator {
+pub(crate) enum ShellOperator {
     And,
     Or,
     Sequence,
@@ -1471,7 +1483,7 @@ fn pipefail_before(commands: &ShellCommands, start: usize) -> bool {
 /// `set -euo pipefail`, zsh `setopt pipe_fail`), `Some(false)` when it
 /// disables it (`set +o pipefail`, `setopt no_pipe_fail`, `unsetopt
 /// pipefail`).
-fn pipefail_setting(command: &str) -> Option<bool> {
+pub(crate) fn pipefail_setting(command: &str) -> Option<bool> {
     let option =
         |name: &str, enable: bool| match name.replace('_', "").to_ascii_lowercase().as_str() {
             "pipefail" => Some(enable),
@@ -1569,7 +1581,7 @@ fn leading_directory_changes(commands: &ShellCommands) -> Option<Vec<String>> {
 
 /// How one simple command can change the shell's working directory.
 #[derive(Debug, PartialEq, Eq)]
-enum DirectoryChange {
+pub(crate) enum DirectoryChange {
     /// The command leaves the directory alone.
     Unchanged,
     /// `cd`/`pushd` to a static target.
@@ -1579,7 +1591,7 @@ enum DirectoryChange {
     Unmodeled,
 }
 
-fn directory_change(command: &str) -> DirectoryChange {
+pub(crate) fn directory_change(command: &str) -> DirectoryChange {
     let raw: Vec<&str> = command
         .split_whitespace()
         .skip_while(|token| token.contains('=') && !token.starts_with('/'))
@@ -2048,7 +2060,7 @@ impl ShellScanner<'_> {
 }
 
 /// Top-level simple commands of shell text, each with the operator after it.
-fn shell_commands(text: &str) -> Option<Vec<(String, Option<ShellOperator>)>> {
+pub(crate) fn shell_commands(text: &str) -> Option<Vec<(String, Option<ShellOperator>)>> {
     let mut scanner = ShellScanner {
         chars: text.chars().peekable(),
         current: String::new(),
@@ -2235,7 +2247,7 @@ pub fn verification_output(payload: &serde_json::Value) -> String {
 }
 
 /// Keep the end of long output, where runners print their verdicts.
-fn bounded_tail(text: &str, limit: usize) -> String {
+pub(crate) fn bounded_tail(text: &str, limit: usize) -> String {
     if text.len() <= limit {
         return text.to_owned();
     }
@@ -2301,14 +2313,16 @@ pub fn source_digests(root: &Path, candidates: &[String]) -> (BTreeMap<String, S
     (digests, truncated)
 }
 
-/// Source digests a native hook recorded beside its verification. Evidence
-/// reported by agents, the CLI or completions never qualifies.
+/// Source digests a native hook, or an operator-initiated re-verification,
+/// recorded beside its verification. Evidence reported by agents, the CLI or
+/// completions never qualifies.
 #[must_use]
 pub fn hook_source_digests(metadata: &serde_json::Value) -> Option<BTreeMap<String, String>> {
-    if !matches!(
-        metadata.get("source").and_then(serde_json::Value::as_str),
-        Some(CLAUDE_HOOK_SOURCE | CODEX_HOOK_SOURCE | CURSOR_HOOK_SOURCE)
-    ) {
+    if !metadata
+        .get("source")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|source| DIGEST_SOURCES.contains(&source))
+    {
         return None;
     }
     let digests = metadata.get("source_digests")?.as_object()?;
@@ -2339,11 +2353,20 @@ pub struct HookProvenance {
     pub source_digests_truncated: bool,
 }
 
-/// Metadata as stored. Client-supplied metadata loses the reserved hook keys
-/// (a `source` ending in `-hook`, `source_digests`); hook-endpoint
-/// `provenance` with a known hook label adds them back. This prevents
-/// accidental forgery by the CLI, MCP or other clients. It is not a security
-/// boundary: any process of the same user can reach the hook endpoint.
+/// Whether evidence came from an operator-initiated re-verification. Such a
+/// run tested a commit in a disposable worktree, not the live checkout, so
+/// only its recorded digests say which bytes it observed.
+#[must_use]
+pub fn is_reverification(metadata: &serde_json::Value) -> bool {
+    metadata.get("source").and_then(serde_json::Value::as_str) == Some(REVERIFY_SOURCE)
+}
+
+/// Metadata as stored. Client-supplied metadata loses the reserved keys (a
+/// `source` ending in `-hook` or equal to [`REVERIFY_SOURCE`], and
+/// `source_digests`); hook-endpoint `provenance` with a known label adds them
+/// back. This prevents accidental forgery by the CLI, MCP or other clients.
+/// It is not a security boundary: any process of the same user can reach the
+/// hook endpoint.
 #[must_use]
 pub fn evidence_metadata(
     metadata: serde_json::Value,
@@ -2355,19 +2378,16 @@ pub fn evidence_metadata(
         if fields
             .get("source")
             .and_then(Value::as_str)
-            .is_some_and(|source| source.ends_with("-hook"))
+            .is_some_and(|source| source.ends_with("-hook") || source == REVERIFY_SOURCE)
         {
             fields.remove("source");
         }
         fields.remove("source_digests");
         fields.remove("source_digests_truncated");
     }
-    let Some(provenance) = provenance.filter(|provenance| {
-        matches!(
-            provenance.source.as_str(),
-            CLAUDE_HOOK_SOURCE | CODEX_HOOK_SOURCE | CURSOR_HOOK_SOURCE
-        )
-    }) else {
+    let Some(provenance) =
+        provenance.filter(|provenance| DIGEST_SOURCES.contains(&provenance.source.as_str()))
+    else {
         return metadata;
     };
     if !metadata.is_object() {
@@ -4097,6 +4117,42 @@ mod tests {
             ..provenance
         };
         assert!(hook_source_digests(&evidence_metadata(forged, Some(&unknown))).is_none());
+    }
+
+    /// The re-verification label is reserved like the hook labels: client
+    /// metadata loses it, and only hook-endpoint provenance attaches it with
+    /// digests the judge reads.
+    #[test]
+    fn the_reverification_label_is_reserved_for_hook_provenance() {
+        use serde_json::json;
+        let digest = "b".repeat(64);
+        let forged = json!({"source":REVERIFY_SOURCE,"source_digests":{"lib.rs":digest},
+            "note":"kept"});
+        let stored = evidence_metadata(forged, None);
+        assert_eq!(stored, json!({"note":"kept"}));
+        assert!(!is_reverification(&stored));
+        assert!(hook_source_digests(&stored).is_none());
+        let provenance = HookProvenance {
+            source: REVERIFY_SOURCE.to_owned(),
+            source_digests: BTreeMap::from([("lib.rs".to_owned(), digest.clone())]),
+            source_digests_truncated: true,
+        };
+        let reverified = evidence_metadata(json!({"head":"c0ffee"}), Some(&provenance));
+        assert_eq!(reverified["source"], REVERIFY_SOURCE);
+        assert_eq!(reverified["source_digests_truncated"], true);
+        assert!(is_reverification(&reverified));
+        assert_eq!(
+            hook_source_digests(&reverified),
+            Some(BTreeMap::from([("lib.rs".to_owned(), digest)]))
+        );
+        let hooked = evidence_metadata(
+            json!({}),
+            Some(&HookProvenance {
+                source: CLAUDE_HOOK_SOURCE.to_owned(),
+                ..provenance
+            }),
+        );
+        assert!(!is_reverification(&hooked));
     }
 
     /// Item 7: only an unconditional statement enables pipefail, and every

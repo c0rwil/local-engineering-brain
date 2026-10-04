@@ -353,6 +353,67 @@ impl ProductStore {
         Ok(Some(review))
     }
 
+    /// Attach operator-initiated re-verification evidence to a pending
+    /// proposal so the judge reviews it again. Each record must come from the
+    /// proposal's source task and project and carry the
+    /// [`crate::agenthooks::REVERIFY_SOURCE`] label, which only the hook
+    /// endpoint can set. Ids already attached are kept once. A proposal keeps
+    /// at most 32 evidence ids.
+    /// # Errors
+    /// Returns a missing or decided review, foreign or unlabeled evidence, a
+    /// full evidence list, or storage errors.
+    pub fn attach_reverified_evidence(
+        &self,
+        review_id: &str,
+        evidence_ids: &[EvidenceId],
+    ) -> Result<LessonReview> {
+        let now = now_ms();
+        self.database.write_immediate(|tx| {
+            let (task, project, status, raw): (String, String, String, String) = tx
+                .query_row(
+                    "SELECT task_id,project_id,status,evidence_ids_json FROM lesson_reviews WHERE id=?1",
+                    [review_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()?
+                .ok_or_else(|| invalid("review not found"))?;
+            if status != "pending" {
+                return Err(invalid("only a pending review can receive re-verified evidence"));
+            }
+            let mut ids: Vec<EvidenceId> = serde_json::from_str(&raw)?;
+            for id in evidence_ids {
+                let labeled: bool = tx
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM evidence WHERE id=?1 AND task_id=?2 AND project_id=?3
+                         AND json_extract(metadata_json,'$.source')=?4)",
+                        params![id.as_str(), task, project, crate::agenthooks::REVERIFY_SOURCE],
+                        |row| row.get(0),
+                    )?;
+                if !labeled {
+                    return Err(invalid(
+                        "re-verified evidence must come from the review's source task and carry the re-verification label",
+                    ));
+                }
+                if !ids.contains(id) {
+                    ids.push(id.clone());
+                }
+            }
+            if ids.len() > 32 {
+                return Err(invalid("a review keeps at most 32 evidence ids"));
+            }
+            let merged = serde_json::to_string(&ids)?;
+            if merged != raw {
+                tx.execute(
+                    "UPDATE lesson_reviews SET evidence_ids_json=?2,updated_at_ms=MAX(updated_at_ms+1,?3) WHERE id=?1",
+                    params![review_id, merged, now],
+                )?;
+            }
+            Ok(())
+        })?;
+        self.review_by_id(review_id)?
+            .ok_or_else(|| invalid("review not found"))
+    }
+
     /// Read one bounded page of pending identities in stable oldest-first order.
     /// The caller may continue after the last `(updated_at_ms, id)` key.
     /// # Errors
