@@ -15,8 +15,8 @@ path, ever.
 | Full test suite | `cargo test --all-targets --all-features` |
 | Release build | `cargo build --release --locked` |
 | Install everything | `sh scripts/install.sh` (versioned releases under `~/.local/share/engram`, symlinks in `~/.local/bin`) |
-| Daemon status / stop | `engram daemon status --json` / `engram daemon stop` |
-| Diagnostics | `engram doctor --json` |
+| Daemon status / stop / restart | `engram daemon status --json` / `engram daemon stop` / `engram daemon restart` (new daemon inherits this terminal's env and macOS folder access) |
+| Diagnostics | `engram doctor --json` (daemon-side `checkout_access` and `project_identity`; CLI-side `codex_hooks` trust) |
 | Index a repo | `engram index <path> --json` (local tree; add `--origin` for fetched origin/main via throwaway worktree) |
 | Compile context | `engram context "<query>" --path <repo> --budget N --json` |
 | Auto-freshness | daemon watcher re-indexes on commits/branch switches (`[watch]`, local 30s / origin 900s; committed HEADs only) |
@@ -100,6 +100,24 @@ protection), so bump-and-reinstall order matters: build, install, restart
   replacement; keep that wait if you touch the test.
 - `mtplx` subcommands: `pull`/`models` accept `--cache-dir`; `inspect` does
   not (it reads the default cache). `mtplx validate` does not exist.
+- An auto-started `engramd` inherits macOS privacy (TCC) access from the app
+  whose hook or client started it (`engram daemon status` shows the chain).
+  Without access to `~/Documents` it could stat but not read checkouts there,
+  and Git failures read as "no Git", so registrations made in that state
+  recorded no remote or root commit (both projects registered for this
+  repository lack them). Unreadable checkouts are now `AccessDenied`
+  errors (`permission_denied` API code) and `checkout_access` fails in
+  `engram doctor`; `engram daemon restart` from a terminal fixes it. Missing
+  remote/root identity is backfilled once Git is readable (never the remote
+  while another project could be the same repository).
+- Codex runs `$CODEX_HOME/hooks.json` handlers only after `/hooks` trust,
+  stored as `[hooks.state."<canonical CODEX_HOME>/hooks.json:<event_snake>:<group>:<handler>"]
+  trusted_hash = "sha256:…"` (rule in `src/codex_trust.rs`, verified against
+  Codex CLI 0.155.0-alpha.2.6 via its app-server `hooks/list`).
+- `project_aliases.path` is UNIQUE across projects: re-pinning a registered
+  checkout's `project.toml` to another existing id makes that checkout fail to
+  resolve. There is no merge command yet (USER_GUIDE "Duplicate project
+  registrations").
 - Project identity: repos with only LOCAL-path remotes mint a NEW project id
   per clone unless `.engram/project.toml` travels with the checkout (an
   independent template repo and a clone are indistinguishable by content, so

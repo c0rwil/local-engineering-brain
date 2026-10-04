@@ -15,11 +15,108 @@ fn doctor_json_reports_healthy_database() {
     let db = temp.path().join("brain.sqlite");
     let mut command = AssertCommand::cargo_bin("engram").expect("engram binary");
     command
+        .env("CODEX_HOME", temp.path().join("codex"))
         .args(["--db", db.to_str().unwrap(), "doctor", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"ok\": true"))
         .stdout(predicate::str::contains("sqlite_integrity"));
+}
+
+#[test]
+fn doctor_warns_when_codex_has_not_trusted_engram_hooks() {
+    let temp = TempDir::new().expect("temp dir");
+    let db = temp.path().join("brain.sqlite");
+    let codex = temp.path().join("codex");
+    fs::create_dir_all(&codex).expect("codex home");
+    fs::write(
+        codex.join("hooks.json"),
+        serde_json::json!({"hooks": {"SessionStart": [{"hooks": [{
+            "type": "command",
+            "command": "'/opt/example/bin/engram' hook session-start --codex",
+            "timeout": 15
+        }]}]}})
+        .to_string(),
+    )
+    .expect("hooks.json");
+    let output = AssertCommand::cargo_bin("engram")
+        .expect("engram binary")
+        .env("CODEX_HOME", &codex)
+        .args(["--db", db.to_str().unwrap(), "doctor", "--json"])
+        .output()
+        .expect("doctor");
+    assert!(output.status.success(), "a warning keeps doctor healthy");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+    let codex_check = report["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["name"] == "codex_hooks")
+        .expect("codex_hooks check");
+    assert_eq!(codex_check["status"], "warning", "{codex_check}");
+    assert!(
+        codex_check["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("never trusted: session_start")),
+        "{codex_check}"
+    );
+}
+
+#[test]
+fn daemon_restart_replaces_the_daemon_from_this_process() {
+    let temp = TempDir::new().expect("temp dir");
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).expect("project");
+    let db = temp.path().join("brain.sqlite");
+    let socket = temp.path().join("engramd.sock");
+    let engram = |args: &[&str]| {
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+            .args([
+                "--db",
+                db.to_str().unwrap(),
+                "--socket",
+                socket.to_str().unwrap(),
+            ])
+            .args(args)
+            .output()
+            .expect("run engram");
+        assert_process_success(&output);
+        String::from_utf8(output.stdout).expect("utf8")
+    };
+    // Auto-start the first daemon, then replace it.
+    engram(&["status", project.to_str().unwrap()]);
+    let before: serde_json::Value =
+        serde_json::from_str(&engram(&["daemon", "status", "--json"])).expect("status json");
+    let first_pid = before["pid"].as_u64().expect("daemon reports its pid");
+    assert!(
+        before["launcher"]
+            .as_str()
+            .is_some_and(|launcher| launcher.contains("status")),
+        "{before}"
+    );
+
+    let restarted: serde_json::Value =
+        serde_json::from_str(&engram(&["daemon", "restart", "--json"])).expect("restart json");
+    assert_eq!(restarted["stopped_previous"], true, "{restarted}");
+    assert_eq!(restarted["previous_pid"].as_u64(), Some(first_pid));
+    let second_pid = restarted["pid"].as_u64().expect("new pid");
+    assert_ne!(second_pid, first_pid, "{restarted}");
+    assert_eq!(restarted["started_by_this_process"], true, "{restarted}");
+    assert!(
+        restarted["launcher"]
+            .as_str()
+            .is_some_and(|launcher| launcher.contains("daemon restart")),
+        "{restarted}"
+    );
+    // The replacement serves the same database.
+    engram(&["status", project.to_str().unwrap()]);
+
+    engram(&["daemon", "stop"]);
+    let shutdown_deadline = Instant::now() + Duration::from_secs(10);
+    while socket.exists() && Instant::now() < shutdown_deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!socket.exists(), "restarted daemon must shut down cleanly");
 }
 
 #[test]

@@ -1175,7 +1175,7 @@ fn merge_native_hooks(
     Ok(())
 }
 
-fn is_engram_hook(command: &str) -> bool {
+pub(crate) fn is_engram_hook(command: &str) -> bool {
     // Decode only the executable shell word. Never treat an argument that
     // mentions an Engram path as ownership of the enclosing command.
     let mut program = String::new();

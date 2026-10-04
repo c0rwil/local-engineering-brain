@@ -123,6 +123,18 @@ not yet stable, and the schema version is 7.
   the `skill` kind. Cross-project transfer of validated procedures as
   explicitly marked hypothesis memories is gated behind
   `synthesis.cross_project_hypotheses` (default off).
+- Capture-health diagnostics in `engram doctor`: `checkout_access` probes
+  every registered checkout from inside the daemon and fails with the denied
+  paths and remediation when the daemon may not read them; `project_identity`
+  warns when live checkouts with one remote and root commit belong to
+  different project ids; `codex_hooks` (run in the CLI process) reports
+  Engram hooks that Codex has not trusted, using Codex's `hooks.state` trust
+  hashes. `engram daemon restart` replaces the daemon with one started from
+  the calling terminal; health and `engram daemon status` report the daemon
+  pid and the process chain that auto-started it.
+- Projects registered without Git identity record their root commit and,
+  when no other active project could be the same repository, their canonical
+  remote once Git is readable (`PROJECT_IDENTITY_OBSERVED`); ids never change.
 
 ### Changed
 
@@ -135,6 +147,11 @@ not yet stable, and the schema version is 7.
 
 ### Fixed
 
+- A checkout the process may not read (for example a macOS privacy denial in
+  an auto-started daemon) is no longer treated as a folder without Git: it
+  fails registration, lookup and Git probing with a `permission_denied` error
+  that names the path, the process and the fix, and the session-start hook
+  prints that line instead of staying silent.
 - Git porcelain parsing no longer lets `./`-prefixed paths bypass the
   `.git`/`.leb` reserved-directory filter — found by the new property suite,
   with the shrunken failing seed persisted as a regression.
