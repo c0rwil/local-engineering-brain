@@ -351,7 +351,49 @@ def execute_agent(work, settings_path, prompt, trace, stderr, wall, cost, *, com
     return {"agent_wall_seconds": round(time.monotonic() - started, 3), "agent_exit_code": proc.returncode, "agent_timed_out": timed_out}
 
 
+class ClaudeAgent:
+    """Claude Code headless adapter: the original pilot behavior.
+
+    run_trial uses an adapter for agent-specific setup, execution, telemetry
+    and model checks; scripts/real_repo_codex.py provides the Codex one.
+    """
+
+    name = "claude"
+    model = MODEL
+
+    def limits(self, args):
+        return {"max_budget_usd_estimate": args.cost_cap, "model": MODEL, "effort": "high"}
+
+    def prepare(self, *, trial, work, state, arm, args):
+        settings_path = state / "settings.json"
+        write_json(settings_path, settings(work, args.data, args.active, state, arm,
+                                           compact=getattr(args, "compact_settings", False)))
+        shutil.copy2(settings_path, trial / "settings.json")
+        return {"trial": trial, "work": work, "settings_path": settings_path}
+
+    def execute(self, prepared, prompt, args):
+        trial = prepared["trial"]
+        return execute_agent(prepared["work"], prepared["settings_path"], prompt, trial / "trace.jsonl", trial / "stderr.log",
+                             args.agent_seconds, args.cost_cap, compact=getattr(args, "compact_settings", False))
+
+    def metrics(self, prepared):
+        return parse_trace(prepared["trial"] / "trace.jsonl")
+
+    def record_flags(self, metrics):
+        return {}
+
+    def models(self, metrics):
+        return list(metrics.get("model_usage", {}))
+
+    def preserve(self, prepared):
+        """Claude's private state is the Engram state directory, cloned by run_trial."""
+
+
+CLAUDE_AGENT = ClaudeAgent()
+
+
 def run_trial(task, repetition, arm, args):
+    agent = getattr(args, "agent_adapter", None) or CLAUDE_AGENT
     ident = f'{task["id"]}-r{repetition}-{arm}'
     trial = args.data / "trials" / ident
     if trial.exists():
@@ -365,6 +407,7 @@ def run_trial(task, repetition, arm, args):
     args.active.mkdir(mode=0o700)
     (args.active / ".pilot-owned").write_text("real-repo-v1\n")
     setup_start = time.monotonic()
+    prepared = None
     try:
         fixture = args.data / "fixtures" / task["id"]
         clone(fixture / "work", work)
@@ -375,10 +418,7 @@ def run_trial(task, repetition, arm, args):
         config = state / "config.toml"
         config.write_text(config_text(state / "brain.sqlite", state / "d.sock"))
         (work / ".engram/config.toml").write_text(config.read_text())
-        settings_path = state / "settings.json"
-        write_json(settings_path, settings(work, args.data, args.active, state, arm,
-                                           compact=getattr(args, "compact_settings", False)))
-        shutil.copy2(settings_path, trial / "settings.json")
+        prepared = agent.prepare(trial=trial, work=work, state=state, arm=arm, args=args)
         record["prompt_sha256"] = digest(SUITE / task["prompt_file"])
         record["snapshot_sha256"] = digest(fixture / "snapshot.sqlite")
         record["grader_manifest"] = {str(p.relative_to(SUITE)): digest(p) for p in sorted((SUITE / "grading" / task["id"]).glob("*")) if p.is_file() and p.suffix in (".py", ".rs", ".ts", ".json")}
@@ -387,7 +427,7 @@ def run_trial(task, repetition, arm, args):
             prompt += "The existing pytest conftest requires unavailable development services. Use standard-library isolated tests or syntax checks without importing that conftest.\n"
         record["composed_prompt_sha256"] = hashlib.sha256(prompt.encode()).hexdigest()
         (trial / "prompt.txt").write_text(prompt)
-        write_json(trial / "limits.json", {"agent_seconds": args.agent_seconds, "grader_seconds": args.grader_seconds, "max_budget_usd_estimate": args.cost_cap, "model": MODEL, "effort": "high"})
+        write_json(trial / "limits.json", {"agent_seconds": args.agent_seconds, "grader_seconds": args.grader_seconds, **agent.limits(args)})
         manager = contextlib.nullcontext()
         if arm == "brain":
             shutil.copy2(fixture / "snapshot.sqlite", state / "brain.sqlite")
@@ -400,13 +440,14 @@ def run_trial(task, repetition, arm, args):
                 command(["cargo", "test", "--offline", "--locked", "--no-run"], cwd=work, env=coding_env(work, compact=getattr(args, "compact_settings", False)), log=trial / "warmup.log")
             record["setup_seconds"] = round(time.monotonic() - setup_start, 3)
             print(f"START {ident}", flush=True)
-            record.update(execute_agent(work, settings_path, prompt, trial / "trace.jsonl", trial / "stderr.log", args.agent_seconds, args.cost_cap,
-                                        compact=getattr(args, "compact_settings", False)))
-            record["metrics"] = parse_trace(trial / "trace.jsonl")
+            record.update(agent.execute(prepared, prompt, args))
+            record["metrics"] = agent.metrics(prepared)
+            record.update(agent.record_flags(record["metrics"]))
             record["delivery"] = receipt_summary(state) if arm == "brain" else {"emission_receipts": 0, "compiled_runs": 0}
         # Store complete private state and patch before injecting any grader code.
         clone(work, trial / "candidate")
         clone(state, trial / "state")
+        agent.preserve(prepared)
         (trial / "patch.diff").write_text(command(["git", "-C", work, "diff", "HEAD"]))
         grade_copy = args.data / "grade-work"
         if grade_copy.exists():
@@ -419,9 +460,9 @@ def run_trial(task, repetition, arm, args):
         record["grading_seconds"] = round(time.monotonic() - grade_start, 3)
         record["grade"] = json.loads((trial / "grade.json").read_text())
         record["grader_exit_code"] = graded.returncode
-        models = list(record["metrics"].get("model_usage", {}))
+        models = agent.models(record["metrics"])
         record["validity_issues"] = []
-        if models and models != [MODEL]:
+        if models and models != [agent.model]:
             record["validity_issues"].append("model_drift")
         if arm == "brain" and record["delivery"]["emission_receipts"] == 0:
             record["validity_issues"].append("no_delivery_receipt")
@@ -430,8 +471,12 @@ def run_trial(task, repetition, arm, args):
             record["grade"] = {"status": "infrastructure_error", "issues": record["validity_issues"]}
     except Exception as error:
         record["infrastructure_error"] = repr(error)
-        if (trial / "trace.jsonl").exists():
-            record["metrics"] = parse_trace(trial / "trace.jsonl")
+        if prepared is not None and (trial / "trace.jsonl").exists():
+            record["metrics"] = agent.metrics(prepared)
+        if prepared is not None:
+            # Keep agent-private evidence of the failed attempt when possible.
+            with contextlib.suppress(Exception):
+                agent.preserve(prepared)
     # Follow-up collections can verify frozen controls after coding and grading,
     # before either canonical record is persisted. The original pilot has no callback.
     validator = getattr(args, "validate_record", None)

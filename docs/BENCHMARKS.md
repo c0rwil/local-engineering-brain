@@ -31,6 +31,11 @@ the previous and updated binaries on frozen navigation probes and full historica
 task descriptions, including reordered requirements. These are local retrieval
 diagnostics; the original 24 agent attempts remain unchanged.
 
+The v2 runner can also run both arms with the Codex CLI (`--agent codex`), with
+isolated per-arm Codex homes and a model-free loopback preflight; see the
+[v2 protocol](../benchmarks/real-repo-v2/README.md#codex-arm). No Codex collection
+has been run, so there are no Codex results.
+
 ## Retrieval regression gate
 
 [`tests/retrieval_regression.rs`](../tests/retrieval_regression.rs) is a hermetic

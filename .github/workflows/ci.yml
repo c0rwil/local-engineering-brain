@@ -94,6 +94,12 @@ jobs:
           cargo test --locked --all-targets --all-features -- \
             --skip warmed_context_compile_stays_under_hard_v1_ceiling \
             --skip medium_daemon_concurrency_stays_within_latency_rss_and_token_bounds
+      # The real-repository harness scripts are macOS-only (APFS clones and
+      # /private/tmp sandbox roots), so their hermetic Python tests run on the
+      # macOS leg. They use fake agent CLIs; no model or network is involved.
+      - name: python harness tests (macOS)
+        if: runner.os == 'macOS'
+        run: python3 -B -m unittest discover -s tests -p 'test_*.py'
 
   release-build:
     name: release build (${{ matrix.os }})

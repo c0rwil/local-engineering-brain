@@ -2,6 +2,8 @@
 
 No token counts are inferred from transcript text. Cost is the CLI's reported
 USD estimate. Paired reductions use successful runs on both arms only.
+Claude Code stream-JSON traces and Codex exec/rollout transcripts map onto one
+record schema; see parse_trace and parse_codex_trace.
 """
 
 from __future__ import annotations
@@ -20,15 +22,37 @@ TOKEN_FIELDS = (
     "cache_creation_input_tokens",
     "cache_read_input_tokens",
 )
+# Reported separately: a subset of output tokens (Codex). Claude traces omit it.
+REASONING_FIELD = "reasoning_output_tokens"
 MEASURES = (
     *TOKEN_FIELDS,
+    REASONING_FIELD,
     "processed_input_tokens",
     "total_tokens",
     "tool_calls",
     "agent_wall_seconds",
     "cost_usd_estimate",
 )
+# Provider usage measures: excluded from paired savings when usage may be partial.
+USAGE_MEASURES = frozenset({*TOKEN_FIELDS, REASONING_FIELD, "processed_input_tokens", "total_tokens", "cost_usd_estimate"})
 RECORD_CLASSIFICATION_REVISION = "agent-completion-v2"
+
+# Codex rollout counters, cumulative per session file. Codex input includes
+# cached input, and output includes reasoning output.
+CODEX_COUNTERS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "cache_write_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+)
+CODEX_CORE_COUNTERS = ("input_tokens", "cached_input_tokens", "output_tokens")
+# Model-issued tool requests in rollout `response_item` rows.
+CODEX_TOOL_CALL_TYPES = frozenset({
+    "function_call", "custom_tool_call", "local_shell_call", "web_search_call",
+    "tool_search_call", "image_generation_call", "computer_call",
+})
+CODEX_SHELL_TOOLS = frozenset({"shell", "shell_command", "exec_command", "exec", "local_shell_call"})
 
 
 def _number(value: Any, *, integer: bool = False):
@@ -164,6 +188,276 @@ def parse_trace(path: str | Path) -> dict[str, Any]:
     }
 
 
+def _codex_counters(usage: Any) -> dict[str, int]:
+    """Known non-negative integer counters from one cumulative usage object."""
+    if not isinstance(usage, dict):
+        return {}
+    known = {name: _number(usage.get(name), integer=True) for name in CODEX_COUNTERS}
+    return {name: value for name, value in known.items() if value is not None}
+
+
+def _codex_counter_delta(previous: dict[str, int], current: dict[str, int]):
+    """Turn one cumulative row into an additive increment, as src/usage_capture.rs does.
+
+    A decrease in any known counter is a reset: it becomes the new baseline and
+    contributes no usage for the gap. Counters absent from a row keep their
+    previous value. Identical rows contribute nothing.
+    """
+    if any(name in previous and current[name] < previous[name] for name in current):
+        previous.clear()
+        previous.update(current)
+        return "reset", None
+    delta = {name: current[name] - previous.get(name, 0) for name in current}
+    previous.update(current)
+    if any(value > 0 for value in delta.values()):
+        return "increment", delta
+    return "unchanged", None
+
+
+def codex_thread_kind(payload: dict) -> str:
+    """Classify a rollout's leading session_meta like src/usage_capture.rs.
+
+    Returns `root`, `spawned` (a worker another thread started) or
+    `internal:<label>` for Codex-internal sub-sessions such as the guardian
+    reviewer, review, compact or memory consolidation. Every kind's usage is
+    real usage; the label only explains where it came from.
+    """
+    thread_source = payload.get("thread_source")
+    if thread_source == "guardian_review":
+        return "internal:guardian"
+    source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+    if "subagent" in source:
+        subagent = source["subagent"]
+        if isinstance(subagent, dict) and "thread_spawn" in subagent:
+            return "spawned"
+        if isinstance(subagent, dict):
+            other = subagent.get("other")
+            # serde_json maps iterate in sorted key order.
+            return "internal:" + (other if isinstance(other, str) else min(subagent, default="subagent"))
+        return "internal:" + (subagent if isinstance(subagent, str) else "subagent")
+    if "internal" in source:
+        internal = source["internal"]
+        return "internal:" + (internal if isinstance(internal, str) else "internal")
+    if thread_source == "subagent":
+        return "spawned"
+    if thread_source == "memory_consolidation":
+        return "internal:memory_consolidation"
+    return "root"
+
+
+def _jsonl_rows(path: Path, digest):
+    """Yield (line_number, row or None) for a JSONL file, hashing raw bytes."""
+    with path.open("rb") as stream:
+        for line_number, raw_line in enumerate(stream, 1):
+            digest.update(raw_line)
+            line = raw_line.decode("utf-8", errors="replace")
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except (ValueError, TypeError):
+                yield line_number, None
+                continue
+            yield line_number, row if isinstance(row, dict) else None
+
+
+def parse_codex_trace(events_path: str | Path, session_paths: list[str | Path] | tuple = ()) -> dict[str, Any]:
+    """Parse one `codex exec --json` event log and the run's rollout session files.
+
+    Provider usage comes from rollout `token_count` rows, which are cumulative per
+    session file: only increments are summed and a decrease starts a new
+    baseline without inventing usage, as in src/usage_capture.rs. Codex input
+    includes cached input and output includes reasoning output, so the shared
+    fields are mapped to keep their Claude meaning: input_tokens is uncached
+    input (input - cached - cache_write), cache_read is cached input,
+    cache_creation is reported cache writes, processed input is Codex input and
+    total is input + output. Reasoning output is reported separately and is
+    already inside output. Tool calls are model-issued function, custom and
+    shell calls deduplicated by call_id. Codex reports no cost estimate.
+    Missing files raise OSError; unknown usage stays None, never zero.
+    """
+    events_digest = hashlib.sha256()
+    malformed_lines = []
+    final_events = []
+    event_usage = None
+    error_messages = []
+    thread_ids = []
+    for line_number, event in _jsonl_rows(Path(events_path), events_digest):
+        if event is None:
+            malformed_lines.append(line_number)
+            continue
+        kind = event.get("type")
+        if kind == "thread.started" and isinstance(event.get("thread_id"), str):
+            thread_ids.append(event["thread_id"])
+        elif kind in ("turn.completed", "turn.failed"):
+            final_events.append(kind)
+            if kind == "turn.completed" and isinstance(event.get("usage"), dict):
+                event_usage = {name: _number(value, integer=True) for name, value in event["usage"].items()}
+            if kind == "turn.failed":
+                error = event.get("error")
+                message = error.get("message") if isinstance(error, dict) else None
+                error_messages.append(message[:200] if isinstance(message, str) else "turn failed")
+        elif kind == "error":
+            message = event.get("message")
+            error_messages.append(message[:200] if isinstance(message, str) else "error")
+
+    totals: dict[str, int] = {}
+    # A counter absent from a middle row is still covered by the next row's
+    # delta; it is unknown only if a session's final row lacks it.
+    unreported_at_end = Counter()
+    increments = unchanged = resets = token_rows = malformed_session_lines = 0
+    complete_sessions = 0
+    session_digests = {}
+    tools: dict[str, str] = {}
+    conflicting_tool_ids = set()
+    missing_tool_ids = 0
+    models = set()
+    providers = set()
+    session_kinds = Counter()
+    operations = Counter()
+    task_completions = 0
+    record_usage: dict[str, dict[str, int]] = {}
+    for session_path in map(Path, session_paths):
+        digest = hashlib.sha256()
+        previous: dict[str, int] = {}
+        last_row: dict[str, int] = {}
+        saw_usage = classified = False
+        for _, row in _jsonl_rows(session_path, digest):
+            if row is None:
+                malformed_session_lines += 1
+                continue
+            kind = row.get("type")
+            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+            payload_type = payload.get("type")
+            if kind == "session_meta":
+                if isinstance(payload.get("model_provider"), str):
+                    providers.add(payload["model_provider"])
+                if not classified:
+                    session_kinds[codex_thread_kind(payload)] += 1
+                    classified = True
+            elif kind == "turn_context":
+                if isinstance(payload.get("model"), str) and payload["model"]:
+                    models.add(payload["model"])
+            elif kind == "event_msg" and payload_type == "token_count":
+                info = payload.get("info")
+                current = _codex_counters(info.get("total_token_usage") if isinstance(info, dict) else None)
+                if not current:
+                    continue
+                token_rows += 1
+                saw_usage = True
+                last_row = current
+                outcome, delta = _codex_counter_delta(previous, current)
+                if outcome == "reset":
+                    resets += 1
+                elif outcome == "unchanged":
+                    unchanged += 1
+                else:
+                    increments += 1
+                    for name, value in delta.items():
+                        totals[name] = totals.get(name, 0) + value
+            elif kind == "event_msg" and payload_type == "task_complete":
+                task_completions += 1
+            elif kind == "event_msg" and payload_type == "item_completed":
+                item = payload.get("item")
+                if isinstance(item, dict) and isinstance(item.get("type"), str):
+                    operations[item["type"]] += 1
+            elif kind == "token_usage_record":
+                response_id = payload.get("response_id")
+                usage = _codex_counters(payload.get("usage"))
+                if isinstance(response_id, str) and usage:
+                    record_usage[response_id] = usage
+            elif kind == "response_item" and payload_type in CODEX_TOOL_CALL_TYPES:
+                call_id = payload.get("call_id") or payload.get("id")
+                if not isinstance(call_id, str) or not call_id:
+                    missing_tool_ids += 1
+                    continue
+                name = payload.get("name") if payload_type in ("function_call", "custom_tool_call") else payload_type
+                name = name if isinstance(name, str) and name else "<unknown>"
+                if call_id in tools and tools[call_id] != name:
+                    conflicting_tool_ids.add(call_id)
+                else:
+                    tools[call_id] = name
+        session_digests[session_path.name] = digest.hexdigest()
+        if saw_usage:
+            unreported_at_end.update(name for name in CODEX_COUNTERS if name not in last_row)
+            if all(name in last_row for name in CODEX_CORE_COUNTERS):
+                complete_sessions += 1
+
+    def known(name):
+        return totals.get(name, 0) if token_rows and not unreported_at_end[name] else None
+
+    raw = {name: known(name) for name in CODEX_COUNTERS}
+    raw_input, cached, cache_write, output = (raw["input_tokens"], raw["cached_input_tokens"],
+                                              raw["cache_write_input_tokens"], raw["output_tokens"])
+    uncached = None
+    if raw_input is not None and cached is not None:
+        uncached = raw_input - cached - (cache_write or 0)
+        uncached = uncached if uncached >= 0 else None
+    total = raw_input + output if raw_input is not None and output is not None else None
+    sessions = len(session_digests)
+    trace_complete = bool(final_events)
+    usage_complete = (bool(sessions) and complete_sessions == sessions and not resets
+                      and not malformed_session_lines and all(raw[name] is not None for name in CODEX_CORE_COUNTERS))
+    tool_complete = (trace_complete and bool(sessions) and not malformed_lines and not malformed_session_lines
+                     and not missing_tool_ids and not conflicting_tool_ids)
+    record_totals = None
+    if record_usage:
+        record_totals = {name: sum(usage.get(name, 0) for usage in record_usage.values()) for name in CODEX_CORE_COUNTERS}
+    last = final_events[-1] if final_events else None
+    return {
+        "agent": "codex",
+        "input_tokens": uncached,
+        "output_tokens": output,
+        "cache_creation_input_tokens": cache_write,
+        "cache_read_input_tokens": cached,
+        REASONING_FIELD: raw["reasoning_output_tokens"],
+        "processed_input_tokens": raw_input,
+        "total_tokens": total,
+        "provider_usage": raw,
+        "cost_usd_estimate": None,
+        "model_usage": None,
+        "models": sorted(models),
+        "providers": sorted(providers),
+        "tool_calls": len(tools),
+        "shell_tool_calls": sum(name in CODEX_SHELL_TOOLS for name in tools.values()),
+        "shell_spawn_failure_count": None,
+        "counts_by_tool": dict(sorted(Counter(tools.values()).items())),
+        "operation_counts": dict(sorted(operations.items())),
+        "tool_use_ids": sorted(tools),
+        "tool_calls_complete": tool_complete,
+        "num_turns": increments if token_rows else None,
+        "result_subtype": {"turn.completed": "success", "turn.failed": "error"}.get(last),
+        # Retried stream errors followed by a completed turn are kept as
+        # diagnostics; the final turn event decides the outcome.
+        "is_error": (last == "turn.failed") if trace_complete else (True if error_messages else None),
+        "error_messages": error_messages,
+        "permission_denials": None,
+        "trace_complete": trace_complete,
+        "usage_complete": usage_complete,
+        "diagnostics": {
+            "trace_sha256": events_digest.hexdigest(),
+            "session_sha256": session_digests,
+            "session_files": sessions,
+            "session_kinds": dict(sorted(session_kinds.items())),
+            "thread_ids": thread_ids,
+            "result_count": len(final_events),
+            "task_completions": task_completions,
+            "malformed_line_numbers": malformed_lines,
+            "malformed_session_lines": malformed_session_lines,
+            "tool_blocks_without_ids": missing_tool_ids,
+            "conflicting_tool_ids": sorted(conflicting_tool_ids),
+            "token_count_rows": token_rows,
+            "usage_increments": increments,
+            "unchanged_usage_rows": unchanged,
+            "counter_resets": resets,
+            "event_usage": event_usage,
+            "usage_record_totals": record_totals,
+            "usage_sources_agree": (None if record_totals is None or not usage_complete
+                                    else all(record_totals[name] == raw[name] for name in CODEX_CORE_COUNTERS)),
+        },
+    }
+
+
 def apply_tool_runtime_checks(record: dict[str, Any], trace_path: str | Path) -> dict[str, Any]:
     """Exclude observed Bash launch failures without changing captured usage.
 
@@ -245,8 +539,7 @@ def _measure(record, name, *, complete_only=True):
     if complete_only and name == "tool_calls" and metrics.get("tool_calls_complete") is False:
         return None
     # Keep lower bounds in all-attempt totals, but never treat them as savings.
-    if (complete_only and record.get("usage_may_be_partial") is True
-            and name in {*TOKEN_FIELDS, "processed_input_tokens", "total_tokens", "cost_usd_estimate"}):
+    if complete_only and record.get("usage_may_be_partial") is True and name in USAGE_MEASURES:
         return None
     return _number(metrics.get(name), integer=name != "cost_usd_estimate")
 
@@ -259,8 +552,7 @@ def _all_attempts(records):
         totals[name] = sum(known) if known else None
         partial = sum(
             (name == "tool_calls" and (record.get("metrics") or {}).get("tool_calls_complete") is False)
-            or (name in {*TOKEN_FIELDS, "processed_input_tokens", "total_tokens", "cost_usd_estimate"}
-                and record.get("usage_may_be_partial") is True)
+            or (name in USAGE_MEASURES and record.get("usage_may_be_partial") is True)
             for record in reported
         )
         coverage[name] = {"available": len(known), "missing": len(records) - len(known), "total": len(records), "partial": partial}

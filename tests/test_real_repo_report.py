@@ -29,7 +29,7 @@ def record(task, arm, status="pass", tokens=100, repetition=1):
 
 
 class RealRepoReportTest(unittest.TestCase):
-    def publish(self, records=(), infrastructure=(), *, preflights=(), repetitions=3, trials=(), private_dependency_seconds=None, dependency_seconds=6, suite=None, adjudicate=None, stale_adjudication=False, traces=None, stopped=False):
+    def publish(self, records=(), infrastructure=(), *, preflights=(), repetitions=3, trials=(), private_dependency_seconds=None, dependency_seconds=6, suite=None, adjudicate=None, stale_adjudication=False, traces=None, stopped=False, manifest_extra=None):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
@@ -41,6 +41,7 @@ class RealRepoReportTest(unittest.TestCase):
             "pnpm": "10.18.0", "private_dependencies": "Prepared private dependency cache",
             "known_scope_limits": ["Provider caching remains enabled and is not reset between runs."],
             "engram_binary": "PRIVATE-SENTINEL", "smoke_evidence": "PRIVATE-SENTINEL",
+            **(manifest_extra or {}),
         }))
         (data / "records.jsonl").write_text("".join(json.dumps(value) + "\n" for value in records))
         (data / "infrastructure_attempts.jsonl").write_text("".join(json.dumps(value) + "\n" for value in infrastructure))
@@ -137,6 +138,33 @@ class RealRepoReportTest(unittest.TestCase):
         self.assertEqual(results["manifest"]["pnpm"], "10.18.0")
         self.assertEqual(results["manifest"]["private_dependencies"], "Prepared private dependency cache")
         self.assertIn("Provider caching remains enabled and is not reset between runs.", (output / "README.md").read_text())
+
+    def test_codex_collection_reports_its_agent_models_and_reasoning(self):
+        rows = []
+        for arm in ("off", "brain"):
+            value = record("r01_guide_hot_path", arm)
+            value["metrics"].update({"model_usage": None, "models": ["pinned-model"], "reasoning_output_tokens": 10,
+                                     "cost_usd_estimate": None})
+            rows.append(value)
+        _, summary, results, readme, output = self.publish(rows, suite="real-repo-v2", manifest_extra={
+            "agent": "codex", "codex_version": "codex-cli 0.0.0", "codex_hook_trust": "bypass"})
+        self.assertEqual(results["manifest"]["agent"], "codex")
+        for row in results["records"]:
+            self.assertEqual(row["metrics"]["models"], ["pinned-model"])
+            self.assertEqual(row["metrics"]["reasoning_output_tokens"], 10)
+        self.assertEqual(summary["all_attempts"]["brain"]["totals_observed"]["reasoning_output_tokens"], 10)
+        for phrase in ("Codex CLI `codex-cli 0.0.0`", "Reasoning (within output)", "Codex reports no USD estimate",
+                       "source-only automatic hooks and the engram MCP server"):
+            self.assertIn(phrase, readme)
+        self.assertNotIn("Claude Code `", readme)
+        self.assertNotIn("Claude-reported USD", readme)
+        for path in output.iterdir():
+            self.assertNotIn("PRIVATE-SENTINEL", path.read_text())
+
+    def test_claude_report_header_is_unchanged(self):
+        _, _, _, readme, _ = self.publish([record("r01_guide_hot_path", "off")])
+        self.assertIn("Claude Code `unavailable`. Protocol: 3 repetitions per task and arm, Engram off versus source-only automatic hooks.", readme)
+        self.assertNotIn("Reasoning (within output)", readme)
 
     def test_failed_attempts_count_in_resource_per_success_but_not_savings(self):
         records = [
