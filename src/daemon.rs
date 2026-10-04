@@ -187,6 +187,17 @@ const CALL_NOISE: &[&str] = &[
     "super",
     "range",
     "enumerate",
+    "tuple",
+    "bool",
+    "zip",
+    "sorted",
+    "getattr",
+    "hasattr",
+    "logger.info",
+    "logger.debug",
+    "logger.warning",
+    "logger.error",
+    "logger.exception",
 ];
 
 #[derive(Clone)]
@@ -2621,13 +2632,16 @@ async fn file_shape(
             // brain never has — the planner drives from the project's whole
             // CALLS edge set instead of this file's handful of labels, and
             // a 40k-node monorepo blows the request deadline (observed:
-            // 113 s → sub-second pinned).
+            // 113 s → sub-second pinned). The index pins matter as well:
+            // otherwise `target` is read through `nodes_project_active`
+            // (every reference of the kind, per definition), which reached
+            // seconds per call once Python call sites were indexed.
             let mut statement = connection.prepare(
                 "SELECT caller_label, caller_path FROM (
                      SELECT DISTINCT caller.label AS caller_label,
                             caller.file_path AS caller_path
-                     FROM nodes defined
-                     CROSS JOIN nodes target
+                     FROM nodes defined INDEXED BY nodes_project_file
+                     CROSS JOIN nodes target INDEXED BY nodes_project_label
                      CROSS JOIN edges e
                      CROSS JOIN nodes caller
                      WHERE defined.project_id = ?1 AND defined.file_path = ?2
@@ -3785,25 +3799,39 @@ async fn project_module_symbols(
                 }
             };
             let direction = |outbound: bool| -> std::result::Result<Vec<String>, Error> {
+                // Both directions start from this module's own nodes and
+                // resolve each distinct label once through
+                // `nodes_project_label`, so the cost follows the module, not
+                // the project's edge count. Driving from the project's edges
+                // instead took 1.3-1.7 s per call with pinned indexes, and up
+                // to 74 s unpinned, on a 50k-edge index with Python calls.
                 let sql = if outbound {
-                    "SELECT DISTINCT d.file_path FROM edges e
-                     JOIN nodes s ON s.id = e.source_id
-                        AND (s.file_path LIKE ?2 OR s.file_path = ?3)
-                     JOIN nodes t ON t.id = e.target_id AND t.kind = 'ExternalReference'
-                     JOIN nodes d ON d.project_id = e.project_id
-                        AND d.kind IN ('Function', 'Type', 'Module', 'Interface')
-                        AND d.label = t.label AND d.tombstoned_at_ms IS NULL
-                     WHERE e.project_id = ?1 AND e.tombstoned_at_ms IS NULL
-                       AND d.file_path IS NOT NULL LIMIT 400"
+                    "WITH targets AS MATERIALIZED (
+                         SELECT DISTINCT t.label FROM nodes s INDEXED BY nodes_project_file
+                         CROSS JOIN edges e INDEXED BY edges_source_active
+                            ON e.project_id = s.project_id AND e.source_id = s.id
+                         CROSS JOIN nodes t ON t.id = e.target_id
+                         WHERE s.project_id = ?1 AND (s.file_path LIKE ?2 OR s.file_path = ?3)
+                           AND e.tombstoned_at_ms IS NULL AND t.kind = 'ExternalReference')
+                     SELECT DISTINCT d.file_path FROM targets
+                     CROSS JOIN nodes d INDEXED BY nodes_project_label
+                        ON d.project_id = ?1 AND d.label = targets.label
+                     WHERE d.kind IN ('Function', 'Type', 'Module', 'Interface')
+                       AND d.tombstoned_at_ms IS NULL AND d.file_path IS NOT NULL LIMIT 400"
                 } else {
-                    "SELECT DISTINCT s.file_path FROM edges e
-                     JOIN nodes s ON s.id = e.source_id AND s.file_path IS NOT NULL
-                     JOIN nodes t ON t.id = e.target_id AND t.kind = 'ExternalReference'
-                     JOIN nodes d ON d.project_id = e.project_id
-                        AND d.kind IN ('Function', 'Type', 'Module', 'Interface')
-                        AND d.label = t.label AND d.tombstoned_at_ms IS NULL
-                        AND (d.file_path LIKE ?2 OR d.file_path = ?3)
-                     WHERE e.project_id = ?1 AND e.tombstoned_at_ms IS NULL LIMIT 400"
+                    "WITH defined AS MATERIALIZED (
+                         SELECT DISTINCT d.label FROM nodes d INDEXED BY nodes_project_file
+                         WHERE d.project_id = ?1 AND (d.file_path LIKE ?2 OR d.file_path = ?3)
+                           AND d.kind IN ('Function', 'Type', 'Module', 'Interface')
+                           AND d.tombstoned_at_ms IS NULL)
+                     SELECT DISTINCT s.file_path FROM defined
+                     CROSS JOIN nodes t INDEXED BY nodes_project_label
+                        ON t.project_id = ?1 AND t.label = defined.label
+                     CROSS JOIN edges e INDEXED BY edges_target_active
+                        ON e.project_id = ?1 AND e.target_id = t.id
+                     CROSS JOIN nodes s ON s.id = e.source_id
+                     WHERE t.kind = 'ExternalReference' AND e.tombstoned_at_ms IS NULL
+                       AND s.file_path IS NOT NULL LIMIT 400"
                 };
                 let mut statement = connection.prepare(sql)?;
                 let rows = statement
@@ -5417,6 +5445,20 @@ mod tests {
             "cross-file caller resolved by label: {:?}",
             shape.callers
         );
+        for (group, depends_on, used_by) in [
+            ("engine.rs", &[][..], &["caller.rs"][..]),
+            ("caller.rs", &["engine.rs"][..], &[][..]),
+        ] {
+            let module = client
+                .module_symbols(&ModuleSymbolsRequest {
+                    project_id: project_id.clone(),
+                    group: group.to_owned(),
+                })
+                .await
+                .expect("module symbols");
+            assert_eq!(module.depends_on, depends_on, "{group} depends on");
+            assert_eq!(module.used_by, used_by, "{group} used by");
+        }
 
         let unknown = client
             .file_shape(&FileShapeRequest {

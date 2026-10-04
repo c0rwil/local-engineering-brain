@@ -43,6 +43,35 @@ fn unrelated_arithmetic() {
 pub const SETTINGS: &str =
     "pub fn load_settings() -> u32 {\n    1\n}\n\npub fn mode() -> u32 {\n    1\n}\n";
 
+/// A `src/` layout Python service: `app.services.sessions` defines the
+/// anchors; another module defines a same-named `get_task`.
+pub const PYTHON_SERVICE: &[(&str, &str)] = &[
+    (
+        "src/app/services/sessions.py",
+        "class Store:\n    def load(self):\n        return 1\n\n    def refresh(self):\n        return self.load()\n\n    @classmethod\n    def build(cls):\n        return cls.load(cls())\n\n\ndef get_task(task_id):\n    return Store().load()\n",
+    ),
+    (
+        "src/app/handlers.py",
+        "from app.services import sessions as svc\nfrom app.services.sessions import get_task, Store\n\n\ndef status(task_id):\n    return svc.get_task(task_id)\n\n\ndef direct(task_id):\n    return get_task(task_id)\n\n\ndef build_store():\n    return Store.load(Store())\n",
+    ),
+    (
+        "src/app/services/sibling.py",
+        "from . import sessions\n\n\ndef nearby():\n    return sessions.get_task(1)\n",
+    ),
+    (
+        "src/other/sessions.py",
+        "def get_task(task_id):\n    return None\n",
+    ),
+    (
+        "src/app/unrelated.py",
+        "from other import sessions as svc\n\n\ndef wrong(task_id):\n    return svc.get_task(task_id)\n",
+    ),
+    (
+        "src/app/guessing.py",
+        "def unimported():\n    return sessions.get_task(1)\n\n\ndef also_unimported():\n    return get_task(2)\n",
+    ),
+];
+
 pub struct IndexedRepo {
     _temp: TempDir,
     pub root: PathBuf,
