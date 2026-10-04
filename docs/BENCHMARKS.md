@@ -48,6 +48,19 @@ context delivery and Read measurements per arm, so the line-range hypothesis
 can be checked: fewer Read bytes and cache-read tokens at equal or better
 correctness.
 
+The launcher checks the Claude Code login with `claude auth status` in the
+trials' own environment before it starts a collection and before every
+attempt. It records each check, without account details, in
+`auth_checks.jsonl`. When the collector stops on an unscorable attempt, the
+inspection must be recorded before collection goes on.
+`resume --continue` keeps the attempt in the paired matrix as unscorable, the
+v2 rule for any attempt in which the agent ran. `resume --acknowledge` applies
+only when the agent never started, with no tool call and no output tokens, as
+when the login expired. It keeps the attempt unchanged as a separate
+infrastructure attempt outside the matrix, and the slot runs again. The
+launcher's `--help` describes both. Neither path changes the collector, the
+runner library or the suite files frozen in the manifest.
+
 The v2 runner can also run both arms with the Codex CLI (`--agent codex`), with
 isolated per-arm Codex homes and a model-free loopback preflight; see the
 [v2 protocol](../benchmarks/real-repo-v2/README.md#codex-arm). No Codex collection
