@@ -74,6 +74,7 @@ const API_CONTEXT_DELIVERED: &str = "/api/v1/context/delivered";
 const API_MEMORY_CREATE: &str = "/api/v1/memories";
 const API_TASKS: &str = "/api/v1/tasks";
 const API_EVIDENCE: &str = "/api/v1/evidence";
+const API_HOOK_EVIDENCE: &str = "/api/v1/hook-evidence";
 const API_EVALUATION_RUNS: &str = "/api/v1/evaluation/runs";
 const API_LEARNING_DISTILL: &str = "/api/v1/learning/distill";
 const API_MEMORY_SEARCH: &str = "/api/v1/memories/search";
@@ -726,6 +727,14 @@ pub struct EvidenceCreateRequest {
     pub metadata: serde_json::Value,
 }
 
+/// Evidence a native hook observed. Only this request can attach hook
+/// provenance; the generic evidence endpoint strips it from client metadata.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct HookEvidenceRequest {
+    pub evidence: EvidenceCreateRequest,
+    pub provenance: crate::agenthooks::HookProvenance,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TaskFinishRequest {
     pub outcome: TaskOutcome,
@@ -1350,6 +1359,19 @@ impl DaemonClient {
     /// Returns transport, scope-validation, overload, or storage errors.
     pub async fn record_evidence(&self, request: &EvidenceCreateRequest) -> Result<EvidenceRecord> {
         self.request(hyper::Method::POST, API_EVIDENCE, Some(request))
+            .await
+    }
+
+    /// Record evidence a native hook observed, with its hook provenance.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport, scope, validation, or storage errors.
+    pub async fn record_hook_evidence(
+        &self,
+        request: &HookEvidenceRequest,
+    ) -> Result<EvidenceRecord> {
+        self.request(hyper::Method::POST, API_HOOK_EVIDENCE, Some(request))
             .await
     }
 
@@ -2009,6 +2031,7 @@ where
         .route("/api/v1/tasks/{id}/attempts", post(record_attempt))
         .route("/api/v1/tasks/{id}/finish", post(finish_task))
         .route(API_EVIDENCE, post(record_evidence))
+        .route(API_HOOK_EVIDENCE, post(record_hook_evidence))
         .route("/api/v1/evidence/{id}", get(get_evidence))
         .route(API_PAST_FAILURES, post(past_failures))
         .route(API_EVALUATION_RUNS, post(record_evaluation))
@@ -4000,6 +4023,27 @@ async fn record_evidence(
     State(state): State<DaemonState>,
     Json(request): Json<EvidenceCreateRequest>,
 ) -> std::result::Result<Json<EvidenceRecord>, ApiError> {
+    // Client metadata cannot claim native-hook provenance.
+    let metadata = crate::agenthooks::evidence_metadata(request.metadata.clone(), None);
+    store_evidence(state, request, metadata).await
+}
+
+async fn record_hook_evidence(
+    State(state): State<DaemonState>,
+    Json(request): Json<HookEvidenceRequest>,
+) -> std::result::Result<Json<EvidenceRecord>, ApiError> {
+    let metadata = crate::agenthooks::evidence_metadata(
+        request.evidence.metadata.clone(),
+        Some(&request.provenance),
+    );
+    store_evidence(state, request.evidence, metadata).await
+}
+
+async fn store_evidence(
+    state: DaemonState,
+    request: EvidenceCreateRequest,
+    metadata: serde_json::Value,
+) -> std::result::Result<Json<EvidenceRecord>, ApiError> {
     let store = evidence_store(&state);
     let handle = state
         .scheduler
@@ -4014,7 +4058,7 @@ async fn record_evidence(
                 request.command.as_deref(),
                 request.exit_code,
                 request.artifact_text.as_bytes(),
-                &request.metadata,
+                &metadata,
             )
         })
         .map_err(|error| ApiError::from_core(&error))?;

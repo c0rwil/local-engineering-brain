@@ -247,34 +247,62 @@ coding client reported its exit status:
   Claude Code reinterpreted (for example `grep` finding nothing), are not recorded.
 - Codex supplies an explicit exit code in its tool result.
 
-The status must also belong to the verification. Engram records
-`cargo test`, `cd repo && cargo test` and `cargo fmt --check && cargo test`.
-It does not record `cargo test 2>&1 | tail -20`, `cargo test || true`,
-`cargo test; echo done` or background jobs, because the shell reports another
-command's status. To keep output short and still record the result, enable
-`pipefail` first: `set -o pipefail; cargo test 2>&1 | tail -40`. Runner wrappers
-that return the tool's status are recognized (`uv run`, `poetry run`, `npx`,
-`uvx`, `timeout N`, `python3 -m pytest`). Listing or help invocations such as
-`cargo test -- --list` are not verification. A verification whose result is
-not observed (hidden status, an interrupted run, or a failure reported without
-an exit code) clears the session's last result: the result is unknown, so an
-earlier pass cannot close the episode as success.
+The status must also belong to every verification in the command. Engram
+records `cargo test`, `cd repo && cargo test` and `cargo fmt --check && cargo
+test`. It does not record `cargo test 2>&1 | tail -20`, `cargo test || true`,
+`cargo test; echo done`, `cargo test; cargo clippy` or background jobs, because
+the shell reports another command's status. After the first verification, only
+`&&` may join further commands. To keep output short and still record the
+result, enable `pipefail` first in its own statement:
+`set -o pipefail; cargo test 2>&1 | tail -40`. A `pipefail` set after `&&` or
+`||`, or switched off again (`set +o pipefail`, zsh `setopt no_pipe_fail`), does
+not count. Runner wrappers that return the tool's status are recognized
+(`uv run`, `poetry run`, `npx`, `uvx`, `timeout N`, `python3 -m pytest`).
+Listing or help invocations such as `cargo test -- --list`, formatters without
+a check flag (`cargo fmt`, `terraform fmt`, `ruff format`), `--fix` runs and
+`make` targets other than `test`, `lint`, `check` and `build` are not
+verification. A client's `is_error` flag alone is not an exit status.
+
+The directory comes from the same reading of the command: static `cd` or
+`pushd` targets joined to the verification by `&&` (`cd ../two && cargo test`,
+`export A=1; cd ../two && cargo test`). A change that might not take effect
+(`cd ../two; cargo test`, a `cd` with variables, `cd -`, `popd`, sourcing a
+script other than a virtualenv `activate`) or a change after the first
+verification makes the run unrecorded, so it is never attributed to the wrong
+repository.
+
+Each episode keeps the latest result per verification: its directory and
+commands without wrappers or redirections, so `cargo test 2>&1 | tail` and
+`cargo test` share one result while `cargo test -p a` and `cargo test -p b` do
+not. Before contacting the daemon, the hook marks a recognized verification's
+result unknown; only a recorded observation replaces it. A hidden status, an
+interrupted run, a failure without an exit code, or a record the daemon refuses
+therefore leaves the result unknown. At session end the episode closes as
+`failure` if any latest result failed, as `success` only if every latest result
+passed and at least one ran tests, and as `abandoned` otherwise. A passing
+lint, format, check or build never hides a failed test.
 
 Each record keeps the last 4 KiB of output, the Git HEAD and SHA-256 digests of
 the files the session touched or left modified (up to 64 files, 512 KiB each and
-4 MiB in total; files beyond these bounds get no digest). If
-the agent declared an Engram task in the same session (`engram_task_start`, or a
-task ID passed to attempt or evidence tools), new records go to that task, so a
-later `engram_complete_task` can attach them to its lessons. After the agent
-completes that task, records return to the session's own episode. Evidence from
-runs before the declaration stays on the session episode.
+4 MiB in total; files beyond these bounds get no digest). If the agent declared
+an Engram task in the same session through Engram's own MCP server (`engram`, or
+the legacy `leb`, for example `mcp__engram__engram_task_start`, or a task ID
+passed to its attempt or evidence tools), new records go to that task while the
+daemon reports it open, so a later `engram_complete_task` can attach them to its
+lessons. A task completed through MCP, or closed elsewhere (CLI, web UI), stops
+receiving records; they return to the session's own episode. Evidence from runs
+before the declaration stays on the session episode. One tool call is one
+observation: a hook fired twice for the same call records once, and a new call
+with identical output is recorded again.
 
 The evidence judge accepts a hook record for a touched file that was re-indexed
 after the run (for example by the commit watcher) only when the recorded digest
 equals the indexed digest: the run observed exactly those bytes. Evidence that
 agents report through MCP or completions has no such digests and keeps the
 stricter rule: it must be newer than the indexed version of every touched file.
-Only new runs carry digests; existing evidence is not changed.
+Only the hook path can attach a hook label and digests: the daemon removes them
+from metadata that the CLI, MCP or other clients supply. Only new runs carry
+digests; existing evidence is not changed.
 
 ## 6. Day to day: what's automatic vs. what you do
 
