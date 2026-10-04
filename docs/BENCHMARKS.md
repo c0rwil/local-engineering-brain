@@ -40,6 +40,44 @@ sites or consumers. Its graders were calibrated locally, but the suite awaits
 operator review of prompts and graders. No agent has run against it, and it
 reports no results.
 
+The v2 runner can also run both arms with the Codex CLI (`--agent codex`), with
+isolated per-arm Codex homes and a model-free loopback preflight; see the
+[v2 protocol](../benchmarks/real-repo-v2/README.md#codex-arm). No Codex collection
+has been run, so there are no Codex results.
+
+## Retrieval regression gate
+
+[`tests/retrieval_regression.rs`](../tests/retrieval_regression.rs) is a hermetic
+check of source retrieval that runs with `cargo test` and as a named step in CI.
+The frozen-snapshot navigation harness above needs a private brain; this gate
+does not. An isolated `engramd` indexes the committed synthetic repository in
+`tests/fixtures/retrieval_repo`. That repository has Rust, Python and TypeScript
+files: helpers, call sites, and a shared environment guard with three users.
+The gate then compiles context for 16 authored probes.
+
+| Check | Threshold |
+|---|---|
+| Intended file in the pack | Every positive probe |
+| Ranking | First pointer for exact identifiers and paths; first two for natural language |
+| Definition in the first five pointers | Every probe marked required (10); one known gap is reported only |
+| Filler | Unmatched, missing-path, stop-word and partial-identifier probes add no items or dynamic context; positive probes stay within a pointer bound |
+| Budget | `selected_tokens` and the rendered estimate stay within budget, including a 64–1,600 token sweep |
+| Off mode | Exactly zero injection for every probe |
+| Determinism | A repeated compilation selects the same sources |
+
+Assertions resolve each item to its indexed file path and symbol instead of
+parsing pointer text, so formats such as line ranges can change without
+breaking the gate. Thresholds are floors. They pass on the current compiler.
+A local check made them fail under six deliberate regressions: reversed
+ranking, disabled identifier scoring, removed relevance filters, removed
+exact-path boost, unbounded source budgets and off-mode injection. Two gaps
+are reported but not gated. The prose probe for the TypeScript session module
+selects the file rather than `refreshSessionToken`. The shared-lock probe
+selects none of the guard's three call sites, which a related-use cue would
+need to cover. Run `cargo test --test retrieval_regression -- --nocapture` to
+print the per-probe report. Passing this gate is retrieval evidence only; it
+does not measure agent outcomes or provider usage.
+
 ## Headline results
 
 | Axis | Control | With Engram | Evidence |

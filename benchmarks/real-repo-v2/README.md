@@ -93,3 +93,107 @@ Publish a new report with the frozen suite/runtime hashes and aggregate results.
 Retain private prompts, patches, traces, grader logs, calibration evidence and
 any aborted infrastructure attempts. Do not infer a causal v1-to-v2 improvement
 from a comparison whose task contracts and collection dates changed.
+
+## Codex arm
+
+`--agent codex` runs both arms with the Codex CLI (`codex exec`) instead of
+Claude Code; the default remains `claude`. The schedule, fixtures, prompts,
+graders, wall limits and classification are the same. A Codex collection is a
+separate experiment: use separate data and active roots, and compare Codex Off
+with Codex Brain only, never with a Claude collection. No Codex collection has
+been run yet.
+
+Each attempt gets a fresh `CODEX_HOME` and a private `HOME` for the Codex
+process, so user configuration, credential files, skills, memories, hooks and
+MCP servers do not leak in. Tool commands keep the real `HOME` so toolchains
+resolve as in the Claude arm. The adapter is
+[`real_repo_codex.py`](../../scripts/real_repo_codex.py). Both arms share one
+generated `config.toml`:
+
+- the pinned model and reasoning effort, `approval_policy = "never"`, no login
+  shell, web search disabled and history persistence off;
+- identical feature flags, with memories, multi-agent, apps, plugins, browser
+  and computer use, image generation, shell snapshots, skill search and
+  unbounded connection retries disabled (bounded retries make a provider outage
+  an unscorable `turn.failed` rather than a wall-clock failure);
+- a permission profile that mirrors the Claude sandbox: evidence, fixtures, the
+  Engram checkout, source repositories, `~/.engram`, `~/.codex`, `~/.claude`,
+  this trial's Engram state and Codex homes, and other or later trial roots are
+  unreadable; writes are limited to the checkout and the trial scratch
+  directory; the checkout's `.engram` is read-only; network access is off.
+
+The arms differ only in the treatment. Brain enables Codex hooks, installed
+with `engram hooks codex --install` into that attempt's `CODEX_HOME`, and
+registers `engram-mcp` with the attempt's database and socket and no daemon
+autostart. Off disables hooks and has no MCP servers. Unlike the Claude v2
+collection, the Brain arm therefore includes MCP tools.
+
+Codex runs hooks only after they are trusted. The runner verifies that every
+installed handler runs the pinned Engram binary. It then writes the same
+record that `/hooks` review stores, `[hooks.state."<key>"] trusted_hash`, into
+that attempt's isolated `config.toml`. The key and hash rule matches
+`src/codex_trust.rs`, which was checked against the pinned Codex binary's
+`hooks/list`. Trust is never written for a home outside a runner-owned active
+root, including `~/.codex`. `--codex-hook-trust bypass` instead passes the
+documented automation flag `--dangerously-bypass-hook-trust`. A checkout
+containing `.codex` is refused, because project hooks or configuration would
+bypass these controls.
+
+Credentials come only from the `CODEX_API_KEY` environment variable, which
+Codex documents for `codex exec`. The runner passes it to the Codex process,
+excludes it from tool commands, and never records it. The isolated homes do
+not support a ChatGPT sign-in; using one would need a separate, reviewed
+operator procedure.
+
+Telemetry comes from each attempt's rollout files in `CODEX_HOME/sessions`
+and the `--json` event stream. `token_count` rows are cumulative per session
+file. As in `src/usage_capture.rs`, only increments are summed, identical rows
+add nothing, and a decrease starts a new baseline without inventing usage.
+A reset or missing counter marks usage as partial, so it never enters paired
+savings. Codex input includes cached input and output includes reasoning. The
+record keeps the shared meaning: `input_tokens` is uncached input,
+`cache_read_input_tokens` is cached input, processed input is Codex input,
+total is input plus output, and `reasoning_output_tokens` is reported
+separately. Tool calls are model-issued function, custom and shell calls,
+deduplicated by `call_id`. Codex reports no USD estimate and `codex exec` has
+no budget cap, so only the wall limit applies.
+
+A hook that runs while the arm's daemon is down loses its record and starts a
+replacement daemon on the trial's state. To keep any hook process that
+outlives Codex from doing so, the runner waits up to 45 seconds for the
+remaining processes in Codex's process group, then stops any stragglers,
+before it stops the daemon. Agent wall time ends when Codex exits. The wait
+is recorded separately (`agent_hook_drain_seconds`,
+`agent_hook_stragglers_stopped`).
+
+Before collection, run the model-free preflight
+[`preflight_real_repo_codex.py`](../../scripts/preflight_real_repo_codex.py).
+It builds each arm's exact Codex home and drives the pinned binary against a
+scripted loopback endpoint; no model is called and no credentials are read.
+It checks feature flags, MCP servers, the hook-trust record, and the absence
+of user skills from the model-visible prompt input. Through Codex's real exec
+tool, it checks reads, writes, loopback TCP and Unix sockets, and the tool
+environment. It also checks Brain hook delivery and the daemon receipt, that
+the parser recovers the scripted usage exactly, and that no hook restarts the
+arm's daemon after the session. With persisted trust no
+bypass flag is passed, so Brain hook delivery shows that Codex accepted the
+trust entries. The runner refuses to collect without a passing proof for the
+same binaries, model, effort, trust mode and scripts.
+
+```sh
+python3 scripts/run_real_repo_followup.py --agent codex --codex-model MODEL \
+  --data /private/tmp/erp26-codex-data --active /private/tmp/erp26work-codex-active \
+  --engram-release RELEASE --prepare-only
+python3 scripts/preflight_real_repo_codex.py --codex-model MODEL \
+  --data /private/tmp/erp26-codex-data --active /private/tmp/erp26work-codex-active \
+  --engram-release RELEASE
+CODEX_API_KEY=... caffeinate -dims python3 scripts/run_real_repo_followup.py \
+  --agent codex --codex-model MODEL \
+  --data /private/tmp/erp26-codex-data --active /private/tmp/erp26work-codex-active \
+  --engram-release RELEASE
+```
+
+The Codex CLI is found on `PATH`, in `~/.cache/codex-runtimes`, in the Codex or
+ChatGPT app bundle (`Contents/Resources/codex`), or through Spotlight; `--codex`
+overrides it. The manifest records the binary hash and version, model, effort,
+hook-trust mode and a digest of the generated configuration.

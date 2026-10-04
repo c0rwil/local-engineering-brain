@@ -77,6 +77,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.os }}
+      # Hermetic retrieval regression gate: an isolated engramd indexes the
+      # synthetic repository in tests/fixtures/retrieval_repo and checks ranking,
+      # definition hits, no filler, budgets and zero off-mode injection. The full
+      # run below includes it too; this step fails fast and prints the report.
+      - name: retrieval regression gate
+        run: cargo test --locked --test retrieval_regression -- --nocapture
       # This is the release gate from README.md verbatim, except that the two
       # latency/RSS assertions in tests/performance.rs are filtered out at the
       # libtest level. They still compile here (so a broken perf test is
@@ -88,6 +94,12 @@ jobs:
           cargo test --locked --all-targets --all-features -- \
             --skip warmed_context_compile_stays_under_hard_v1_ceiling \
             --skip medium_daemon_concurrency_stays_within_latency_rss_and_token_bounds
+      # The real-repository harness scripts are macOS-only (APFS clones and
+      # /private/tmp sandbox roots), so their hermetic Python tests run on the
+      # macOS leg. They use fake agent CLIs; no model or network is involved.
+      - name: python harness tests (macOS)
+        if: runner.os == 'macOS'
+        run: python3 -B -m unittest discover -s tests -p 'test_*.py'
 
   release-build:
     name: release build (${{ matrix.os }})

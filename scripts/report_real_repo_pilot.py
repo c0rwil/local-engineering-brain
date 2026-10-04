@@ -28,6 +28,7 @@ MANIFEST_KEYS = (
     "cost_cap_usd_estimate", "platform_dependencies", "private_dependencies", "rustc", "python", "node", "pnpm",
     "known_scope_limits",
     "suite", "controls_sha256", "runner_library_sha256", "claude_sha256", "runtime_preflight_sha256",
+    "agent", "codex_version", "codex_sha256", "codex_hook_trust", "codex_config_sha256", "codex_auth",
 )
 MODEL_NUMBERS = (
     "inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens",
@@ -78,7 +79,9 @@ def redact_record(record):
         model: {name: number(values.get(name)) for name in MODEL_NUMBERS if number(values.get(name)) is not None}
         for model, values in (raw_metrics.get("model_usage") or {}).items() if isinstance(values, dict)
     }
-    metrics["models"] = sorted(metrics["model_usage"])
+    # Claude reports models in modelUsage; Codex records them from turn context.
+    metrics["models"] = sorted(metrics["model_usage"]) or sorted(
+        model for model in (raw_metrics.get("models") or []) if isinstance(model, str))
     denials = raw_metrics.get("permission_denials")
     metrics["permission_denial_count"] = len(denials) if isinstance(denials, list) else None
     diagnostics = raw_metrics.get("diagnostics") or {}
@@ -152,6 +155,10 @@ def format_number(value, *, decimals=0):
 def markdown(summary, manifest, fixtures, artifacts=()):
     progress = summary["progress"]
     followup = manifest.get("suite") == "real-repo-v2"
+    codex = manifest.get("agent") == "codex"
+    agent_line = (f"Codex CLI `{manifest.get('codex_version', 'unavailable')}`. " if codex
+                  else f"Claude Code `{manifest.get('claude_version', 'unavailable')}`. ")
+    treatment = "source-only automatic hooks and the engram MCP server" if codex else "source-only automatic hooks"
     lines = [
         "# Follow-up real-repository task benchmark" if manifest.get("suite") == "real-repo-v2" else "# Real-repository task pilot", "",
         f"**{progress['status'].replace('_', ' ').capitalize()}: {progress['completed_records']}/{progress['planned_runs']} trial records completed.** "
@@ -159,8 +166,8 @@ def markdown(summary, manifest, fixtures, artifacts=()):
         f"{progress['in_progress_trials']} attempts remain active; {progress.get('interrupted_trials', 0)} were interrupted without a final record. "
         f"Completed outcomes include {progress['infrastructure_outcomes']} infrastructure/unscorable outcomes.", "",
         f"Pinned agent: `{manifest.get('model', 'unavailable')}`, effort `{manifest.get('effort', 'unavailable')}`, "
-        f"Claude Code `{manifest.get('claude_version', 'unavailable')}`. "
-        f"Protocol: {manifest.get('repetitions', 'unavailable')} repetitions per task and arm, Engram off versus source-only automatic hooks.", "",
+        + agent_line +
+        f"Protocol: {manifest.get('repetitions', 'unavailable')} repetitions per task and arm, Engram off versus {treatment}.", "",
         "All tables below use completed records only. Started or interrupted runs without final records can have additional unmeasured resource use. "
         "Token totals are provider input + cache creation + cache reads + output; they are processed tokens, not an estimate from text length.", "",
         "## Correctness and observed resources", "",
@@ -202,13 +209,14 @@ def markdown(summary, manifest, fixtures, artifacts=()):
         lines.append(f"| {arm} | " + " | ".join(values) + " |")
     lines += [
         "", "Provider token categories remain separate because cache reads, cache writes, ordinary input and output have different prices. These are all-attempt totals, including reported usage from interrupted runs.", "",
-        "| Arm | Ordinary input | Cache creation | Cache reads | Output |",
-        "|---|---:|---:|---:|---:|",
+        "| Arm | Ordinary input | Cache creation | Cache reads | Output |" + (" Reasoning (within output) |" if codex else ""),
+        "|---|---:|---:|---:|---:|" + ("---:|" if codex else ""),
     ]
+    categories = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
     for arm in ("off", "brain"):
         block = summary["all_attempts"][arm]
         cells = []
-        for name in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"):
+        for name in (*categories, "reasoning_output_tokens") if codex else categories:
             coverage = block["measurement_coverage"][name]
             cells.append(format_number(block["totals_observed"][name]) + (" (partial)" if coverage.get("partial", 0) else "") + f" [{coverage['available']}/{coverage['total']} reported]")
         lines.append(f"| {arm} | " + " | ".join(cells) + " |")
@@ -301,9 +309,11 @@ def markdown(summary, manifest, fixtures, artifacts=()):
         "", "## Scope and limitations", "",
         "- This is a four-task, three-repetition diagnostic, not a general productivity estimate or a statistically conclusive trial.",
         "- The model and effort are pinned. Model drift or missing brain delivery is classified as infrastructure failure rather than a successful Engram trial.",
-        "- Claude-reported USD figures are usage estimates under a subscription, not incremental cash charges or billing receipts.",
+        ("- Codex reports no USD estimate, so USD columns are unavailable; Codex input includes cached input and output includes reasoning, mapped as described in real_repo_metrics.parse_codex_trace." if codex
+         else "- Claude-reported USD figures are usage estimates under a subscription, not incremental cash charges or billing receipts."),
         "- Platform dependencies use the prepared installed cache and differ from the historical lockfile; both arms use the same prepared environment.",
-        "- Engram uses source-only historical indexes with automatic hooks, no accumulated learned memories, and no MCP tools. This does not measure the full second-brain configuration.",
+        ("- Engram uses source-only historical indexes with automatic Codex hooks and the engram MCP server, and no accumulated learned memories. This does not measure the full second-brain configuration." if codex
+         else "- Engram uses source-only historical indexes with automatic hooks, no accumulated learned memories, and no MCP tools. This does not measure the full second-brain configuration."),
         "- Provider cache reads and cache creation are included in processed-token totals. Cache pricing differs, so processed-token reduction and estimated USD reduction need not agree.",
         f"- Derived completion classification uses revision `{RECORD_CLASSIFICATION_REVISION}`. Raw records and behavioral grades are preserved; runtime errors are infrastructure outcomes and explicit budget exhaustion is failure unless infrastructure already invalidates the trial.",
         "- Manifest runner/metrics hashes identify frozen collection-start sources. The separate analysis_provenance hashes identify the scripts used to generate this report; post-collection classification does not replace raw measurements.",
