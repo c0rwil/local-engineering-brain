@@ -3174,24 +3174,28 @@ fn run_hook_payload(
                         .iter()
                         .map(|caller| (caller.label.clone(), caller.file_path.clone()))
                         .collect();
+                    let brief = engram::agenthooks::FileBrief {
+                        file_path: &relative,
+                        symbols: &symbols,
+                        callers: &callers,
+                        imports: &shape.imports,
+                        size_bytes: shape.size_bytes,
+                    };
                     // Bounded by the client's whole-message cap, so a brief
                     // that misses the remaining budget can still fit later.
                     if let Some(text) = engram::agenthooks::render_file_shape(
-                        &engram::agenthooks::FileBrief {
-                            file_path: &relative,
-                            symbols: &symbols,
-                            callers: &callers,
-                            imports: &shape.imports,
-                            size_bytes: shape.size_bytes,
-                        },
+                        &brief,
                         config.context.large_file_bytes,
                         byte_limit,
                     ) {
+                        // Once per file per task: a new task re-briefs only
+                        // a brief that lists other sources.
                         if text.len() <= byte_limit.saturating_sub(pretool_context.len())
-                            && engram::agenthooks::mark_file_briefed(
+                            && engram::agenthooks::claim_file_brief(
                                 &state_dir,
                                 &delivery_scope,
-                                &relative,
+                                &brief,
+                                &prompt,
                             )
                         {
                             pretool_context.push_str(&text);

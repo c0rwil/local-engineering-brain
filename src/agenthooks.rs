@@ -426,8 +426,8 @@ pub fn release_claim(state_dir: &Path, session_id: &str, tag: &str) {
     let _ = std::fs::remove_file(path);
 }
 
-/// Sidecar tracking which files a session has already been briefed on, so
-/// pre-tool shape injection fires once per file per session.
+/// Sidecar tracking which files a conversation has been briefed on, and for
+/// which task, so pre-tool shape injection fires once per file per task.
 #[must_use]
 pub fn session_files_path(state_dir: &Path, session_id: &str) -> PathBuf {
     session_state_path(state_dir, session_id).with_extension("files")
@@ -742,24 +742,84 @@ pub fn save_usage_receipts(
     )
 }
 
-/// Record `file_path` as briefed; returns false when it already was (skip).
+/// Files one conversation keeps brief records for; past this, no file is
+/// briefed for the first time.
+const MAX_BRIEFED_FILES: usize = 200;
+
+/// What a conversation was last briefed about one file.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+struct BriefRecord {
+    /// Digest of the task the file was last considered for.
+    task: String,
+    /// Source identity of the brief last delivered (see [`brief_sources`]).
+    sources: String,
+}
+
+/// Claim delivery of `brief` for the task `task_text` (the session's
+/// pending prompt). A file is briefed at most once per task: the first time,
+/// then once more after the task changes, and only if the brief now lists
+/// other sources than the one last delivered. A brief that differs only in
+/// order, line spans or size is not repeated. Returns false to skip; the
+/// claim is recorded before the brief is emitted.
 #[must_use]
-pub fn mark_file_briefed(state_dir: &Path, session_id: &str, file_path: &str) -> bool {
-    let path = session_files_path(state_dir, session_id);
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    if existing.lines().any(|line| line == file_path) {
-        return false;
+pub fn claim_file_brief(
+    state_dir: &Path,
+    scope: &str,
+    brief: &FileBrief<'_>,
+    task_text: &str,
+) -> bool {
+    let path = session_files_path(state_dir, scope);
+    let task = crate::experience::sha256(task_text.as_bytes());
+    let sources = brief_sources(brief);
+    let mut records = read_brief_records(&path, &task);
+    let full = records.len() >= MAX_BRIEFED_FILES;
+    let deliver = match records.get_mut(brief.file_path) {
+        Some(record) if record.task == task => false,
+        Some(record) => {
+            // A new task: considered once, whether or not it re-briefs.
+            record.task.clone_from(&task);
+            let changed = record.sources != sources;
+            if changed {
+                record.sources = sources;
+            }
+            changed
+        }
+        // Hard cap: stop briefing new files rather than growing unbounded.
+        None if full => return false,
+        None => {
+            records.insert(brief.file_path.to_owned(), BriefRecord { task, sources });
+            true
+        }
+    };
+    let recorded = serde_json::to_vec(&records)
+        .ok()
+        .is_some_and(|bytes| write_private_sidecar(&path, &bytes).is_ok());
+    deliver && recorded
+}
+
+fn read_brief_records(path: &Path, task: &str) -> BTreeMap<String, BriefRecord> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return BTreeMap::new();
+    };
+    if let Ok(records) = serde_json::from_slice(&bytes) {
+        return records;
     }
-    if existing.lines().count() >= 200 {
-        return false; // hard cap: stop briefing rather than growing unbounded
-    }
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let mut updated = existing;
-    updated.push_str(file_path);
-    updated.push('\n');
-    std::fs::write(&path, updated).is_ok()
+    // Older hooks listed one briefed path per line. Those briefs count as
+    // delivered for the current task, so only a later task can re-brief.
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .filter(|line| !line.is_empty())
+        .take(MAX_BRIEFED_FILES)
+        .map(|line| {
+            (
+                line.to_owned(),
+                BriefRecord {
+                    task: task.to_owned(),
+                    sources: String::new(),
+                },
+            )
+        })
+        .collect()
 }
 
 /// Root of the session relay: per-session inbox directories under the
@@ -986,8 +1046,31 @@ pub struct FileBrief<'a> {
     pub size_bytes: Option<u64>,
 }
 
-/// Definitions listed in one file brief.
+/// Definitions, callers and imports listed in one file brief.
 const BRIEF_SYMBOLS: usize = 20;
+const BRIEF_CALLERS: usize = 12;
+const BRIEF_IMPORTS: usize = 12;
+
+/// Source identity of a brief: the definitions, callers and imports it
+/// lists, ignoring their order, line spans and the size line, like the
+/// delivery signature of a task source map.
+#[must_use]
+pub fn brief_sources(brief: &FileBrief<'_>) -> String {
+    let mut symbols: Vec<(&str, &str)> = brief
+        .symbols
+        .iter()
+        .take(BRIEF_SYMBOLS)
+        .map(|symbol| (symbol.kind.as_str(), symbol.label.as_str()))
+        .collect();
+    symbols.sort_unstable();
+    let mut callers: Vec<&(String, String)> = brief.callers.iter().take(BRIEF_CALLERS).collect();
+    callers.sort_unstable();
+    let mut imports: Vec<&String> = brief.imports.iter().take(BRIEF_IMPORTS).collect();
+    imports.sort_unstable();
+    crate::experience::sha256(
+        &serde_json::to_vec(&(brief.file_path, symbols, callers, imports)).unwrap_or_default(),
+    )
+}
 
 /// Render a pre-tool file-shape brief of at most `byte_cap` bytes: with the
 /// checked line spans when that form fits, otherwise without them. A file of
@@ -1062,7 +1145,7 @@ fn file_brief_text(brief: &FileBrief<'_>, spans: bool, large_file_bytes: u64) ->
         let listed: Vec<String> = brief
             .callers
             .iter()
-            .take(12)
+            .take(BRIEF_CALLERS)
             .map(|(label, file)| format!("{} [{}]", inline(label), inline(file)))
             .collect();
         let _ = writeln!(text, "Called from elsewhere by: {}", listed.join(", "));
@@ -1074,7 +1157,7 @@ fn file_brief_text(brief: &FileBrief<'_>, spans: bool, large_file_bytes: u64) ->
             brief
                 .imports
                 .iter()
-                .take(12)
+                .take(BRIEF_IMPORTS)
                 .map(|import| inline(import))
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -3442,16 +3525,87 @@ mod tests {
         );
     }
 
+    fn brief_of<'a>(file_path: &'a str, symbols: &'a [BriefSymbol]) -> FileBrief<'a> {
+        FileBrief {
+            file_path,
+            symbols,
+            callers: &[],
+            imports: &[],
+            size_bytes: None,
+        }
+    }
+
     #[test]
     fn file_briefing_dedupes_per_session() {
         let temp = tempfile::TempDir::new().expect("temp");
-        assert!(mark_file_briefed(temp.path(), "s1", "src/a.rs"));
-        assert!(!mark_file_briefed(temp.path(), "s1", "src/a.rs"));
-        assert!(mark_file_briefed(temp.path(), "s1", "src/b.rs"));
+        let symbols = [def("Function", "run", None)];
+        let (a, b) = (
+            brief_of("src/a.rs", &symbols),
+            brief_of("src/b.rs", &symbols),
+        );
+        assert!(claim_file_brief(temp.path(), "s1", &a, "task"));
+        assert!(!claim_file_brief(temp.path(), "s1", &a, "task"));
+        assert!(claim_file_brief(temp.path(), "s1", &b, "task"));
         assert!(
-            mark_file_briefed(temp.path(), "s2", "src/a.rs"),
+            claim_file_brief(temp.path(), "s2", &a, "task"),
             "per-session"
         );
+    }
+
+    #[test]
+    fn a_new_task_rebriefs_a_file_once_when_its_sources_differ() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let first = [
+            def("Function", "alpha", Some((1, 3))),
+            def("Function", "beta", Some((5, 7))),
+        ];
+        let reordered = [
+            def("Function", "beta", Some((6, 8))),
+            def("Function", "alpha", Some((1, 3))),
+        ];
+        let other = [
+            def("Function", "gamma", Some((9, 11))),
+            def("Function", "alpha", Some((1, 3))),
+        ];
+        let claim = |symbols: &[BriefSymbol], task: &str| {
+            claim_file_brief(temp.path(), "s", &brief_of("src/a.rs", symbols), task)
+        };
+        assert!(claim(&first, "fix alpha"));
+        // Within one task a file is briefed once, even if its sources change.
+        assert!(!claim(&other, "fix alpha"));
+        // A new task whose brief only reorders or moves spans is not repeated,
+        // and that task has had its one chance.
+        assert!(!claim(&reordered, "fix beta"));
+        assert!(!claim(&other, "fix beta"));
+        // A later task whose brief lists other sources re-briefs once.
+        assert!(claim(&other, "fix gamma"));
+        assert!(!claim(&other, "fix gamma"));
+        assert!(!claim(&first, "fix gamma"));
+        // Going back to the first sources in yet another task is a change.
+        assert!(claim(&first, "fix alpha again"));
+        assert_ne!(
+            brief_sources(&brief_of("src/a.rs", &first)),
+            brief_sources(&brief_of("src/b.rs", &first)),
+            "the file is part of the identity"
+        );
+    }
+
+    #[test]
+    fn older_brief_lists_count_as_delivered_for_the_current_task() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let path = session_files_path(temp.path(), "s");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(&path, "src/a.rs\n").expect("legacy list");
+        let symbols = [def("Function", "alpha", None)];
+        let brief = brief_of("src/a.rs", &symbols);
+        assert!(!claim_file_brief(temp.path(), "s", &brief, "current task"));
+        assert!(claim_file_brief(temp.path(), "s", &brief, "next task"));
+        assert!(claim_file_brief(
+            temp.path(),
+            "s",
+            &brief_of("src/b.rs", &symbols),
+            "next task"
+        ));
     }
 
     #[test]
@@ -3760,9 +3914,22 @@ mod tests {
                 .into_owned()
         };
         assert_eq!(stem(&worker), worker);
-        assert!(mark_file_briefed(temp.path(), &worker, "src/lib.rs"));
+        let symbols = [BriefSymbol {
+            kind: "Function".to_owned(),
+            label: "compute".to_owned(),
+            lines: None,
+            task_match: false,
+        }];
+        let brief = FileBrief {
+            file_path: "src/lib.rs",
+            symbols: &symbols,
+            callers: &[],
+            imports: &[],
+            size_bytes: None,
+        };
+        assert!(claim_file_brief(temp.path(), &worker, &brief, "task"));
         assert!(
-            mark_file_briefed(temp.path(), &scope, "src/lib.rs"),
+            claim_file_brief(temp.path(), &scope, &brief, "task"),
             "the root conversation was never briefed"
         );
         let claim = claim_context_delivery(temp.path(), &worker, "task", &[], 256, None).unwrap();
