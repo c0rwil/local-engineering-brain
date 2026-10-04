@@ -16,7 +16,15 @@ use crate::ids::{EdgeId, NodeId, ProjectId};
 use crate::projects::ResolvedProject;
 use crate::storage::Database;
 
-const EXTRACTOR_VERSION: &str = "tree-sitter-v2";
+/// v2 qualified Rust impl methods. v3 records Python call sites and import
+/// bindings, and calls written inside Rust macro arguments. Definition keys and
+/// digests are unchanged from v2, so a v3 re-extraction keeps their identities.
+const EXTRACTOR_VERSION: &str = "tree-sitter-v3";
+/// Bounds on the extra work v3 does per file.
+const MAX_MACRO_SNIPPETS: usize = 4_096;
+const MAX_MACRO_SNIPPET_BYTES: usize = 1_024 * 1_024;
+const MAX_MACRO_DEPTH: usize = 3;
+const MAX_IMPORT_BINDINGS: usize = 512;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GraphNode {
@@ -602,7 +610,9 @@ impl WorldModel {
                 tombstone_file(transaction, &project.project.id, path, now)?;
             }
             for file in &scan.files {
-                if scan.provider == "tree_sitter" && scan.provider_version == "tree-sitter-v2" {
+                // Rebinding only applies to files whose previous extraction was
+                // native v1; v2 files keep their keys under later versions.
+                if scan.provider == "tree_sitter" && scan.provider_version == EXTRACTOR_VERSION {
                     preserve_native_upgrade_identities(transaction, &project.project.id, file)?;
                 }
                 tombstone_file(transaction, &project.project.id, &file.path, now)?;
@@ -850,7 +860,8 @@ impl SupportedLanguage {
         match self {
             Self::Java => matches!(kind, "method_invocation" | "object_creation_expression"),
             Self::CSharp => matches!(kind, "invocation_expression" | "object_creation_expression"),
-            Self::Ruby => kind == "call",
+            // Python names its call node `call` (since v3).
+            Self::Ruby | Self::Python => kind == "call",
             Self::Php => matches!(
                 kind,
                 "function_call_expression"
@@ -1061,6 +1072,7 @@ fn parse_file(
         },
     );
     let mut edges = BTreeMap::new();
+    let mut macros = Vec::new();
     visit_tree(
         tree.root_node(),
         source,
@@ -1070,8 +1082,10 @@ fn parse_file(
         "",
         &mut nodes,
         &mut edges,
+        &mut macros,
     );
     if matches!(language, SupportedLanguage::Rust) {
+        insert_macro_calls(source, relative, macros, &mut nodes, &mut edges)?;
         repair_rust_ownership(relative, &nodes, &mut edges);
     }
     Ok(FileScan {
@@ -1287,6 +1301,7 @@ fn visit_tree(
     scope: &str,
     nodes: &mut BTreeMap<String, ScannedNode>,
     edges: &mut BTreeMap<String, ScannedEdge>,
+    macros: &mut Vec<PendingMacro>,
 ) {
     let mut child_owner = owner_key.to_owned();
     let mut child_scope = scope.to_owned();
@@ -1356,6 +1371,9 @@ fn visit_tree(
                 });
             insert_edge(edges, owner_key, "IMPORTS", &target_key, 1.0, path);
         }
+        if matches!(language, SupportedLanguage::Python) {
+            insert_python_bindings(node, source, path, nodes);
+        }
     } else if language.is_call(node.kind())
         && let Some(function) = node
             .child_by_field_name("function")
@@ -1385,6 +1403,9 @@ fn visit_tree(
                 digest: sha256(text.as_bytes()),
             });
         insert_edge(edges, owner_key, "CALLS", &target_key, 0.9, path);
+        if matches!(language, SupportedLanguage::Rust) && node.kind() == "macro_invocation" {
+            push_macro_arguments(node, source, owner_key, 0, macros);
+        }
     }
 
     let mut cursor = node.walk();
@@ -1398,8 +1419,254 @@ fn visit_tree(
             &child_scope,
             nodes,
             edges,
+            macros,
         );
     }
+}
+
+/// A Rust macro's argument token tree waiting to be re-parsed for calls.
+struct PendingMacro {
+    owner: String,
+    /// Byte range of the arguments inside the delimiters, in the file.
+    start: usize,
+    end: usize,
+    depth: usize,
+}
+
+fn push_macro_arguments(
+    invocation: Node<'_>,
+    source: &[u8],
+    owner: &str,
+    depth: usize,
+    macros: &mut Vec<PendingMacro>,
+) {
+    let mut cursor = invocation.walk();
+    let Some(tree) = invocation
+        .children(&mut cursor)
+        .filter(|child| child.kind() == "token_tree")
+        .last()
+    else {
+        return;
+    };
+    let (start, end) = (tree.start_byte(), tree.end_byte());
+    let delimited = end >= start + 2
+        && matches!(
+            (source.get(start), source.get(end - 1)),
+            (Some(b'('), Some(b')')) | (Some(b'['), Some(b']')) | (Some(b'{'), Some(b'}'))
+        );
+    if delimited && end - start > 2 {
+        macros.push(PendingMacro {
+            owner: owner.to_owned(),
+            start: start + 1,
+            end: end - 1,
+            depth,
+        });
+    }
+}
+
+/// Rust macro arguments are token trees, so calls such as the one inside
+/// `assert_eq!(load(), 1)` are invisible to the main parse. Re-parse each
+/// argument list as the arguments of a synthetic call and record the calls it
+/// contains exactly as the main parse would, attributed to the macro's
+/// enclosing definition. References that already exist keep their first
+/// non-macro span, so upgrades still see unchanged signatures.
+fn insert_macro_calls(
+    source: &[u8],
+    path: &str,
+    mut pending: Vec<PendingMacro>,
+    nodes: &mut BTreeMap<String, ScannedNode>,
+    edges: &mut BTreeMap<String, ScannedEdge>,
+) -> Result<()> {
+    const PREFIX: &[u8] = b"fn engram_macro_arguments() { engram_arguments(";
+    const SUFFIX: &[u8] = b"); }";
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let mut parser = Parser::new();
+    parser
+        .set_language(&SupportedLanguage::Rust.grammar())
+        .map_err(|error| Error::Structural(format!("parser language setup failed: {error}")))?;
+    let (mut parsed, mut parsed_bytes) = (0_usize, 0_usize);
+    let mut calls = Vec::new();
+    while let Some(arguments) = pending.pop() {
+        let length = arguments.end - arguments.start;
+        if parsed >= MAX_MACRO_SNIPPETS || parsed_bytes + length > MAX_MACRO_SNIPPET_BYTES {
+            break;
+        }
+        parsed += 1;
+        parsed_bytes += length;
+        let snippet = [PREFIX, &source[arguments.start..arguments.end], SUFFIX].concat();
+        let Some(tree) = parser.parse(&snippet, None) else {
+            continue;
+        };
+        // Only spans inside the copied arguments map back to the file.
+        let original = |node: Node<'_>| {
+            let start = node.start_byte().checked_sub(PREFIX.len())?;
+            let end = node.end_byte().checked_sub(PREFIX.len())?;
+            (end <= length).then(|| (arguments.start + start, arguments.start + end))
+        };
+        let mut stack = vec![tree.root_node()];
+        while let Some(node) = stack.pop() {
+            let mut cursor = node.walk();
+            stack.extend(node.children(&mut cursor));
+            let function = match node.kind() {
+                "call_expression" => node.child_by_field_name("function"),
+                "macro_invocation" => {
+                    if arguments.depth + 1 < MAX_MACRO_DEPTH
+                        && let Some((start, end)) = original(node)
+                    {
+                        let mut nested = Vec::new();
+                        push_macro_arguments(
+                            node,
+                            &snippet,
+                            &arguments.owner,
+                            arguments.depth + 1,
+                            &mut nested,
+                        );
+                        pending.extend(nested.into_iter().map(|inner| PendingMacro {
+                            start: inner.start - node.start_byte() + start,
+                            end: inner.end - node.start_byte() + start,
+                            ..inner
+                        }));
+                        debug_assert!(end >= start);
+                    }
+                    node.child_by_field_name("macro")
+                }
+                _ => None,
+            };
+            if let Some((start, end)) = function.and_then(original) {
+                calls.push((start, end, arguments.owner.clone()));
+            }
+        }
+    }
+    // Source order makes the first occurrence define a new reference's span.
+    calls.sort();
+    for (start, end, owner) in calls {
+        let Ok(text) = std::str::from_utf8(&source[start..end]) else {
+            continue;
+        };
+        if text.len() > 200 {
+            continue;
+        }
+        let label = normalize_reference(text);
+        let target_key = format!("reference:{path}:call:{label}");
+        nodes
+            .entry(target_key.clone())
+            .or_insert_with(|| ScannedNode {
+                stable_key: target_key.clone(),
+                kind: "ExternalReference".to_owned(),
+                label,
+                search_aliases: String::new(),
+                file_path: path.to_owned(),
+                language: SupportedLanguage::Rust.name().to_owned(),
+                start_byte: usize_to_u64(start),
+                end_byte: usize_to_u64(end),
+                digest: sha256(text.as_bytes()),
+            });
+        insert_edge(edges, &owner, "CALLS", &target_key, 0.9, path);
+    }
+    Ok(())
+}
+
+/// One node per name a Python import binds: label is the absolute dotted
+/// target and `search_aliases` the bound name. Relative imports resolve
+/// against the importing file's directory. These nodes carry no edges; they
+/// let related-use lookups resolve `alias.function()` calls by module path.
+fn insert_python_bindings(
+    statement: Node<'_>,
+    source: &[u8],
+    path: &str,
+    nodes: &mut BTreeMap<String, ScannedNode>,
+) {
+    let prefix = format!("reference:{path}:binding:");
+    for (bound, target) in python_import_bindings(statement, source, path) {
+        let existing = nodes
+            .range(prefix.clone()..)
+            .take_while(|(key, _)| key.starts_with(&prefix))
+            .count();
+        if existing >= MAX_IMPORT_BINDINGS {
+            return;
+        }
+        if bound.is_empty() || bound.len() > 200 || target.len() > 200 {
+            continue;
+        }
+        let key = format!("{prefix}{bound}");
+        let digest = sha256(format!("{bound}={target}").as_bytes());
+        nodes.entry(key.clone()).or_insert_with(|| ScannedNode {
+            stable_key: key,
+            kind: "ExternalReference".to_owned(),
+            label: target,
+            search_aliases: bound,
+            file_path: path.to_owned(),
+            language: SupportedLanguage::Python.name().to_owned(),
+            start_byte: usize_to_u64(statement.start_byte()),
+            end_byte: usize_to_u64(statement.end_byte()),
+            digest,
+        });
+    }
+}
+
+/// `(bound name, absolute dotted target)` for each name a Python import
+/// binds. `import a.b` binds the whole dotted path as callers spell it.
+fn python_import_bindings(statement: Node<'_>, source: &[u8], path: &str) -> Vec<(String, String)> {
+    let text = |node: Node<'_>| {
+        node.utf8_text(source)
+            .ok()
+            .map(|text| text.split_whitespace().collect::<String>())
+    };
+    let module = match statement.kind() {
+        "import_statement" => Some(String::new()),
+        "import_from_statement" => statement
+            .child_by_field_name("module_name")
+            .and_then(|module| python_module(module, source, path)),
+        _ => None,
+    };
+    let Some(module) = module else {
+        return Vec::new();
+    };
+    let mut bindings = Vec::new();
+    let mut cursor = statement.walk();
+    for name in statement.children_by_field_name("name", &mut cursor) {
+        let (imported, bound) = match name.kind() {
+            "dotted_name" => (text(name), text(name)),
+            "aliased_import" => (
+                name.child_by_field_name("name").and_then(text),
+                name.child_by_field_name("alias").and_then(text),
+            ),
+            _ => continue,
+        };
+        let (Some(imported), Some(bound)) = (imported, bound) else {
+            continue;
+        };
+        let target = if module.is_empty() {
+            imported
+        } else {
+            format!("{module}.{imported}")
+        };
+        bindings.push((bound, target));
+    }
+    bindings
+}
+
+/// The absolute dotted module of `from <module> import`, resolving leading
+/// dots against the importing file's directory; `None` if it climbs past the
+/// repository root.
+fn python_module(module: Node<'_>, source: &[u8], path: &str) -> Option<String> {
+    let text: String = module.utf8_text(source).ok()?.split_whitespace().collect();
+    let dots = text.chars().take_while(|c| *c == '.').count();
+    if dots == 0 {
+        return Some(text);
+    }
+    let mut package: Vec<&str> = path.split('/').collect();
+    package.pop();
+    for _ in 1..dots {
+        package.pop()?;
+    }
+    let rest = &text[dots..];
+    if !rest.is_empty() {
+        package.push(rest);
+    }
+    Some(package.join("."))
 }
 
 fn insert_edge(
@@ -2785,5 +3052,356 @@ mod tests {
             .index(&provider, &project, None)
             .expect_err("prepared limits");
         assert!(error.to_string().contains("prepared limits"));
+    }
+
+    fn call_owners(file: &FileScan) -> BTreeMap<String, BTreeSet<String>> {
+        let labels: BTreeMap<_, _> = file
+            .nodes
+            .iter()
+            .map(|node| (node.stable_key.clone(), node.label.clone()))
+            .collect();
+        let mut calls = BTreeMap::<String, BTreeSet<String>>::new();
+        for edge in file.edges.iter().filter(|edge| edge.relation == "CALLS") {
+            calls
+                .entry(labels[&edge.target_key].clone())
+                .or_default()
+                .insert(labels[&edge.source_key].clone());
+        }
+        calls
+    }
+
+    const PYTHON_HANDLERS: &str = "\
+import os
+import shop.api.services as services
+import a.b.c
+from shop.api.services import cart_service as cart_svc
+from shop.api.services.cart_service import get_cart, CartItem as Item
+from . import sibling
+from ..shared import helpers as shared_helpers
+from typing import (
+    Any,
+    Optional,
+)
+from pkg import *
+
+
+@router.post(\"/checkout\")
+async def handle_checkout(user_id):
+    cart = await cart_svc.get_cart(user_id, 1)
+    local = get_cart(user_id, 2)
+    return Item.from_dict(cart)
+
+
+class Basket:
+    def total(self):
+        return self.fetch().json()
+
+    def fetch(self):
+        return os.path.join(\"a\", \"b\")
+";
+
+    #[test]
+    fn python_call_sites_and_import_bindings_are_extracted() {
+        let path = "src/shop/api/services/handlers.py";
+        let file = parse_file(
+            path,
+            SupportedLanguage::Python,
+            PYTHON_HANDLERS.as_bytes(),
+            sha256(PYTHON_HANDLERS.as_bytes()),
+        )
+        .expect("parse");
+        let calls = call_owners(&file);
+        for (call, owner) in [
+            ("cart_svc.get_cart", "handle_checkout"),
+            ("get_cart", "handle_checkout"),
+            ("Item.from_dict", "handle_checkout"),
+            ("self.fetch", "Basket::total"),
+            ("self.fetch().json", "Basket::total"),
+            ("os.path.join", "Basket::fetch"),
+            ("router.post", path),
+        ] {
+            assert!(
+                calls.get(call).is_some_and(|owners| owners.contains(owner)),
+                "{call} from {owner}: {calls:?}"
+            );
+        }
+        let bindings: BTreeMap<_, _> = file
+            .nodes
+            .iter()
+            .filter(|node| node.stable_key.contains(":binding:"))
+            .map(|node| (node.search_aliases.as_str(), node.label.as_str()))
+            .collect();
+        assert_eq!(
+            bindings,
+            BTreeMap::from([
+                ("Any", "typing.Any"),
+                ("Item", "shop.api.services.cart_service.CartItem"),
+                ("Optional", "typing.Optional"),
+                ("a.b.c", "a.b.c"),
+                ("cart_svc", "shop.api.services.cart_service"),
+                ("get_cart", "shop.api.services.cart_service.get_cart"),
+                ("os", "os"),
+                ("services", "shop.api.services"),
+                ("shared_helpers", "src.shop.api.shared.helpers"),
+                ("sibling", "src.shop.api.services.sibling"),
+            ])
+        );
+        let binding_keys: BTreeSet<_> = file
+            .nodes
+            .iter()
+            .filter(|node| node.stable_key.contains(":binding:"))
+            .map(|node| node.stable_key.as_str())
+            .collect();
+        assert!(
+            file.edges
+                .iter()
+                .all(|edge| !binding_keys.contains(edge.target_key.as_str())
+                    && !binding_keys.contains(edge.source_key.as_str())),
+            "bindings are lookup data, not graph edges"
+        );
+        // Definitions keep their v2 keys, labels and digests.
+        let definitions: BTreeSet<_> = file
+            .nodes
+            .iter()
+            .filter(|node| node.kind != "ExternalReference")
+            .map(|node| node.stable_key.as_str())
+            .collect();
+        assert_eq!(
+            definitions,
+            BTreeSet::from([
+                "file:src/shop/api/services/handlers.py",
+                "symbol:src/shop/api/services/handlers.py:Function:Basket::fetch",
+                "symbol:src/shop/api/services/handlers.py:Function:Basket::total",
+                "symbol:src/shop/api/services/handlers.py:Function:handle_checkout",
+                "symbol:src/shop/api/services/handlers.py:Type:Basket",
+            ])
+        );
+        // A relative import above the repository root binds nothing.
+        let shallow = parse_file(
+            "top.py",
+            SupportedLanguage::Python,
+            b"from .. import nowhere\nfrom . import beside\n",
+            sha256(b"x"),
+        )
+        .expect("parse");
+        let shallow: Vec<_> = shallow
+            .nodes
+            .iter()
+            .filter(|node| node.stable_key.contains(":binding:"))
+            .map(|node| (node.search_aliases.as_str(), node.label.as_str()))
+            .collect();
+        assert_eq!(shallow, [("beside", "beside")]);
+    }
+
+    #[test]
+    fn rust_calls_inside_macro_arguments_are_extracted_without_moving_spans() {
+        let source = "\
+fn check() {
+    assert_eq!(settings_for_test(), helper());
+    assert!(matches!(load_value(), Some(_)));
+    let values = vec![Item::new(1), Item::new(2)];
+    println!(\"{}\", values.len());
+    helper();
+}
+";
+        let file = parse_file(
+            "tests/check.rs",
+            SupportedLanguage::Rust,
+            source.as_bytes(),
+            sha256(source.as_bytes()),
+        )
+        .expect("parse");
+        let calls = call_owners(&file);
+        for call in [
+            "assert_eq",
+            "settings_for_test",
+            "helper",
+            "assert",
+            "matches",
+            "load_value",
+            "Some",
+            "vec",
+            "Item::new",
+            "println",
+            "values.len",
+        ] {
+            assert!(
+                calls
+                    .get(call)
+                    .is_some_and(|owners| owners.contains("check")),
+                "{call}: {calls:?}"
+            );
+        }
+        let span = |label: &str| {
+            file.nodes
+                .iter()
+                .find(|node| node.stable_key == format!("reference:tests/check.rs:call:{label}"))
+                .map(|node| usize::try_from(node.start_byte).unwrap())
+                .expect("reference")
+        };
+        // The ordinary call keeps the reference span; macro-only calls point
+        // at their first occurrence inside the arguments.
+        assert_eq!(span("helper"), source.rfind("helper();").unwrap());
+        assert_eq!(span("Item::new"), source.find("Item::new").unwrap());
+        assert_eq!(span("load_value"), source.find("load_value").unwrap());
+        // Unbalanced or empty arguments add nothing and never fail a scan.
+        for broken in [
+            "fn f() { foo!(); }",
+            "fn f() { bar!(a(1); }",
+            "fn f() { baz![; }",
+        ] {
+            parse_file(
+                "src/broken.rs",
+                SupportedLanguage::Rust,
+                broken.as_bytes(),
+                sha256(broken.as_bytes()),
+            )
+            .expect("tolerant parse");
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn v3_upgrade_reextracts_once_and_keeps_identities_and_anchors() {
+        use crate::memory::{MemoryDraft, MemoryStatus, MemoryStore};
+
+        let (_temp, database, project) = fixture();
+        fs::write(
+            project.root.join("worker.py"),
+            "from tasks import queue as jobs\n\nclass Worker:\n    def run(self):\n        return self.step()\n\n    def step(self):\n        return jobs.pop()\n",
+        )
+        .expect("python");
+        fs::write(
+            project.root.join("lib.rs"),
+            "pub struct Engine;\nimpl Engine { pub fn run() { assert!(helper()); } }\nfn helper() -> bool { true }\n",
+        )
+        .expect("rust");
+        let world = WorldModel::new(database.clone());
+        let provider = TreeSitterProvider::new(100, 1_000_000, 10_000, 20_000, 16_000_000);
+        world.index(&provider, &project, None).expect("index");
+        // Reproduce a v2 index: same definitions, no v3-only references.
+        database
+            .write_immediate(|tx| {
+                tx.execute(
+                    "DELETE FROM nodes WHERE kind='ExternalReference' AND (
+                       (language='python' AND (stable_key LIKE 'reference:%:call:%'
+                                               OR stable_key LIKE 'reference:%:binding:%'))
+                       OR stable_key='reference:lib.rs:call:helper')",
+                    [],
+                )?;
+                tx.execute(
+                    "UPDATE structural_scans SET provider_version='tree-sitter-v2'",
+                    [],
+                )?;
+                tx.execute("UPDATE nodes SET extractor_version='tree-sitter-v2'", [])?;
+                tx.execute("UPDATE edges SET extractor_version='tree-sitter-v2'", [])?;
+                Ok(())
+            })
+            .expect("simulate v2");
+        let definition = |label: &str| {
+            world
+                .search_symbols(&project.project.id, label, 20)
+                .expect("symbols")
+                .into_iter()
+                .find(|node| node.label == label && node.kind != "ExternalReference")
+                .expect("definition")
+        };
+        let before: Vec<_> = [
+            "Worker",
+            "Worker::run",
+            "Worker::step",
+            "Engine",
+            "Engine::run",
+            "helper",
+        ]
+        .into_iter()
+        .map(|label| (label, definition(label).id))
+        .collect();
+        let memories = MemoryStore::new(database.clone());
+        let memory = memories
+            .create_candidate(
+                &project.project.id,
+                &MemoryDraft {
+                    scope_type: "project".to_owned(),
+                    scope_id: project.project.id.to_string(),
+                    kind: "lesson".to_owned(),
+                    claim: "Worker steps drain the shared queue.".to_owned(),
+                    rationale: "Source inspection.".to_owned(),
+                    confidence: 0.5,
+                    importance: 0.5,
+                    tags: Vec::new(),
+                    valid_from_commit: None,
+                    valid_to_commit: None,
+                    trust_source: "agent_inference".to_owned(),
+                    evidence_ids: Vec::new(),
+                    source_task_ids: Vec::new(),
+                    node_ids: before.iter().map(|(_, id)| id.clone()).collect(),
+                },
+            )
+            .expect("anchored memory");
+        assert!(
+            world
+                .latest_index_status(&project.project.id)
+                .expect("status")
+                .expect("scan")
+                .needs_reindex
+        );
+        let upgraded = world
+            .index(&provider, &project, Some(&[]))
+            .expect("upgrade");
+        assert!(!upgraded.incremental);
+        assert_eq!(upgraded.parsed_files, 2, "unchanged files re-extract once");
+        for (label, id) in &before {
+            assert_eq!(&definition(label).id, id, "{label} keeps its identity");
+        }
+        assert_eq!(
+            memories
+                .mark_symbol_drift_suspect(&project.project.id)
+                .expect("drift")
+                .invalidated,
+            0
+        );
+        assert_eq!(
+            memories
+                .get(&memory.id)
+                .expect("memory")
+                .expect("record")
+                .status,
+            MemoryStatus::Active
+        );
+        let references: BTreeSet<String> = database
+            .with_reader(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT n.label FROM edges e JOIN nodes n ON n.id=e.target_id
+                     WHERE e.relation='CALLS' AND e.tombstoned_at_ms IS NULL
+                       AND n.tombstoned_at_ms IS NULL",
+                )?;
+                let rows = statement.query_map([], |row| row.get(0))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .expect("references");
+        for call in ["self.step", "jobs.pop", "helper"] {
+            assert!(references.contains(call), "{call}: {references:?}");
+        }
+        let versions: Vec<String> = database
+            .with_reader(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT DISTINCT extractor_version FROM nodes WHERE tombstoned_at_ms IS NULL",
+                )?;
+                let rows = statement.query_map([], |row| row.get(0))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .expect("versions");
+        assert_eq!(versions, [EXTRACTOR_VERSION]);
+        assert!(
+            !world
+                .latest_index_status(&project.project.id)
+                .expect("status")
+                .expect("scan")
+                .needs_reindex
+        );
+        let again = world.index(&provider, &project, None).expect("unchanged");
+        assert_eq!(again.parsed_files, 0);
+        assert_eq!(again.unchanged_files, 2);
     }
 }

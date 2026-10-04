@@ -1,14 +1,19 @@
 //! Bounded related-use lookup for a task-relevant definition.
 //!
 //! The native indexer records every call as an `ExternalReference` node in the
-//! calling file, labelled with the callee expression text; it does not resolve
-//! imports or receivers. This module therefore reports two separate facts:
+//! calling file, labelled with the callee expression text, and each Python
+//! import as a binding from the bound name to its dotted target; it resolves
+//! neither imports nor receivers. This module therefore reports two separate
+//! facts:
 //!
-//! - a caller, only when the call text names the definition exactly, in the
-//!   same language family, and resolves to it: within the definition's file
-//!   when no other definition there has the name; from another file only when
-//!   the name is unique in the repository and the calling file imports it (or
-//!   shares the directory in a language with package-wide visibility);
+//! - a caller, only when the call text resolves to the definition, in the
+//!   same language family: the exact name within the definition's file when
+//!   no other definition there has it, or from another file when the name is
+//!   unique in the repository and the calling file imports it (or shares the
+//!   directory in a language with package-wide visibility); within the
+//!   definition's file, `self.m()`, `Self::m()`, `this.m()` or Python
+//!   `cls.m()` from another member of the same owner, or Python `Owner.m()`;
+//!   or a Python call through an import of the definition's module or name;
 //! - a shared call: another definition in the same file that makes the same
 //!   call expression as the definition, such as acquiring the same lock. This
 //!   is a textual co-use, never presented as a dependency between the two.
@@ -16,7 +21,7 @@
 //! Direct graph edges into the definition (for example from an external graph
 //! export) are reported as edges. Call text that does not resolve is ignored.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use rusqlite::{OptionalExtension, params};
@@ -219,21 +224,25 @@ fn collect_callers(
             },
         )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let mut callers = connection.prepare_cached(
-        "SELECT u.id,u.kind,u.label,u.file_path
-         FROM edges e INDEXED BY edges_target_active CROSS JOIN nodes u ON u.id=e.source_id
-         WHERE e.project_id=?1 AND e.target_id=?2 AND e.relation='CALLS'
-           AND e.tombstoned_at_ms IS NULL AND u.tombstoned_at_ms IS NULL
-           AND u.id<>?3 AND u.kind<>'ExternalReference' AND u.file_path IS NOT NULL
-         ORDER BY u.id LIMIT ?4",
-    )?;
+    let mut callers = Callers {
+        statement: connection.prepare_cached(
+            "SELECT u.id,u.kind,u.label,u.file_path
+             FROM edges e INDEXED BY edges_target_active CROSS JOIN nodes u ON u.id=e.source_id
+             WHERE e.project_id=?1 AND e.target_id=?2 AND e.relation='CALLS'
+               AND e.tombstoned_at_ms IS NULL AND u.tombstoned_at_ms IS NULL
+               AND u.id<>?3 AND u.kind<>'ExternalReference' AND u.file_path IS NOT NULL
+             ORDER BY u.id LIMIT ?4",
+        )?,
+        project_id: &anchor.project_id,
+        anchor_id,
+        inspected: 0,
+    };
     let mut imports = connection.prepare_cached(
         "SELECT label FROM nodes INDEXED BY nodes_project_file
          WHERE project_id=?1 AND file_path=?2 AND kind='ExternalReference'
            AND tombstoned_at_ms IS NULL AND substr(stable_key,1,length(?3))=?3
          ORDER BY id LIMIT 256",
     )?;
-    let mut inspected = 0_i64;
     for (reference, path, language) in references {
         if language_family(language.as_deref()) != language_family(anchor.language.as_deref())
             || (path != anchor.file_path
@@ -241,22 +250,188 @@ fn collect_callers(
         {
             continue;
         }
-        for row in callers.query_map(
-            params![anchor.project_id, reference, anchor_id, MAX_CALL_EDGES],
+        if !callers.add(&reference, None, candidates)? {
+            return Ok(());
+        }
+    }
+    collect_member_calls(connection, anchor, &mut callers, candidates)?;
+    if anchor.language.as_deref() == Some("python") {
+        collect_python_module_calls(connection, anchor, &mut callers, candidates)?;
+    }
+    Ok(())
+}
+
+/// Resolved callers found through call reference nodes, under one budget.
+struct Callers<'a> {
+    statement: rusqlite::CachedStatement<'a>,
+    project_id: &'a str,
+    anchor_id: &'a str,
+    inspected: i64,
+}
+
+impl Callers<'_> {
+    /// Mark each definition calling through `reference` as a caller, keeping
+    /// only labels under `owner` when given. Returns whether budget remains.
+    fn add(
+        &mut self,
+        reference: &str,
+        owner: Option<&str>,
+        candidates: &mut BTreeMap<String, Candidate>,
+    ) -> Result<bool> {
+        if self.inspected >= MAX_CALL_EDGES {
+            return Ok(false);
+        }
+        for row in self.statement.query_map(
+            params![self.project_id, reference, self.anchor_id, MAX_CALL_EDGES],
             read_user,
         )? {
             let (id, kind, label, file_path) = row?;
+            self.inspected += 1;
+            if owner.is_some_and(|owner| !label.starts_with(owner)) {
+                continue;
+            }
             candidates
                 .entry(id)
                 .or_insert_with(|| Candidate::new(kind, label, file_path))
                 .calls = true;
-            inspected += 1;
         }
-        if inspected >= MAX_CALL_EDGES {
+        Ok(self.inspected < MAX_CALL_EDGES)
+    }
+}
+
+/// The reference node for calls spelled `label` in `file`, if any.
+fn call_reference(
+    connection: &rusqlite::Connection,
+    project_id: &str,
+    file: &str,
+    label: &str,
+) -> Result<Option<String>> {
+    Ok(connection
+        .prepare_cached(
+            "SELECT id FROM nodes WHERE project_id=?1 AND stable_key=?2 AND tombstoned_at_ms IS NULL",
+        )?
+        .query_row(
+            params![project_id, format!("reference:{file}:call:{label}")],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// Calls on the owner itself inside the anchor's file: `self.m()` from
+/// another member of the same type (`cls.m()` in Python, `this.m()` in
+/// TypeScript, `Self::m()` in Rust), and Python `Owner.m()`.
+fn collect_member_calls(
+    connection: &rusqlite::Connection,
+    anchor: &Anchor,
+    callers: &mut Callers<'_>,
+    candidates: &mut BTreeMap<String, Candidate>,
+) -> Result<()> {
+    let Some((owner, name)) = anchor.label.rsplit_once("::") else {
+        return Ok(());
+    };
+    let member_of = format!("{owner}::");
+    let mut forms = Vec::new();
+    match language_family(anchor.language.as_deref()) {
+        Some("python") => {
+            forms.push((format!("self.{name}"), Some(member_of.as_str())));
+            forms.push((format!("cls.{name}"), Some(member_of.as_str())));
+            forms.push((format!("{}.{name}", owner.replace("::", ".")), None));
+        }
+        Some("rust") => {
+            forms.push((format!("self.{name}"), Some(member_of.as_str())));
+            forms.push((format!("Self::{name}"), Some(member_of.as_str())));
+        }
+        Some("typescript") => forms.push((format!("this.{name}"), Some(member_of.as_str()))),
+        _ => {}
+    }
+    for (label, owner) in forms {
+        if let Some(reference) =
+            call_reference(connection, &anchor.project_id, &anchor.file_path, &label)?
+            && !callers.add(&reference, owner, candidates)?
+        {
             break;
         }
     }
     Ok(())
+}
+
+/// Python calls through a module or a name imported from the anchor's module
+/// in another file: `alias.function()` after `import pkg.module as alias` or
+/// `from pkg import module as alias`, and `name()` or `name.method()` after
+/// `from pkg.module import name`. The import's dotted target must end with
+/// the anchor file's module path, at least two segments of it unless the
+/// importing file shares the anchor's directory.
+fn collect_python_module_calls(
+    connection: &rusqlite::Connection,
+    anchor: &Anchor,
+    callers: &mut Callers<'_>,
+    candidates: &mut BTreeMap<String, Candidate>,
+) -> Result<()> {
+    let Some(module) = python_module_path(&anchor.file_path) else {
+        return Ok(());
+    };
+    let segments: Vec<&str> = module.split('.').collect();
+    let member = anchor.label.replace("::", ".");
+    let (head, rest) = member
+        .split_once('.')
+        .map_or((member.as_str(), None), |(head, rest)| (head, Some(rest)));
+    let directory = Path::new(&anchor.file_path).parent();
+    let mut bindings = connection.prepare_cached(
+        "SELECT file_path,search_aliases FROM nodes INDEXED BY nodes_project_label
+         WHERE project_id=?1 AND label=?2 AND kind='ExternalReference'
+           AND tombstoned_at_ms IS NULL AND file_path IS NOT NULL
+           AND substr(stable_key,1,length('reference:'||file_path||':binding:'))
+               ='reference:'||file_path||':binding:'
+         ORDER BY file_path LIMIT ?3",
+    )?;
+    let mut expected = BTreeSet::new();
+    for start in 0..segments.len() {
+        let suffix = segments[start..].join(".");
+        let qualified = segments.len() - start >= 2;
+        for (target, binds_member) in [(suffix.clone(), false), (format!("{suffix}.{head}"), true)]
+        {
+            for row in bindings.query_map(
+                params![anchor.project_id, target, MAX_REFERENCE_FILES],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )? {
+                let (file, bound) = row?;
+                if file == anchor.file_path
+                    || !(qualified || Path::new(&file).parent() == directory)
+                {
+                    continue;
+                }
+                let label = match (binds_member, rest) {
+                    (false, _) => format!("{bound}.{member}"),
+                    (true, None) => bound,
+                    (true, Some(rest)) => format!("{bound}.{rest}"),
+                };
+                expected.insert((file, label));
+            }
+        }
+        // One lookup per importing file and spelling, bounded like the
+        // reference files of an exact-name search.
+        if expected.len() >= usize::try_from(MAX_REFERENCE_FILES).unwrap_or(usize::MAX) {
+            break;
+        }
+    }
+    for (file, label) in expected {
+        if let Some(reference) = call_reference(connection, &anchor.project_id, &file, &label)?
+            && !callers.add(&reference, None, candidates)?
+        {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Dotted module path of a Python file: `pkg/mod.py` is `pkg.mod`, and a
+/// package's `__init__.py` is the package itself.
+fn python_module_path(path: &str) -> Option<String> {
+    let stem = path
+        .strip_suffix(".py")
+        .or_else(|| path.strip_suffix(".pyi"))?;
+    let stem = stem.strip_suffix("/__init__").unwrap_or(stem);
+    (!stem.is_empty() && stem != "__init__").then(|| stem.replace('/', "."))
 }
 
 /// A call from another file names the anchor only when that file imports the
@@ -385,9 +560,33 @@ fn collect_shared_calls(
            AND u.id<>?3 AND u.kind<>'ExternalReference' AND u.file_path IS NOT NULL
          ORDER BY u.id LIMIT ?4",
     )?;
+    let python_imports = if anchor.language.as_deref() == Some("python") {
+        Some(
+            connection
+                .prepare_cached(
+                    "SELECT search_aliases FROM nodes INDEXED BY nodes_project_file
+                     WHERE project_id=?1 AND file_path=?2 AND kind='ExternalReference'
+                       AND tombstoned_at_ms IS NULL AND substr(stable_key,1,length(?3))=?3
+                     ORDER BY id LIMIT 512",
+                )?
+                .query_map(
+                    params![
+                        anchor.project_id,
+                        anchor.file_path,
+                        format!("reference:{}:binding:", anchor.file_path)
+                    ],
+                    |row| row.get::<_, String>(0),
+                )?
+                .collect::<std::result::Result<BTreeSet<_>, _>>()?,
+        )
+    } else {
+        None
+    };
     for (reference, label, user_count) in calls {
         let others = user_count - 1;
-        if !(1..=MAX_SHARED_USERS).contains(&others) || !names_shared_target(&label) {
+        if !(1..=MAX_SHARED_USERS).contains(&others)
+            || !names_shared_target(&label, python_imports.as_ref())
+        {
             continue;
         }
         let file_count: i64 =
@@ -402,6 +601,11 @@ fn collect_shared_calls(
             read_user,
         )? {
             let (id, kind, user_label, file_path) = row?;
+            // A definition calling its own name (recursion, or a method of
+            // the same name) is a callee of the anchor, not a shared user.
+            if final_name(&label) == final_name(&user_label) {
+                continue;
+            }
             let candidate = candidates
                 .entry(id)
                 .or_insert_with(|| Candidate::new(kind, user_label, file_path));
@@ -424,7 +628,11 @@ fn collect_shared_calls(
 /// a member reached through a static, a type, or `self`/`this`. A method on a
 /// lowercase receiver, usually a local variable (`entry.is_empty`), and
 /// multi-line chains or closures name nothing shared and are skipped.
-fn names_shared_target(expression: &str) -> bool {
+///
+/// Python has no `::` paths: a lowercase receiver counts there only when the
+/// file binds it by import (a module such as `cart_svc` or `a.b`), or is
+/// `cls`. Other lowercase receivers are locals, parameters or attributes.
+fn names_shared_target(expression: &str, python_imports: Option<&BTreeSet<String>>) -> bool {
     if expression.chars().count() < 3
         || expression.len() > 96
         || expression
@@ -438,9 +646,23 @@ fn names_shared_target(expression: &str) -> bool {
     };
     let receiver = receiver.trim_start_matches(['&', '*']);
     let last = receiver.rsplit("::").next().unwrap_or(receiver);
-    matches!(last, "self" | "this" | "Self")
+    let imported = python_imports.is_some_and(|bound| {
+        receiver == "cls"
+            || bound.iter().any(|name| {
+                expression.starts_with(name) && expression[name.len()..].starts_with('.')
+            })
+    });
+    imported
+        || matches!(last, "self" | "this" | "Self")
         || (last.chars().next().is_some_and(char::is_uppercase)
             && last.chars().all(|c| c.is_alphanumeric() || c == '_'))
+}
+
+/// The last identifier of a call expression or label (`a.b().c` is `c`).
+fn final_name(text: &str) -> &str {
+    text.rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .find(|part| !part.is_empty())
+        .unwrap_or(text)
 }
 
 impl Candidate {
@@ -463,7 +685,7 @@ mod tests {
     use std::fmt::Write as _;
 
     use super::*;
-    use crate::world::fixtures::{CONTRACT_SUITE, IndexedRepo, SETTINGS};
+    use crate::world::fixtures::{CONTRACT_SUITE, IndexedRepo, PYTHON_SERVICE, SETTINGS};
 
     fn uses(repo: &IndexedRepo, label: &str) -> BTreeMap<String, RelatedUse> {
         related_uses(&repo.database, &repo.node(label))
@@ -608,6 +830,90 @@ mod tests {
         assert!(
             uses(&repo, "anchor_step").is_empty(),
             "nine other users in one file, or a call made in 41 files, is generic"
+        );
+    }
+
+    #[test]
+    fn python_calls_resolve_through_import_bindings_and_members() {
+        let repo = IndexedRepo::new(PYTHON_SERVICE);
+        let task = related_uses(
+            &repo.database,
+            &repo.node_in("get_task", "src/app/services/sessions.py"),
+        )
+        .unwrap();
+        let labels: BTreeSet<_> = task.iter().map(|used| used.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            BTreeSet::from(["direct", "nearby", "status"]),
+            "module alias, imported name and relative import resolve; a same-named \
+             module elsewhere and unimported names do not"
+        );
+        assert!(task.iter().all(|used| used.relation == UseRelation::Calls));
+        let other = related_uses(
+            &repo.database,
+            &repo.node_in("get_task", "src/other/sessions.py"),
+        )
+        .unwrap();
+        assert_eq!(
+            other
+                .iter()
+                .map(|used| used.label.as_str())
+                .collect::<Vec<_>>(),
+            ["wrong"]
+        );
+        let load = uses(&repo, "Store::load");
+        assert_eq!(
+            load.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            BTreeSet::from(["Store::build", "Store::refresh", "build_store"]),
+            "self/cls members and an imported class resolve"
+        );
+    }
+
+    #[test]
+    fn python_shared_calls_count_imported_modules_and_members_but_not_locals() {
+        let repo = IndexedRepo::new(&[(
+            "src/app/jobs.py",
+            "import app.backend as backend\n\n\nclass Runner:\n    def first(self, items):\n        backend.lock_session(1)\n        items.append(1)\n        self.audit.record()\n\n    def second(self, items):\n        backend.lock_session(2)\n        items.append(2)\n\n    def third(self, items):\n        items.append(3)\n        self.audit.record()\n",
+        )]);
+        let related = uses(&repo, "Runner::first");
+        assert!(
+            matches!(&related["Runner::second"].relation, UseRelation::SharedCall(call) if call == "backend.lock_session"),
+            "{related:?}"
+        );
+        assert!(
+            matches!(&related["Runner::third"].relation, UseRelation::SharedCall(call) if call == "self.audit.record"),
+            "{related:?}"
+        );
+        assert!(names_shared_target(
+            "backend.lock_session",
+            Some(&BTreeSet::from(["backend".to_owned()]))
+        ));
+        assert!(names_shared_target(
+            "cls.registry.get",
+            Some(&BTreeSet::new())
+        ));
+        assert!(!names_shared_target("items.append", Some(&BTreeSet::new())));
+        assert!(!names_shared_target("backend.lock_session", None));
+        assert!(names_shared_target(
+            "a.b.c.lock",
+            Some(&BTreeSet::from(["a.b.c".to_owned()]))
+        ));
+        assert!(!names_shared_target(
+            "a.bc.lock",
+            Some(&BTreeSet::from(["a.b".to_owned()]))
+        ));
+    }
+
+    #[test]
+    fn recursive_calls_are_not_shared_uses() {
+        let repo = IndexedRepo::new(&[(
+            "src/walk.rs",
+            "fn walk_tree(depth: u32) -> u32 {\n    if depth == 0 { 0 } else { walk_tree(depth - 1) }\n}\n\nfn start() -> u32 {\n    walk_tree(3)\n}\n",
+        )]);
+        let related = uses(&repo, "start");
+        assert!(
+            !related.contains_key("walk_tree"),
+            "the anchor's callee is not its user: {related:?}"
         );
     }
 }

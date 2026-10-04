@@ -348,57 +348,9 @@ fn append_related_uses(
     direct: &[Pointer],
     selected: &mut Selection,
 ) -> Result<()> {
-    // Only definitions the task names (an identifier or an explicit path) are
-    // treated as likely to change; generic prose or a recently touched file
-    // alone does not say which definition in it will change.
-    let anchors = direct
-        .iter()
-        .filter(|pointer| {
-            pointer.project_id == request.project_id.as_str()
-                && !matches!(
-                    pointer.kind.as_str(),
-                    "File" | "Section" | "ExternalReference"
-                )
-                && (query.identifier_score(pointer) >= 64.0 || query.paths.contains(&pointer.path))
-        })
-        .take(MAX_USE_ANCHORS);
-    let mut ranked = Vec::new();
-    for (rank, anchor) in anchors.enumerate() {
-        let mut uses: Vec<(f64, RelatedUse)> = crate::world::related_uses(database, &anchor.id)?
-            .into_iter()
-            .filter(|candidate| !selected.emitted.contains(&candidate.node_id))
-            .filter_map(|candidate| {
-                let relevance = query.use_relevance(&candidate.label, &candidate.file_path);
-                // Every caller of a widely used definition is a consumer, but
-                // only task-matching ones are informative enough to list.
-                let listed = candidate.shares_call
-                    || relevance > 0.0
-                    || candidate.anchor_callers <= MAX_UNRANKED_CALLERS;
-                listed.then_some((relevance + candidate.specificity.min(3.99), candidate))
-            })
-            .collect();
-        uses.sort_by(|(a_score, a), (b_score, b)| {
-            b_score
-                .total_cmp(a_score)
-                .then_with(|| a.file_path.cmp(&b.file_path))
-                .then_with(|| a.label.cmp(&b.label))
-                .then_with(|| a.node_id.cmp(&b.node_id))
-        });
-        ranked.extend(
-            uses.into_iter()
-                .take(MAX_USES_PER_ANCHOR)
-                .map(|(score, candidate)| (score, rank, anchor, candidate)),
-        );
-    }
-    ranked.sort_by(|(a_score, a_rank, _, a), (b_score, b_rank, _, b)| {
-        b_score
-            .total_cmp(a_score)
-            .then_with(|| a_rank.cmp(b_rank))
-            .then_with(|| a.file_path.cmp(&b.file_path))
-            .then_with(|| a.node_id.cmp(&b.node_id))
-    });
+    let ranked = rank_related_uses(database, request, query, direct, &selected.emitted)?;
     let mut appended = 0;
-    for (score, _, anchor, candidate) in ranked {
+    for (score, anchor, candidate) in ranked {
         if appended >= MAX_RELATED_USES {
             break;
         }
@@ -409,7 +361,7 @@ fn append_related_uses(
         let (relation, note) = match &candidate.relation {
             UseRelation::Calls => (
                 format!("calls {owner}"),
-                "Indexed caller of a task-relevant definition; the call text names only that definition in this repository.",
+                "Indexed caller of a task-relevant definition; its call resolves to that definition by exact name, import or owner.",
             ),
             UseRelation::Edge(relation) => (
                 format!("{} {owner}", clean_short(relation, 32)),
@@ -448,6 +400,77 @@ fn append_related_uses(
         }
     }
     Ok(())
+}
+
+/// Related uses of the top named definitions, best first. Only definitions
+/// the task names (an identifier or an explicit path) are treated as likely
+/// to change; generic prose or a recently touched file alone does not say
+/// which definition in it will change.
+fn rank_related_uses<'a>(
+    database: &Database,
+    request: &ContextCompileRequest,
+    query: &SourceQuery,
+    direct: &'a [Pointer],
+    emitted: &BTreeSet<String>,
+) -> Result<Vec<(f64, &'a Pointer, RelatedUse)>> {
+    let anchors = direct
+        .iter()
+        .filter(|pointer| {
+            pointer.project_id == request.project_id.as_str()
+                && !matches!(
+                    pointer.kind.as_str(),
+                    "File" | "Section" | "ExternalReference"
+                )
+                && (query.identifier_score(pointer) >= 64.0 || query.paths.contains(&pointer.path))
+        })
+        .take(MAX_USE_ANCHORS);
+    let mut ranked = Vec::new();
+    for (rank, anchor) in anchors.enumerate() {
+        let mut uses: Vec<(f64, f64, RelatedUse)> =
+            crate::world::related_uses(database, &anchor.id)?
+                .into_iter()
+                .filter(|candidate| !emitted.contains(&candidate.node_id))
+                .filter_map(|candidate| {
+                    let relevance = query.use_relevance(&candidate.label, &candidate.file_path);
+                    // Every caller of a widely used definition is a consumer, but
+                    // only task-matching ones are informative enough to list.
+                    let listed = candidate.shares_call
+                        || relevance > 0.0
+                        || candidate.anchor_callers <= MAX_UNRANKED_CALLERS;
+                    // Identifier and path matches compare across anchors;
+                    // name words and graph specificity only within one.
+                    let tier = (relevance / 20.0).floor();
+                    listed.then_some((tier, relevance + candidate.specificity.min(3.99), candidate))
+                })
+                .collect();
+        uses.sort_by(|(_, a_score, a), (_, b_score, b)| {
+            b_score
+                .total_cmp(a_score)
+                .then_with(|| a.file_path.cmp(&b.file_path))
+                .then_with(|| a.label.cmp(&b.label))
+                .then_with(|| a.node_id.cmp(&b.node_id))
+        });
+        ranked.extend(
+            uses.into_iter()
+                .take(MAX_USES_PER_ANCHOR)
+                .map(|(tier, score, candidate)| (tier, rank, score, anchor, candidate)),
+        );
+    }
+    ranked.sort_by(
+        |(a_tier, a_rank, a_score, _, a), (b_tier, b_rank, b_score, _, b)| {
+            b_tier
+                .total_cmp(a_tier)
+                .then_with(|| a_rank.cmp(b_rank))
+                .then_with(|| b_score.total_cmp(a_score))
+                .then_with(|| a.file_path.cmp(&b.file_path))
+                .then_with(|| a.label.cmp(&b.label))
+                .then_with(|| a.node_id.cmp(&b.node_id))
+        },
+    );
+    Ok(ranked
+        .into_iter()
+        .map(|(_, _, score, anchor, candidate)| (score, anchor, candidate))
+        .collect())
 }
 
 fn scope(
@@ -2278,7 +2301,7 @@ mod tests {
         );
     }
 
-    use crate::world::fixtures::{CONTRACT_SUITE, IndexedRepo, SETTINGS};
+    use crate::world::fixtures::{CONTRACT_SUITE, IndexedRepo, PYTHON_SERVICE, SETTINGS};
 
     const RANGES: SourceOptions = SourceOptions {
         line_ranges: true,
@@ -2454,5 +2477,40 @@ mod tests {
                 assert_eq!(uses, 0, "{task}: {}", map.text);
             }
         }
+    }
+
+    #[test]
+    fn python_callers_appear_as_ranged_related_uses() {
+        let repo = IndexedRepo::new(PYTHON_SERVICE);
+        let map = build_source_map(
+            &repo.database,
+            &checkout_request(&repo, "Change get_task in app/services/sessions.py"),
+            2_000,
+            false,
+            BOTH,
+        )
+        .unwrap();
+        let project = &repo.project.project.name;
+        let mut positions = Vec::new();
+        for expected in [
+            "src/app/handlers.py:9-10 — Function direct (calls get_task)",
+            "src/app/handlers.py:5-6 — Function status (calls get_task)",
+            "src/app/services/sibling.py:4-5 — Function nearby (calls get_task)",
+            // The same-named function elsewhere is the second anchor.
+            "src/app/unrelated.py:4-5 — Function wrong (calls get_task)",
+        ] {
+            let line = format!("- Related use: {project}: {expected}\n");
+            positions.push(
+                map.text
+                    .find(&line)
+                    .unwrap_or_else(|| panic!("{line}{}", map.text)),
+            );
+        }
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "{}",
+            map.text
+        );
+        assert!(!map.text.contains("unimported"), "{}", map.text);
     }
 }

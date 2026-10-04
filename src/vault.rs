@@ -481,7 +481,13 @@ impl VaultBuilder {
             // same label. The resolution join is the most expensive query in
             // the vault (seconds on a ~20k-node repo); exports normally run
             // in the lowest-priority background job, where that is fine.
-            let mut statement = connection.prepare(
+            // References are first counted per (file, label), then each
+            // label is resolved through `nodes_project_label` in a pinned
+            // order: left to itself, SQLite scans every definition of a kind
+            // per edge, which took minutes once Python call sites were
+            // indexed. The weights are unchanged by the regrouping. Only
+            // names defined in one file resolve; see `defined_in_one_file`.
+            let mut statement = connection.prepare(&format!(
                 "SELECT source_path, target_path, SUM(n) FROM (
                      SELECT s.file_path AS source_path, t.file_path AS target_path,
                             COUNT(*) AS n
@@ -494,20 +500,26 @@ impl VaultBuilder {
                        AND s.file_path <> t.file_path
                      GROUP BY s.file_path, t.file_path
                      UNION ALL
-                     SELECT s.file_path, d.file_path, COUNT(*)
-                     FROM edges e
-                     JOIN nodes s ON s.id = e.source_id
-                     JOIN nodes t ON t.id = e.target_id
-                        AND t.kind = 'ExternalReference'
-                     JOIN nodes d ON d.project_id = e.project_id
-                        AND d.kind IN ('Function', 'Type', 'Module', 'Interface')
-                        AND d.label = t.label AND d.tombstoned_at_ms IS NULL
-                     WHERE e.project_id = ?1 AND e.tombstoned_at_ms IS NULL
-                       AND s.file_path IS NOT NULL AND d.file_path IS NOT NULL
-                       AND s.file_path <> d.file_path
-                     GROUP BY s.file_path, d.file_path
+                     SELECT r.source_path, d.file_path, SUM(r.n)
+                     FROM (
+                         SELECT s.file_path AS source_path, t.label AS label,
+                                COUNT(*) AS n
+                         FROM edges e INDEXED BY edges_source_active
+                         CROSS JOIN nodes t ON t.id = e.target_id
+                         CROSS JOIN nodes s ON s.id = e.source_id
+                         WHERE e.project_id = ?1 AND e.tombstoned_at_ms IS NULL
+                           AND t.kind = 'ExternalReference' AND s.file_path IS NOT NULL
+                         GROUP BY s.file_path, t.label
+                     ) r
+                     CROSS JOIN nodes d INDEXED BY nodes_project_label
+                        ON d.project_id = ?1 AND d.label = r.label
+                     WHERE d.kind IN ('Function', 'Type', 'Module', 'Interface')
+                       AND d.tombstoned_at_ms IS NULL AND d.file_path IS NOT NULL
+                       AND r.source_path <> d.file_path AND {only}
+                     GROUP BY r.source_path, d.file_path
                  ) GROUP BY source_path, target_path",
-            )?;
+                only = defined_in_one_file("d"),
+            ))?;
             let rows = statement
                 .query_map([project_id.as_str()], |row| {
                     Ok((
@@ -549,6 +561,21 @@ impl VaultBuilder {
                 .map_err(Error::from)
         })
     }
+}
+
+/// SQL condition that no other file defines the name of the definition
+/// aliased `alias`. Resolving a call reference by its label alone cannot tell
+/// same-named definitions apart (duplicate private helpers, a `main` per
+/// script), so such names are not attributed to any of them; related uses
+/// apply the same rule across files.
+pub(crate) fn defined_in_one_file(alias: &str) -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM nodes other INDEXED BY nodes_project_label
+             WHERE other.project_id = {alias}.project_id AND other.label = {alias}.label
+               AND other.kind IN ('Function', 'Type', 'Interface', 'Method', 'Module')
+               AND other.tombstoned_at_ms IS NULL AND other.file_path IS NOT NULL
+               AND other.file_path <> {alias}.file_path)"
+    )
 }
 
 /// The directory prefix used to aggregate files into diagram nodes: the first
@@ -731,5 +758,40 @@ mod tests {
         let second = builder.build_project(&a).expect("rebuild");
         assert_eq!(second.files_written, 0, "byte-stable rebuild");
         assert!(second.files_unchanged >= 3);
+    }
+
+    #[test]
+    fn module_map_weights_label_resolved_calls_across_modules() {
+        use crate::world::fixtures::{CONTRACT_SUITE, IndexedRepo, SETTINGS};
+
+        let repo = IndexedRepo::new(&[
+            ("core/settings.rs", SETTINGS),
+            ("tests/contract.rs", CONTRACT_SUITE),
+            (
+                "core/sessions.py",
+                "def get_task(task_id):\n    return task_id\n",
+            ),
+            (
+                "api/handlers.py",
+                "from core.sessions import get_task\n\n\ndef direct(task_id):\n    return get_task(task_id)\n\n\ndef twice(task_id):\n    return get_task(get_task(task_id))\n\n\ndef main():\n    return helper()\n",
+            ),
+            // Two files define `helper` and `main`: label alone cannot say
+            // which one a call means, so neither is coupled to `api`.
+            ("lib/one.py", "def helper():\n    return 1\n"),
+            (
+                "jobs/two.py",
+                "def helper():\n    return 2\n\n\ndef main():\n    return helper()\n",
+            ),
+        ]);
+        let map = module_map(&repo.database, repo.id()).expect("module map");
+        let edges = map
+            .edges
+            .iter()
+            .map(|edge| (edge.from.as_str(), edge.to.as_str(), edge.weight))
+            .collect::<Vec<_>>();
+        // One CALLS edge per calling definition: `direct` and `twice` call
+        // `get_task`; three tests call `mode()` inside `assert_eq!` and one
+        // helper calls `load_settings()`.
+        assert_eq!(edges, [("api", "core", 2), ("tests", "core", 4)]);
     }
 }

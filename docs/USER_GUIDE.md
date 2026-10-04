@@ -184,20 +184,38 @@ directly above them.
 After every direct pointer, up to six `Related use:` lines may follow, only
 within the remaining source budget. They come from the definitions the task
 names (an identifier or an explicit path). A caller is listed only when its
-call text names that definition exactly. From another file, the name must also
-be unique in the repository and imported by the calling file (Kotlin, Java,
-Scala, C# and Go files in the same directory need no import). Method calls on
-values, ambiguous or unimported names and calls across languages are never
-treated as dependencies. A shared use is another definition in the same file
-that makes the same specific call, for example taking the same lock; it is not
-a dependency between the two. The native indexer does not record Python call
-sites or calls written inside macro arguments, so those produce no related
-uses. Ranges and related uses do not change which direct pointers are chosen.
-A pack is not delivered again just because a range moved or fell back to the
-file; new or changed sources are. `context.source_line_ranges` and
+call resolves to that definition:
+
+- by the exact name. From another file, the name must also be unique in the
+  repository and imported by the calling file (Kotlin, Java, Scala, C# and Go
+  files in the same directory need no import);
+- in the definition's own file, by a call on its owner: `self.method()` or
+  `Self::method()` in Rust, `this.method()` in TypeScript and `self.method()`
+  or `cls.method()` in Python from another member of the same type, or
+  Python `Owner.method()`;
+- in Python, through an import of the definition's module or name, for
+  example `svc.get_task()` after `from app.services import sessions as svc`.
+  Relative imports resolve against the importing file's directory.
+
+Method calls on other values, ambiguous or unimported names and calls across
+languages are never treated as dependencies. A shared use is another
+definition in the same file that makes the same specific call, for example
+taking the same lock; it is not a dependency between the two. In Python, a
+method call counts as shared only on `self`, `cls`, a capitalized name or an
+imported module. Ranges and related uses do not change which direct pointers
+are chosen. A pack is not delivered again just because a range moved or fell
+back to the file; new or changed sources are. `context.source_line_ranges` and
 `context.related_use_cues` turn each part off. Their effect on agent cost or
 correctness has not been measured in a paired agent run; see
 [perf evidence](perf-evidence/2026-10-04-line-ranges/README.md).
+
+The native indexer records Python call sites and calls written inside Rust
+macro arguments, such as `assert_eq!(mode(), 2)`, from extractor version
+`tree-sitter-v3`. The first index after upgrading re-extracts every natively
+indexed file once; definitions in unchanged files keep their node ids and the
+lessons anchored to them. File shapes, module maps and the vault match a call
+to a definition by name alone, so they count it only when exactly one file
+defines that name.
 
 **Codex subagents.** Codex runs subagents in their own threads, but their
 hooks carry the parent conversation's session id. Engram counts a spawned
