@@ -57,6 +57,22 @@ not yet stable, and the schema version is 7.
 
 ### Added
 
+- `engram project merge --into <keep> --from <retire>` merges a repository
+  registered as two projects (`engram doctor` reports them). It refuses
+  unless live checkouts of both report the same canonical remote and root
+  commit, prints a deterministic plan (`--dry-run`, `--json`) and changes
+  nothing without `--yes`. Execution takes a consistent backup, then one
+  transaction re-scopes every project-keyed table by an explicit role that
+  is checked against the schema (a new project-keyed table without a role
+  makes merges refuse, and a test fails): rows move, the retired structural
+  index is dropped and rebuilt by a re-index of every checkout, events stay
+  as history, collisions follow recorded rules, and a `PROJECTS_MERGED`
+  event plus a tombstone naming the survivor make replay reproduce the
+  result. The CLI rewrites the retired checkouts' pins and re-indexes;
+  memory anchors are re-attached by stable symbol identity or their
+  memories are marked for revalidation. Requests and pins that still carry
+  the retired id resolve to the survivor. Migration 0021 adds the tombstone
+  column, waiting anchors and the indexes that make dropping nodes fast.
 - The V1 product: a local-first, evidence-grounded engineering world model for
   coding agents. A per-user Rust daemon (`lebd`) owns all mutation ordering
   behind a single bounded priority writer with a bounded reader pool, keeping

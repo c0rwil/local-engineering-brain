@@ -140,6 +140,85 @@ pub enum DomainEvent {
         source_task_ids: Vec<TaskId>,
         cross_project_hypothesis: bool,
     },
+    /// `retired_project_id` was merged into `project_id` (the survivor). The
+    /// retired project stays as a tombstone that names the survivor; its
+    /// checkout paths, links and facts move as the projection documents.
+    ProjectsMerged {
+        project_id: ProjectId,
+        retired_project_id: ProjectId,
+        /// Git identity recorded for the survivor where it had none.
+        canonical_remote: Option<String>,
+        root_commit: Option<String>,
+        /// The retired project's origin view, now paired with the survivor.
+        repaired_view: Option<ProjectId>,
+        /// Origin views tombstoned with the retired project.
+        retired_views: Vec<ProjectId>,
+        audit: Box<ProjectMergeAudit>,
+    },
+}
+
+/// Audit record of one project merge: what moved, what was dropped for a
+/// rebuild, and how every key collision was resolved.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct ProjectMergeAudit {
+    /// Transactionally consistent backup taken before the merge.
+    pub backup_path: Option<String>,
+    /// Checkout paths moved from the retired project to the survivor.
+    pub moved_aliases: Vec<String>,
+    /// Rows re-scoped to the survivor, per table.
+    pub moved: BTreeMap<String, u64>,
+    /// Derived rows dropped and rebuilt for the survivor, per table.
+    pub rebuilt: BTreeMap<String, u64>,
+    /// Rows that stay with the retired id as history, per table.
+    pub kept: BTreeMap<String, u64>,
+    pub collisions: Vec<MergeCollision>,
+    pub facts: Vec<MergedFact>,
+    pub links: Vec<MergedLink>,
+    /// Memories of both projects with the same normalized claim. Both stay.
+    pub duplicate_claims: Vec<DuplicateClaim>,
+    /// Memory anchors re-attached to the survivor's symbols in the merge.
+    pub anchors_remapped: u64,
+    /// Memory anchors waiting for the survivor's re-index.
+    pub anchors_pending: u64,
+    /// Product records re-anchored to the survivor (each got a revision).
+    #[serde(default)]
+    pub product_records: Vec<String>,
+    /// Unfinished jobs of the retired project, cancelled by the merge.
+    pub cancelled_jobs: Vec<String>,
+}
+
+/// A unique key held by rows of both projects, and what the merge did.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct MergeCollision {
+    pub table: String,
+    /// The colliding key columns as `column=value`, comma separated.
+    pub key: String,
+    pub resolution: String,
+}
+
+/// A fact of the retired project and what the merge did with it.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct MergedFact {
+    pub key: String,
+    pub retired_value: String,
+    pub survivor_value: Option<String>,
+    pub decision: String,
+}
+
+/// A link of the retired project (either direction) and what the merge did.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct MergedLink {
+    pub project_id: ProjectId,
+    pub linked_project_id: ProjectId,
+    pub relation: String,
+    pub decision: String,
+}
+
+/// Two memories, one per project, with the same normalized claim.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct DuplicateClaim {
+    pub survivor_memory_id: MemoryId,
+    pub retired_memory_id: MemoryId,
 }
 
 impl DomainEvent {
@@ -166,6 +245,7 @@ impl DomainEvent {
             Self::MemoryPurged { .. } => "MEMORY_PURGED",
             Self::LearningDistilled { .. } => "LEARNING_DISTILLED",
             Self::ProcedureSynthesized { .. } => "PROCEDURE_SYNTHESIZED",
+            Self::ProjectsMerged { .. } => "PROJECTS_MERGED",
         }
     }
 
@@ -191,7 +271,8 @@ impl DomainEvent {
             | Self::MemoryStateChanged { project_id, .. }
             | Self::MemoryPurged { project_id, .. }
             | Self::LearningDistilled { project_id, .. }
-            | Self::ProcedureSynthesized { project_id, .. } => project_id,
+            | Self::ProcedureSynthesized { project_id, .. }
+            | Self::ProjectsMerged { project_id, .. } => project_id,
         }
     }
 
@@ -225,7 +306,8 @@ impl DomainEvent {
             | "MEMORY_STATE_CHANGED"
             | "MEMORY_PURGED"
             | "LEARNING_DISTILLED"
-            | "PROCEDURE_SYNTHESIZED" => {
+            | "PROCEDURE_SYNTHESIZED"
+            | "PROJECTS_MERGED" => {
                 let event: Self = serde_json::from_str(payload)?;
                 if event.event_type() != event_type {
                     return Err(Error::UnknownEventType {
@@ -274,6 +356,8 @@ pub struct ProjectProjectionEntry {
     pub parent_project_id: Option<ProjectId>,
     pub aliases: Vec<String>,
     pub tombstoned: bool,
+    /// The survivor this project was merged into.
+    pub merged_into: Option<ProjectId>,
 }
 
 #[derive(Clone, Debug)]
@@ -493,6 +577,7 @@ impl EventStore {
                             parent_project_id,
                             aliases: Vec::new(),
                             tombstoned: false,
+                            merged_into: None,
                         },
                     );
                 }
@@ -523,6 +608,21 @@ impl EventStore {
                         }
                     }
                 }
+                DomainEvent::ProjectsMerged {
+                    project_id,
+                    retired_project_id,
+                    canonical_remote,
+                    root_commit,
+                    repaired_view: _,
+                    retired_views,
+                    audit: _,
+                } => projection.apply_merge(
+                    &project_id,
+                    &retired_project_id,
+                    canonical_remote,
+                    root_commit,
+                    &retired_views,
+                ),
                 DomainEvent::ProjectLinked { .. }
                 | DomainEvent::ProjectUnlinked { .. }
                 | DomainEvent::ProjectFactSet { .. }
@@ -542,6 +642,62 @@ impl EventStore {
             }
         }
         Ok(projection)
+    }
+}
+
+impl ProjectProjection {
+    /// The pure counterpart of the `PROJECTS_MERGED` projection: the retired
+    /// project becomes a tombstone naming the survivor, its checkout paths
+    /// move, its origin views are tombstoned, forks and earlier merges point
+    /// at the survivor, and missing survivor identity is filled.
+    fn apply_merge(
+        &mut self,
+        survivor: &ProjectId,
+        retired: &ProjectId,
+        canonical_remote: Option<String>,
+        root_commit: Option<String>,
+        retired_views: &[ProjectId],
+    ) {
+        let active = |projection: &Self, id: &ProjectId| {
+            projection
+                .projects
+                .get(id)
+                .is_some_and(|entry| !entry.tombstoned)
+        };
+        // The materialized projection refuses such an event, so it is never
+        // stored; mirror that instead of applying half of it.
+        if survivor == retired || !active(self, survivor) || !active(self, retired) {
+            return;
+        }
+        let moved = self.projects.get_mut(retired).map(|entry| {
+            entry.tombstoned = true;
+            entry.merged_into = Some(survivor.clone());
+            std::mem::take(&mut entry.aliases)
+        });
+        for view in retired_views {
+            if let Some(entry) = self.projects.get_mut(view) {
+                entry.tombstoned = true;
+            }
+        }
+        for (id, entry) in &mut self.projects {
+            if entry.merged_into.as_ref() == Some(retired) {
+                entry.merged_into = Some(survivor.clone());
+            }
+            if entry.parent_project_id.as_ref() == Some(retired) {
+                entry.parent_project_id = (id != survivor).then(|| survivor.clone());
+            }
+        }
+        if let Some(entry) = self.projects.get_mut(survivor) {
+            entry.aliases.extend(moved.unwrap_or_default());
+            entry.aliases.sort();
+            entry.aliases.dedup();
+            if entry.canonical_remote.is_none() {
+                entry.canonical_remote = canonical_remote;
+            }
+            if entry.root_commit.is_none() {
+                entry.root_commit = root_commit;
+            }
+        }
     }
 }
 
@@ -696,6 +852,26 @@ fn apply_project_projection(
                 params![project_id.as_str(), key],
             )?;
         }
+        DomainEvent::ProjectsMerged {
+            project_id,
+            retired_project_id,
+            canonical_remote,
+            root_commit,
+            repaired_view,
+            retired_views,
+            audit: _,
+        } => apply_merge_projection(
+            transaction,
+            &MergeProjection {
+                survivor: project_id,
+                retired: retired_project_id,
+                canonical_remote: canonical_remote.as_deref(),
+                root_commit: root_commit.as_deref(),
+                repaired_view: repaired_view.as_ref(),
+                retired_views,
+            },
+            created_at_ms,
+        )?,
         DomainEvent::StructuralScanApplied { .. }
         | DomainEvent::GitHistoryIngested { .. }
         | DomainEvent::TaskStarted { .. }
@@ -712,6 +888,150 @@ fn apply_project_projection(
     Ok(())
 }
 
+/// The project-projection part of a `PROJECTS_MERGED` event.
+struct MergeProjection<'a> {
+    survivor: &'a ProjectId,
+    retired: &'a ProjectId,
+    canonical_remote: Option<&'a str>,
+    root_commit: Option<&'a str>,
+    repaired_view: Option<&'a ProjectId>,
+    retired_views: &'a [ProjectId],
+}
+
+/// Materialize a merge in the project projection. Every rule depends only on
+/// the projection state the earlier events produced, so replaying the log
+/// reproduces it:
+///
+/// - checkout paths move to the survivor (a path belongs to one project);
+/// - links: links between the two are dropped, the retired project's links
+///   in either direction are re-pointed at the survivor, and a link the
+///   survivor already has wins over the retired project's copy;
+/// - facts: the survivor's value wins; `internal.*` facts never move;
+/// - origin views: `repaired_view` is paired with the survivor and every view
+///   in `retired_views` is tombstoned;
+/// - forks and earlier merges of the retired project point at the survivor;
+/// - the retired project is tombstoned with `merged_into` naming the
+///   survivor, then missing survivor identity is filled.
+fn apply_merge_projection(
+    transaction: &Transaction<'_>,
+    merge: &MergeProjection<'_>,
+    now: i64,
+) -> Result<()> {
+    let survivor = merge.survivor.as_str();
+    let retired = merge.retired.as_str();
+    if survivor == retired {
+        return Err(Error::Config(format!(
+            "project `{survivor}` cannot be merged into itself"
+        )));
+    }
+    for id in [survivor, retired] {
+        let active: Option<bool> = transaction
+            .query_row(
+                "SELECT tombstoned_at_ms IS NULL FROM projects WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match active {
+            Some(true) => {}
+            Some(false) => {
+                return Err(Error::Config(format!(
+                    "project `{id}` is retired and cannot take part in a merge"
+                )));
+            }
+            None => return Err(Error::Config(format!("unknown project `{id}`"))),
+        }
+    }
+    transaction.execute(
+        "UPDATE project_aliases SET project_id = ?1 WHERE project_id = ?2",
+        params![survivor, retired],
+    )?;
+    merge_links_and_facts(transaction, survivor, retired)?;
+    if let Some(view) = merge.repaired_view {
+        transaction.execute(
+            "INSERT INTO project_facts(project_id, key, value, note, updated_at_ms)
+             VALUES (?1, 'internal.origin_view', ?2, NULL, ?3)
+             ON CONFLICT(project_id, key)
+             DO UPDATE SET value = excluded.value, updated_at_ms = excluded.updated_at_ms",
+            params![survivor, view.as_str(), now],
+        )?;
+        transaction.execute(
+            "UPDATE project_facts SET value = ?1, updated_at_ms = ?3
+             WHERE project_id = ?2 AND key = 'internal.view_of'",
+            params![survivor, view.as_str(), now],
+        )?;
+    }
+    for view in merge.retired_views {
+        transaction.execute(
+            "UPDATE projects SET tombstoned_at_ms = ?2
+             WHERE id = ?1 AND tombstoned_at_ms IS NULL",
+            params![view.as_str(), now],
+        )?;
+    }
+    transaction.execute(
+        "UPDATE projects SET parent_project_id = CASE WHEN id = ?1 THEN NULL ELSE ?1 END
+         WHERE parent_project_id = ?2",
+        params![survivor, retired],
+    )?;
+    transaction.execute(
+        "UPDATE projects SET merged_into = ?1 WHERE merged_into = ?2",
+        params![survivor, retired],
+    )?;
+    transaction.execute(
+        "UPDATE projects SET tombstoned_at_ms = ?3, merged_into = ?1 WHERE id = ?2",
+        params![survivor, retired, now],
+    )?;
+    transaction.execute(
+        "UPDATE projects
+         SET canonical_remote = COALESCE(canonical_remote, ?2),
+             root_commit = COALESCE(root_commit, ?3)
+         WHERE id = ?1",
+        params![survivor, merge.canonical_remote, merge.root_commit],
+    )?;
+    Ok(())
+}
+
+/// Links and facts of a merge (see [`apply_merge_projection`]).
+fn merge_links_and_facts(
+    transaction: &Transaction<'_>,
+    survivor: &str,
+    retired: &str,
+) -> Result<()> {
+    transaction.execute(
+        "DELETE FROM project_links
+         WHERE (project_id = ?1 AND linked_project_id = ?2)
+            OR (project_id = ?2 AND linked_project_id = ?1)",
+        params![survivor, retired],
+    )?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO project_links
+             (project_id, linked_project_id, relation, note, created_at_ms)
+         SELECT ?1, linked_project_id, relation, note, created_at_ms
+         FROM project_links WHERE project_id = ?2",
+        params![survivor, retired],
+    )?;
+    transaction.execute("DELETE FROM project_links WHERE project_id = ?1", [retired])?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO project_links
+             (project_id, linked_project_id, relation, note, created_at_ms)
+         SELECT project_id, ?1, relation, note, created_at_ms
+         FROM project_links WHERE linked_project_id = ?2",
+        params![survivor, retired],
+    )?;
+    transaction.execute(
+        "DELETE FROM project_links WHERE linked_project_id = ?1",
+        [retired],
+    )?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO project_facts(project_id, key, value, note, updated_at_ms)
+         SELECT ?1, key, value, note, updated_at_ms
+         FROM project_facts WHERE project_id = ?2 AND substr(key, 1, 9) <> 'internal.'",
+        params![survivor, retired],
+    )?;
+    transaction.execute("DELETE FROM project_facts WHERE project_id = ?1", [retired])?;
+    Ok(())
+}
+
 /// Append a generated event inside a domain service's existing transaction.
 ///
 /// This keeps non-project projections and their immutable audit event atomic.
@@ -720,7 +1040,22 @@ pub(crate) fn append_generated_in_transaction(
     event: &DomainEvent,
     created_at_ms: i64,
 ) -> Result<()> {
-    let id = format!("evt_{}", Uuid::new_v4());
+    append_generated_with_id_in_transaction(
+        transaction,
+        &format!("evt_{}", Uuid::new_v4()),
+        event,
+        created_at_ms,
+    )
+}
+
+/// [`append_generated_in_transaction`] with an id the caller chose, so rows
+/// written in the same transaction can refer to the event.
+pub(crate) fn append_generated_with_id_in_transaction(
+    transaction: &Transaction<'_>,
+    id: &str,
+    event: &DomainEvent,
+    created_at_ms: i64,
+) -> Result<()> {
     let payload = serde_json::to_string(event)?;
     transaction.execute(
         "INSERT INTO events

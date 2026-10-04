@@ -404,6 +404,12 @@ enum Commands {
         action: BackupAction,
     },
 
+    /// Manage registered projects (merge duplicate registrations).
+    Project {
+        #[command(subcommand)]
+        action: ProjectAction,
+    },
+
     /// Export one project's canonical state as bounded-memory NDJSON.
     Export {
         destination: PathBuf,
@@ -418,6 +424,30 @@ enum Commands {
     InternalCrashTransaction {
         #[arg(long)]
         ready: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProjectAction {
+    /// Merge a project into another registration of the same repository.
+    /// Prints the plan and changes nothing unless --yes is given. With
+    /// --yes: backup, one merge transaction, pin rewrites, re-index.
+    Merge {
+        /// The surviving project: id, name, or checkout path (a path
+        /// contains `/` or starts with `.` or `~`).
+        #[arg(long, value_name = "PROJECT")]
+        into: String,
+        /// The project to retire into the survivor: id, name, or checkout path.
+        #[arg(long, value_name = "PROJECT")]
+        from: String,
+        /// Print the plan only.
+        #[arg(long, conflicts_with = "yes")]
+        dry_run: bool,
+        /// Execute the merge.
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1146,6 +1176,9 @@ fn run(cli: Cli) -> Result<bool> {
             promote.as_deref(),
         ),
         Commands::Backup { action } => run_backup(&overrides, socket_override.as_deref(), &action),
+        Commands::Project { action } => {
+            run_project(&overrides, socket_override.as_deref(), &action)
+        }
         Commands::Export {
             destination,
             path,
@@ -1164,6 +1197,169 @@ fn run(cli: Cli) -> Result<bool> {
             Ok(false)
         }
     }
+}
+
+fn run_project(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    action: &ProjectAction,
+) -> Result<bool> {
+    let ProjectAction::Merge {
+        into,
+        from,
+        dry_run,
+        yes,
+        json,
+    } = action;
+    let config = load_daemon_config(overrides, socket, None)?;
+    let client = client(&config);
+    let request = engram::daemon::ProjectMergeRequest {
+        into: merge_selector(into)?,
+        from: merge_selector(from)?,
+        dry_run: !*yes,
+    };
+    let response = block_on(client.merge_projects(&request))?;
+    if !*yes {
+        return print_merge_preview(&response, *dry_run, *json);
+    }
+    let (outcome, already) = match response {
+        engram::daemon::ProjectMergeResponse::Merged { outcome } => (outcome, false),
+        engram::daemon::ProjectMergeResponse::AlreadyMerged { outcome } => (outcome, true),
+        engram::daemon::ProjectMergeResponse::Planned { .. } => {
+            return Err(engram::error::Error::Daemon(
+                "the daemon planned instead of merging".to_owned(),
+            ));
+        }
+    };
+    if !*json {
+        eprintln!(
+            "Merge recorded. Rewriting pins and re-indexing {} checkout paths...",
+            outcome.reindex_paths.len()
+        );
+    }
+    let follow_up = block_on(engram::merge::client::follow_up(&client, &outcome))?;
+    if *json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": if already { "already_merged" } else { "merged" },
+                "outcome": outcome,
+                "follow_up": follow_up,
+            }))?
+        );
+    } else {
+        print!(
+            "{}",
+            engram::merge::render::outcome_text(&outcome, already, &follow_up)
+        );
+    }
+    Ok(follow_up.complete)
+}
+
+/// Print a merge plan (or an earlier merge) without changing anything.
+fn print_merge_preview(
+    response: &engram::daemon::ProjectMergeResponse,
+    dry_run: bool,
+    json: bool,
+) -> Result<bool> {
+    use engram::daemon::ProjectMergeResponse;
+    use engram::projects::PinState;
+    match response {
+        ProjectMergeResponse::Planned { plan } => {
+            let pins = engram::merge::client::rewrite_pins(
+                &plan.checkouts_to_repin,
+                &plan.retired.id,
+                &plan.survivor.id,
+                &plan.survivor.name,
+                true,
+            );
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "planned",
+                        "plan": plan,
+                        "pins": pins,
+                    }))?
+                );
+            } else {
+                print!("{}", engram::merge::render::plan_text(plan, &pins));
+            }
+            if plan.identity.refusal.is_some() {
+                return Ok(false);
+            }
+            if !dry_run {
+                eprintln!("Nothing was changed. Run the same command with --yes to merge.");
+            }
+            Ok(dry_run)
+        }
+        ProjectMergeResponse::AlreadyMerged { outcome } => {
+            let pins = engram::merge::client::rewrite_pins(
+                &outcome.checkouts_to_repin,
+                &outcome.retired,
+                &outcome.survivor,
+                &outcome.survivor_name,
+                true,
+            );
+            let remaining = outcome.pending_anchors > 0
+                || pins.iter().any(|pin| {
+                    matches!(
+                        pin.state,
+                        PinState::WouldRewrite | PinState::Denied | PinState::Failed
+                    )
+                });
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "already_merged",
+                        "outcome": outcome,
+                        "pins": pins,
+                        "remaining_steps": remaining,
+                    }))?
+                );
+            } else {
+                println!(
+                    "Already merged: {} ({}) into {} ({}).",
+                    outcome.retired_name, outcome.retired, outcome.survivor_name, outcome.survivor
+                );
+                if remaining {
+                    println!(
+                        "Pins or memory anchors still wait; run the same command with --yes to \
+                         finish them."
+                    );
+                }
+            }
+            Ok(!remaining || dry_run)
+        }
+        ProjectMergeResponse::Merged { .. } => Err(engram::error::Error::Daemon(
+            "the daemon merged during a dry run".to_owned(),
+        )),
+    }
+}
+
+/// A `--into`/`--from` value as the daemon expects it: ids and names pass
+/// through; a checkout path (it contains `/` or starts with `.` or `~`) is
+/// made absolute, since the daemon's working directory is not this one.
+fn merge_selector(selector: &str) -> Result<String> {
+    let selector = selector.trim();
+    if !(selector.contains('/') || selector.starts_with('.') || selector.starts_with('~')) {
+        return Ok(selector.to_owned());
+    }
+    let home = || std::env::var_os("HOME").map(PathBuf::from);
+    let expanded = match selector.strip_prefix('~') {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => home()
+            .ok_or_else(|| engram::error::Error::Config("HOME is not set".to_owned()))?
+            .join(rest.trim_start_matches('/')),
+        _ => PathBuf::from(selector),
+    };
+    let absolute = std::path::absolute(&expanded)
+        .map_err(|source| engram::error::io_error_for_cli(&expanded, source))?;
+    Ok(absolute
+        .canonicalize()
+        .unwrap_or(absolute)
+        .display()
+        .to_string())
 }
 
 fn run_backup(

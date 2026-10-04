@@ -458,8 +458,9 @@ fn duplicate_identity_check(survey: &CheckoutSurvey) -> DoctorCheck {
         status: CheckStatus::Warning,
         detail: format!(
             "{}{unchecked}. Knowledge recorded under one project id is not visible from the \
-             other. Engram never merges projects automatically; see \"Duplicate project \
-             registrations\" in docs/USER_GUIDE.md",
+             other. Engram never merges projects automatically: review `engram project merge \
+             --into <keep> --from <retire> --dry-run`, then run it with --yes (see \"Duplicate \
+             project registrations\" in docs/USER_GUIDE.md)",
             duplicates.join(". ")
         ),
     }

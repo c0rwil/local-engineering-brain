@@ -29,6 +29,7 @@ pub mod lifecycle;
 pub mod linkscan;
 pub mod mcp;
 pub mod memory;
+pub mod merge;
 pub mod metrics;
 pub mod product;
 pub mod projects;

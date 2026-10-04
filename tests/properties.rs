@@ -94,6 +94,8 @@ enum EventOp {
     Register(u8),
     Alias(u8, u8),
     Tombstone(u8),
+    /// Merge the second project into the first.
+    Merge(u8, u8),
 }
 
 fn event_op() -> impl Strategy<Value = EventOp> {
@@ -101,6 +103,7 @@ fn event_op() -> impl Strategy<Value = EventOp> {
         (0_u8..4).prop_map(EventOp::Register),
         (0_u8..4, 0_u8..6).prop_map(|(project, alias)| EventOp::Alias(project, alias)),
         (0_u8..4).prop_map(EventOp::Tombstone),
+        (0_u8..4, 0_u8..4).prop_map(|(survivor, retired)| EventOp::Merge(survivor, retired)),
     ]
 }
 
@@ -119,6 +122,15 @@ fn to_domain_event(op: &EventOp) -> DomainEvent {
         },
         EventOp::Tombstone(project) => DomainEvent::ProjectTombstoned {
             project_id: pool_project(*project),
+        },
+        EventOp::Merge(survivor, retired) => DomainEvent::ProjectsMerged {
+            project_id: pool_project(*survivor),
+            retired_project_id: pool_project(*retired),
+            canonical_remote: Some(format!("example.com/org/{survivor}")),
+            root_commit: None,
+            repaired_view: None,
+            retired_views: Vec::new(),
+            audit: Box::default(),
         },
     }
 }
@@ -139,6 +151,7 @@ fn apply_incremental(model: &mut BTreeMap<ProjectId, ProjectProjectionEntry>, ev
                     parent_project_id: None,
                     aliases: Vec::new(),
                     tombstoned: false,
+                    merged_into: None,
                 },
             );
         }
@@ -153,6 +166,35 @@ fn apply_incremental(model: &mut BTreeMap<ProjectId, ProjectProjectionEntry>, ev
         DomainEvent::ProjectTombstoned { project_id } => {
             if let Some(entry) = model.get_mut(project_id) {
                 entry.tombstoned = true;
+            }
+        }
+        // Appended only when both projects were active and distinct.
+        DomainEvent::ProjectsMerged {
+            project_id,
+            retired_project_id,
+            canonical_remote,
+            ..
+        } => {
+            let moved = model
+                .get_mut(retired_project_id)
+                .map(|entry| {
+                    entry.tombstoned = true;
+                    entry.merged_into = Some(project_id.clone());
+                    std::mem::take(&mut entry.aliases)
+                })
+                .unwrap_or_default();
+            for entry in model.values_mut() {
+                if entry.merged_into.as_ref() == Some(retired_project_id) {
+                    entry.merged_into = Some(project_id.clone());
+                }
+            }
+            if let Some(entry) = model.get_mut(project_id) {
+                entry.aliases.extend(moved);
+                entry.aliases.sort();
+                entry.aliases.dedup();
+                if entry.canonical_remote.is_none() {
+                    entry.canonical_remote.clone_from(canonical_remote);
+                }
             }
         }
         _ => {}
