@@ -142,3 +142,26 @@ measurement above still needs live data or a paired agent run.
 | 3. Proof | Hermetic retrieval regression test in CI; Codex arm with persisted hook trust; draft held-out suite of 5 tasks | The gate fails under six deliberate breakages. Codex preflight passes 18 of 18 checks. Held-out calibration: 36 of 36 controls as expected | The held-out suite needs operator review and a collection adapter. The Codex arm needs `CODEX_API_KEY` |
 | 4. Safety | Injection screen holds flagged proposals for a human; framing escapes; doctor screen of validated memories; adversarial tests and judge cases | 0 of 12 validated memories and 1 of 2,013 repository paragraphs flagged | Pattern-based: paraphrases and other languages pass |
 | 5. Reach | Codex sub-sessions attributed to the parent session; Cursor hooks and MCP registration as an opt-in, with an installer self-check | Verified against documentation, source and synthetic payloads only | No live Cursor or Codex run yet. Cursor reports no token usage |
+
+### Review before install
+
+Two read-only reviews of the merged branches found seven confirmed hook
+defects and an upgrade race; all were fixed with regression tests before
+installation.
+
+- A failed test could be masked by a later passing lint, format or build run,
+  closing the episode as success.
+- A verification earlier in a `;`-joined command could hide its failure.
+- `cd X; cmd` could record evidence on the wrong project.
+- A failure the daemon refused to record left an earlier pass standing.
+- Concurrent user- and project-level hooks recorded one test run twice. This
+  was found on the live installation and fixed with a per-call claim.
+- During an upgrade, a hook could start a new daemon that migrated the schema
+  under the still-draining old one. Daemons now take a single-instance lock,
+  answer 503 while draining, and `install.sh` waits for the old process.
+
+Build 82b5df1d is installed at schema 19. On the live system, an unpiped test
+run is recorded once as `test_result` with its exit status and source digests,
+and source pointers arrive as checked `path:start-end` ranges. `engram doctor`
+passes except for the duplicate `brain`/`engram` registration and the Codex
+hooks that still await trust.
