@@ -1248,3 +1248,249 @@ fn larger_prompt_budget_refreshes_a_previously_partial_context() {
     assert!(cli(root, &["hook", "prompt", "--codex"], Some(prompt)).is_empty());
     cli(root, &["daemon", "stop"], None);
 }
+
+fn git(repo: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .arg("-C")
+        .arg(repo)
+        .args([
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .status()
+        .expect("git");
+    assert!(status.success(), "git {args:?}");
+}
+
+/// Claude Code reports Bash exit status through its event, not a field:
+/// `PostToolUse` for a completed command and `PostToolUseFailure` with
+/// "Exit code N" otherwise. Hook evidence must reach the task the agent
+/// declared and stay eligible after the commit watcher re-indexes the bytes
+/// the run observed; the agent's own copy of the run keeps the time rule.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn claude_code_verification_becomes_eligible_evidence_for_the_declared_task() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::write(repo.join("lib.rs"), "pub fn compute() -> u32 { 1 }\n").unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["add", "lib.rs"]);
+    git(&repo, &["commit", "-q", "-m", "initial"]);
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let session = "claude-evidence";
+    cli(
+        root,
+        &["hook", "prompt"],
+        Some(json!({"session_id":session,"cwd":repo,"prompt":"Make compute return 2"})),
+    );
+    let event = |tool: &str, id: &str, input: Value, response: Value| {
+        json!({"session_id":session,"cwd":repo,"hook_event_name":"PostToolUse",
+            "tool_name":tool,"tool_use_id":id,"tool_input":input,"tool_response":response})
+    };
+    let task: Value = serde_json::from_str(&cli(
+        root,
+        &[
+            "task",
+            "start",
+            "Make compute return 2",
+            "--path",
+            repo.to_str().unwrap(),
+            "--json",
+        ],
+        None,
+    ))
+    .unwrap();
+    let task_id = task["id"].as_str().unwrap().to_owned();
+    // The MCP result reaches the hook as the tool's JSON text.
+    cli(
+        root,
+        &["hook", "bash"],
+        Some(event(
+            "mcp__engram__engram_task_start",
+            "toolu_start",
+            json!({"project_id":task["project_id"],"prompt":"Make compute return 2"}),
+            json!(task.to_string()),
+        )),
+    );
+    std::fs::write(repo.join("lib.rs"), "pub fn compute() -> u32 { 2 }\n").unwrap();
+    cli(
+        root,
+        &["hook", "bash"],
+        Some(event(
+            "Edit",
+            "toolu_edit",
+            json!({"file_path":repo.join("lib.rs")}),
+            json!({"filePath":repo.join("lib.rs")}),
+        )),
+    );
+    let tests = |command: &str, id: &str| {
+        event(
+            "Bash",
+            id,
+            json!({"command":command,"description":"Run tests"}),
+            json!({"stdout":"running 1 test\ntest compute_returns_two ... ok\n\ntest result: ok. 1 passed; 0 failed",
+                "stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}),
+        )
+    };
+    cli(
+        root,
+        &["hook", "bash"],
+        Some(
+            json!({"session_id":session,"cwd":repo,"hook_event_name":"PostToolUseFailure",
+            "tool_name":"Bash","tool_use_id":"toolu_fail","tool_input":{"command":"cargo test"},
+            "error":"Exit code 101\ntest compute_returns_two ... FAILED","is_interrupt":false}),
+        ),
+    );
+    // `| tail` replaces the test's exit status with tail's: not an observation.
+    cli(
+        root,
+        &["hook", "bash"],
+        Some(tests("cargo test 2>&1 | tail -5", "toolu_masked")),
+    );
+    for _ in 0..2 {
+        // User- and project-level hooks can both fire for one call.
+        cli(
+            root,
+            &["hook", "bash"],
+            Some(tests("cargo test", "toolu_pass")),
+        );
+    }
+    let c = Connection::open(root.join("brain.sqlite")).unwrap();
+    let evidence = || -> Vec<(String, String, i64, String)> {
+        c.prepare(
+            "SELECT id,task_id,exit_code,metadata_json FROM evidence ORDER BY observed_at_ms,rowid",
+        )
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+    };
+    let rows = evidence();
+    assert_eq!(
+        rows.iter().map(|row| row.2).collect::<Vec<_>>(),
+        vec![101, 0],
+        "the masked run and the repeated fire are not new observations"
+    );
+    assert!(
+        rows.iter().all(|row| row.1 == task_id),
+        "evidence goes to the task declared in this session"
+    );
+    let pass: Value = serde_json::from_str(&rows[1].3).unwrap();
+    assert_eq!(pass["source"], "claude-code-hook");
+    assert_eq!(pass["exit_status"], "success_event");
+    assert_eq!(pass["tool_use_id"], "toolu_pass");
+    let observed_digest = pass["source_digests"]["lib.rs"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // The agent completes its task and also pastes its own copy of the run.
+    let completion = root.join("complete.json");
+    std::fs::write(
+        &completion,
+        json!({"operation":"complete","task_id":task_id,"outcome":"success",
+            "summary":"compute returns 2","files":["lib.rs"],
+            "verifications":[{"kind":"test_result","strength":"deterministic","command":"cargo test",
+                "exit_code":0,"artifact":"test result: ok. 1 passed; 0 failed"}],
+            "lessons":[{"claim":"compute returns 2 for every caller","rationale":"Observed test run"}]})
+        .to_string(),
+    )
+    .unwrap();
+    let completed: Value = serde_json::from_str(&cli(
+        root,
+        &["product", "lesson", completion.to_str().unwrap()],
+        None,
+    ))
+    .unwrap();
+    let review_evidence = completed["reviews"][0]["evidence_ids"].as_array().unwrap();
+    assert_eq!(
+        review_evidence.len(),
+        2,
+        "the hook observation and the agent's copy, never the failure"
+    );
+    assert!(review_evidence.contains(&json!(rows[1].0)));
+    cli(
+        root,
+        &["hook", "bash"],
+        Some(event(
+            "mcp__engram__engram_complete_task",
+            "toolu_done",
+            json!({"task_id":task_id}),
+            json!(completed.to_string()),
+        )),
+    );
+    cli(
+        root,
+        &["hook", "bash"],
+        Some(tests("cargo test --lib", "toolu_after")),
+    );
+    let after = evidence();
+    assert_eq!(after.len(), 4);
+    assert_ne!(
+        after[3].1, task_id,
+        "after completion, runs return to the session's own episode"
+    );
+    // Commit and re-index: the touched file's index stamp now follows the runs.
+    git(&repo, &["commit", "-q", "-am", "compute returns 2"]);
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let (indexed_digest, indexed_at): (String, i64) = c
+        .query_row(
+            "SELECT content_digest,indexed_at_ms FROM indexed_files WHERE path='lib.rs'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    let observed_at: i64 = c
+        .query_row(
+            "SELECT observed_at_ms FROM evidence WHERE id=?1",
+            [&rows[1].0],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(indexed_digest, observed_digest);
+    assert!(indexed_at > observed_at);
+    cli(
+        root,
+        &["hook", "session-end"],
+        Some(json!({"session_id":session,"cwd":repo})),
+    );
+    cli(root, &["daemon", "stop"], None);
+    drop(c);
+    let database = engram::storage::Database::open(root.join("brain.sqlite")).unwrap();
+    let packets = engram::judge::JudgeStore::new(database)
+        .prepare_pending(&engram::judge::JudgeConfig {
+            enabled: true,
+            model: "fixture-model".to_owned(),
+            ..engram::judge::JudgeConfig::default()
+        })
+        .unwrap();
+    assert_eq!(packets.len(), 1);
+    let eligibility: Vec<(String, bool)> = packets[0]
+        .evidence
+        .iter()
+        .map(|item| (item.id.as_str().to_owned(), item.eligible))
+        .collect();
+    assert!(
+        eligibility.contains(&(rows[1].0.clone(), true)),
+        "{eligibility:?}"
+    );
+    assert_eq!(
+        eligibility.iter().filter(|(_, eligible)| *eligible).count(),
+        1,
+        "the agent's own copy keeps the time rule"
+    );
+    assert!(
+        packets[0].blocked_reason.is_none(),
+        "{:?}",
+        packets[0].blocked_reason
+    );
+}

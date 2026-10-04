@@ -2281,7 +2281,10 @@ While working (substantive tasks, not trivial edits):
    the reusable takeaway, outcome success/failure).
 3. When tests/builds/lints run, `engram_record_evidence` with the command and
    exit code (kind `test_result`/`lint_result`..., strength `deterministic`).
-   Record FAILING runs too - fail-then-pass pairs teach conventions.
+   Record FAILING runs too - fail-then-pass pairs teach conventions. Engram's
+   hooks record runs only when the shell exit status is the verification's own:
+   `cmd | tail` reports tail's status, so start with `set -o pipefail;` when
+   you trim output.
 4. On completion, prefer `engram_complete_task`: supply actual test/build or
    operational output, the outcome, touched files and up to five reusable lessons.
    This captures evidence, closes the task and queues one review inbox. Omit
@@ -2680,6 +2683,7 @@ fn run_hook_event(
                     .with_extension("pending"),
             );
             engram::agenthooks::clear_claims(&state_dir, &session_id);
+            engram::agenthooks::clear_task_declarations(&state_dir, &session_id);
         }
         "bash" => {
             let mut primary = None;
@@ -2695,15 +2699,25 @@ fn run_hook_event(
                 // PostToolUse can be the only observed event for an edit.
                 let _ = engram::agenthooks::remember_paths(&state_dir, &scope, &paths);
                 if primary.is_none() {
-                    primary = Some((scope, session));
+                    primary = Some((scope, session, resolved));
                 }
             }
-            let Some((scope, session)) = primary else {
+            let Some((scope, session, resolved)) = primary else {
                 return Ok(true);
             };
             // A multi-repository patch is still one tool call. Attribute its
             // receipt once to the first tracked target, never once per file.
             record_hook_tool_usage(&client, &state_dir, &scope, &session, &payload, codex);
+            // Engram MCP task calls name the task later verification belongs to.
+            if let Some(declaration) = engram::agenthooks::task_declaration(&payload) {
+                let _ = engram::agenthooks::record_task_declaration(
+                    &state_dir,
+                    &session_id,
+                    &scope,
+                    &declaration,
+                );
+                return Ok(true);
+            }
             // All tools contribute actual call counts. Only shell verification
             // results can become deterministic evidence.
             if payload
@@ -2718,49 +2732,52 @@ fn run_hook_event(
             {
                 return Ok(true);
             }
-            let command = engram::agenthooks::tool_command(&tool_input);
-            let verification = command
-                .trim()
-                .strip_prefix("cd ")
-                .and_then(|s| s.split_once("&&"))
-                .map_or(command, |(_, rest)| rest.trim());
-            let Some(kind) = engram::agenthooks::detect_verification(verification) else {
+            // Only a harness-reported status that belongs to the verification
+            // itself is recorded; pipes and `||` hide it. The record carries
+            // digests of the session's touched and dirty files.
+            let session_paths = engram::agenthooks::recent_paths(&state_dir, &scope);
+            let Some(observed) = engram::agenthooks::observe_verification(
+                &payload,
+                codex,
+                &resolved.resolved.root,
+                resolved.resolved.git.as_ref(),
+                &session_paths,
+            ) else {
                 return Ok(true);
             };
-            let empty = serde_json::Value::Null;
-            let tool_result = payload
-                .get("tool_result")
-                .or_else(|| payload.get("tool_response"))
-                .unwrap_or(&empty);
-            let Some(exit_code) = engram::agenthooks::extract_exit_code(tool_result) else {
-                return Ok(true);
-            };
-            let fingerprint = engram::agenthooks::evidence_fingerprint(command, exit_code);
-            if session.last_evidence_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+            if session.last_evidence_fingerprint.as_deref() == Some(observed.fingerprint.as_str()) {
                 return Ok(true);
             }
-            if block_on(client.record_evidence(&EvidenceCreateRequest {
+            let evidence = |task_id: &engram::ids::TaskId| EvidenceCreateRequest {
                 project_id: session.project_id.clone(),
-                task_id: Some(session.task_id.clone()),
+                task_id: Some(task_id.clone()),
                 attempt_id: None,
-                kind: kind.to_owned(),
+                kind: observed.kind.to_owned(),
                 strength: EvidenceStrength::Deterministic,
                 commit_hash: None,
-                command: Some(command.chars().take(500).collect()),
-                exit_code: Some(exit_code),
-                artifact_text: engram::agenthooks::extract_artifact(tool_result),
-                metadata: serde_json::json!({"source": if codex { "codex-hook" } else { "claude-code-hook" }}),
-            }))
-            .is_err()
-            {
+                command: Some(observed.command.clone()),
+                exit_code: Some(observed.exit_code),
+                artifact_text: observed.artifact.clone(),
+                metadata: observed.metadata.clone(),
+            };
+            // Prefer the task the agent declared in this session. A declaration
+            // from another project fails scope validation and falls back to
+            // this session's own episode.
+            let recorded = engram::agenthooks::declared_task(&state_dir, &scope)
+                .filter(|declared| *declared != session.task_id)
+                .is_some_and(|declared| {
+                    block_on(client.record_evidence(&evidence(&declared))).is_ok()
+                })
+                || block_on(client.record_evidence(&evidence(&session.task_id))).is_ok();
+            if !recorded {
                 return Ok(true);
             }
             let _ = engram::agenthooks::save_session(
                 &state_dir,
                 &scope,
                 &engram::agenthooks::HookSession {
-                    last_verification_exit: Some(exit_code),
-                    last_evidence_fingerprint: Some(fingerprint),
+                    last_verification_exit: Some(observed.exit_code),
+                    last_evidence_fingerprint: Some(observed.fingerprint),
                     ..session
                 },
             );

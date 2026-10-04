@@ -520,6 +520,55 @@ fn failed_then_passing_verifications_do_not_poison_auto_proposals() {
 }
 
 #[test]
+fn completion_attaches_the_latest_hook_run_per_command_beside_the_agents_copy() {
+    let f = Fixture::new();
+    let experience = ExperienceStore::new(f.database.clone());
+    let task = experience
+        .start_task(&f.project.project.id, "make run return 2", None)
+        .unwrap();
+    let hook_run = |artifact: &str| {
+        experience
+            .record_evidence(
+                &f.project.project.id,
+                Some(&task.id),
+                None,
+                "test_result",
+                EvidenceStrength::Deterministic,
+                None,
+                Some("cargo test"),
+                Some(0),
+                artifact.as_bytes(),
+                &json!({"source": crate::agenthooks::CLAUDE_HOOK_SOURCE}),
+            )
+            .unwrap()
+            .id
+    };
+    let older = hook_run("test result: ok. 1 passed");
+    // Distinct observation times keep "latest" deterministic.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let newer = hook_run("test result: ok. 2 passed");
+    // A paste identical to a hook observation reuses that row; this one differs.
+    let completion: Completion =
+        serde_json::from_value(json!({"task_id":task.id,"outcome":"success",
+        "summary":"run returns 2","verifications":[{"kind":"test_result","strength":"deterministic",
+            "command":"cargo test","exit_code":0,"artifact":"2 tests passed"}],
+        "lessons":[{"claim":"run returns 2","rationale":"Observed test run"}]}))
+        .unwrap();
+    let result = f.store.complete(&completion).unwrap();
+    let attached = &result.reviews[0].evidence_ids;
+    assert_eq!(attached.len(), 2, "{attached:?}");
+    assert!(attached.contains(&newer));
+    assert!(
+        attached.contains(&result.evidence_ids[0]),
+        "the agent's own copy is kept beside the hook observation"
+    );
+    assert!(
+        !attached.contains(&older),
+        "an older run of the same command does not crowd the review"
+    );
+}
+
+#[test]
 fn rejected_duplicates_stay_rejected_and_reverification_renews_expiry() {
     let f = Fixture::new();
     let experience = ExperienceStore::new(f.database.clone());

@@ -382,12 +382,18 @@ impl JudgeStore {
             blocked_reason = Some(reason);
         }
         source_anchors["live"] = live;
-        let latest_source_version = source_anchors["files"]
+        let indexed_sources: Vec<IndexedSource> = source_anchors["files"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|file| file["indexed_at_ms"].as_i64())
-            .max();
+            .filter_map(|file| {
+                Some(IndexedSource {
+                    path: file["path"].as_str()?.to_owned(),
+                    digest: file["content_digest"].as_str()?.to_owned(),
+                    indexed_at_ms: file["indexed_at_ms"].as_i64()?,
+                })
+            })
+            .collect();
         let mut evidence = Vec::new();
         let mut source_records = Vec::new();
         // Existing proposals are limited to 32 evidence IDs. Half of the prompt
@@ -401,8 +407,7 @@ impl JudgeStore {
                         && record.project_id == review.project_id
                         && record.task_id.as_ref() == Some(&review.task_id)
                         && record.kind != "user_acceptance"
-                        && latest_source_version
-                            .is_none_or(|version| record.observed_at_ms >= version)
+                        && observed_indexed_sources(&record, &indexed_sources)
                         && !redacted.trim().is_empty();
                     if is_eligible
                         && record
@@ -642,6 +647,33 @@ impl JudgeStore {
             rows.into_iter().map(|raw| serde_json::from_str(&raw).map_err(Error::from)).collect()
         })
     }
+}
+
+/// The indexed version of one file the source task touched.
+struct IndexedSource {
+    path: String,
+    digest: String,
+    indexed_at_ms: i64,
+}
+
+/// Evidence can certify the indexed sources only if it observed them: it was
+/// recorded after each touched file's indexed version, or a native hook
+/// recorded exactly that file content beside the verification. Re-indexing
+/// after a commit then keeps a run that tested the same bytes. Evidence from
+/// agents, the CLI or completions carries no hook digests and keeps the time
+/// rule; changed source never matches an older run's digest.
+fn observed_indexed_sources(
+    record: &crate::experience::EvidenceRecord,
+    sources: &[IndexedSource],
+) -> bool {
+    let observed = crate::agenthooks::hook_source_digests(&record.metadata);
+    sources.iter().all(|source| {
+        record.observed_at_ms >= source.indexed_at_ms
+            || observed
+                .as_ref()
+                .and_then(|digests| digests.get(&source.path))
+                .is_some_and(|digest| digest.eq_ignore_ascii_case(&source.digest))
+    })
 }
 
 fn live_head(root: &std::path::Path) -> Result<Option<String>> {
@@ -1590,5 +1622,119 @@ mod tests {
                 .outcome,
             "deferred"
         );
+    }
+
+    const INDEXED_SOURCE: &[u8] = b"fn authorize(token: Option<&str>) -> bool { token.is_some() }";
+
+    /// Attach a native-hook observation of `observed_source` as the review's evidence.
+    fn attach_hook_evidence(fixture: &Fixture, observed_source: &[u8]) {
+        let database = fixture.store.database.clone();
+        let (task, project): (String, String) = database
+            .with_reader(|c| {
+                Ok(
+                    c.query_row("SELECT task_id,project_id FROM lesson_reviews", [], |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })?,
+                )
+            })
+            .expect("review");
+        let metadata = json!({"source": crate::agenthooks::CLAUDE_HOOK_SOURCE,
+            "exit_status": "success_event",
+            "source_digests": {"src/auth.rs": crate::experience::sha256(observed_source)}});
+        let record = ExperienceStore::new(database.clone())
+            .record_evidence(
+                &crate::ids::ProjectId::parse(&project).expect("project"),
+                Some(&crate::ids::TaskId::parse(&task).expect("task")),
+                None,
+                "test_result",
+                EvidenceStrength::Deterministic,
+                None,
+                Some("cargo test rejects_missing_token"),
+                Some(0),
+                ARTIFACT.as_bytes(),
+                &metadata,
+            )
+            .expect("hook evidence");
+        database
+            .write_immediate(|tx| {
+                tx.execute(
+                    "UPDATE lesson_reviews SET evidence_ids_json=json_array(?1)",
+                    [record.id.as_str()],
+                )?;
+                Ok(())
+            })
+            .expect("review evidence");
+    }
+
+    /// The commit watcher re-indexes touched files after the verification ran.
+    fn reindex_after_evidence(fixture: &Fixture, source: &[u8]) {
+        std::fs::write(fixture.temp.path().join("repo/src/auth.rs"), source).expect("source");
+        fixture.store.database.write_immediate(|tx| {
+            tx.execute("UPDATE indexed_files SET content_digest=?1,indexed_at_ms=(SELECT MAX(observed_at_ms)+1 FROM evidence)",
+                [crate::experience::sha256(source)])?;
+            Ok(())
+        }).expect("reindex");
+    }
+
+    #[test]
+    fn hook_observed_bytes_stay_eligible_after_reindexing_identical_source() {
+        let fixture = Fixture::new(false);
+        attach_hook_evidence(&fixture, INDEXED_SOURCE);
+        reindex_after_evidence(&fixture, INDEXED_SOURCE);
+        let packet = fixture.packet();
+        assert!(packet.evidence[0].eligible);
+        assert!(
+            packet.blocked_reason.is_none(),
+            "{:?}",
+            packet.blocked_reason
+        );
+        assert_eq!(
+            fixture
+                .store
+                .apply(&fixture.config, &packet, &accepted(&packet))
+                .expect("apply")
+                .outcome,
+            "accepted"
+        );
+    }
+
+    #[test]
+    fn hook_digest_of_older_source_cannot_certify_a_reindexed_change() {
+        let fixture = Fixture::new(false);
+        attach_hook_evidence(&fixture, INDEXED_SOURCE);
+        reindex_after_evidence(&fixture, b"fn authorize(_: Option<&str>) -> bool { true }");
+        let packet = fixture.packet();
+        assert!(!packet.evidence[0].eligible);
+        assert!(
+            packet
+                .blocked_reason
+                .as_ref()
+                .is_some_and(|reason| reason.contains("independently verified"))
+        );
+        assert_eq!(
+            fixture
+                .store
+                .apply(&fixture.config, &packet, &accepted(&packet))
+                .expect("apply")
+                .outcome,
+            "deferred"
+        );
+    }
+
+    #[test]
+    fn agent_reported_evidence_keeps_the_time_rule_even_with_digests() {
+        let fixture = Fixture::new(true);
+        fixture.store.database.write_immediate(|tx| {
+            tx.execute("UPDATE evidence SET metadata_json=json_object('capture','completion','source_digests',json_object('src/auth.rs',?1))",
+                [crate::experience::sha256(INDEXED_SOURCE)])?;
+            Ok(())
+        }).expect("agent metadata");
+        reindex_after_evidence(&fixture, INDEXED_SOURCE);
+        let packet = fixture.packet();
+        assert!(
+            !packet.evidence[0].eligible,
+            "only native hook observations can certify re-indexed bytes"
+        );
+        assert!(packet.blocked_reason.is_some());
     }
 }

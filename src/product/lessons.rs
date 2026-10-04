@@ -241,8 +241,18 @@ impl ProductStore {
         if task.status == "success" && lessons.is_empty() && !request.summary.trim().is_empty() {
             lessons.push(LessonDraft { claim:request.summary.clone(),rationale:"Proposed from the completion summary; edit this into a reusable rule before accepting.".to_owned(),evidence_ids:Vec::new(),expires_at_ms:None });
         }
+        // Hooks record every verification run. Attach the latest passing run
+        // per command and source, newest first, so older runs of the same
+        // command cannot crowd out the observation of the final source, and an
+        // agent's own copy of a run never displaces the hook's observation.
         let eligible_ids:Vec<EvidenceId>=self.database.with_reader(|c| {
-            let mut s=c.prepare("SELECT evidence_id FROM verified_supporting_evidence WHERE task_id=?1 AND project_id=?2 ORDER BY evidence_id LIMIT 32")?;
+            let mut s=c.prepare("SELECT v.evidence_id FROM verified_supporting_evidence v JOIN evidence e ON e.id=v.evidence_id
+                WHERE v.task_id=?1 AND v.project_id=?2 AND (e.command IS NULL OR NOT EXISTS(
+                    SELECT 1 FROM verified_supporting_evidence lv JOIN evidence later ON later.id=lv.evidence_id
+                    WHERE lv.task_id=v.task_id AND lv.project_id=v.project_id AND later.kind=e.kind AND later.command=e.command
+                      AND json_extract(later.metadata_json,'$.source') IS json_extract(e.metadata_json,'$.source')
+                      AND (later.observed_at_ms,later.id)>(e.observed_at_ms,e.id)))
+                ORDER BY e.observed_at_ms DESC,e.id LIMIT 32")?;
             let ids=s.query_map(params![task.id.as_str(),task.project_id.as_str()],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
             ids.iter().map(|id|EvidenceId::parse(id)).collect()
         })?;
