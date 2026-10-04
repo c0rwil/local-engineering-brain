@@ -30,6 +30,34 @@ const MAX_DIAGRAM_GROUPS: usize = 24;
 const MAX_DIAGRAM_EDGES: usize = 48;
 const MAX_MEMORY_NOTES: usize = 500;
 
+/// SQL condition on `projects p` for the projects the vault exports: active,
+/// neither a derived origin view nor hidden from the workspace.
+const EXPORTED_PROJECT: &str = "p.tombstoned_at_ms IS NULL
+   AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id
+       AND (pf.key = 'internal.view_of'
+            OR (pf.key = 'internal.hidden' AND pf.value = 'true')))";
+
+/// Whether the vault exports this project: the projects of
+/// [`VaultBuilder::build_all`] and the workspace note. Automatic refreshes
+/// skip every other project.
+///
+/// # Errors
+///
+/// Returns storage errors.
+pub fn exports_project(database: &Database, project_id: &ProjectId) -> Result<bool> {
+    database.with_reader(|connection| {
+        connection
+            .query_row(
+                &format!(
+                    "SELECT EXISTS(SELECT 1 FROM projects p WHERE p.id = ?1 AND {EXPORTED_PROJECT})"
+                ),
+                [project_id.as_str()],
+                |row| row.get(0),
+            )
+            .map_err(Error::from)
+    })
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct VaultReport {
     pub root: String,
@@ -141,13 +169,9 @@ impl VaultBuilder {
     /// Returns an error for storage failures or vault I/O.
     pub fn build_all(&self) -> Result<VaultReport> {
         let ids = self.database.with_reader(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT id FROM projects p WHERE p.tombstoned_at_ms IS NULL
-                   AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id
-                       AND (pf.key = 'internal.view_of'
-                            OR (pf.key = 'internal.hidden' AND pf.value = 'true')))
-                 ORDER BY p.name, p.id",
-            )?;
+            let mut statement = connection.prepare(&format!(
+                "SELECT id FROM projects p WHERE {EXPORTED_PROJECT} ORDER BY p.name, p.id"
+            ))?;
             let rows = statement
                 .query_map([], |row| row.get::<_, String>(0))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -348,13 +372,9 @@ impl VaultBuilder {
 
     fn render_workspace(&self, registry: &ProjectRegistry) -> Result<String> {
         let projects = self.database.with_reader(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT id, name FROM projects p WHERE p.tombstoned_at_ms IS NULL
-                   AND NOT EXISTS (SELECT 1 FROM project_facts pf WHERE pf.project_id = p.id
-                       AND (pf.key = 'internal.view_of'
-                            OR (pf.key = 'internal.hidden' AND pf.value = 'true')))
-                 ORDER BY p.name, p.id",
-            )?;
+            let mut statement = connection.prepare(&format!(
+                "SELECT id, name FROM projects p WHERE {EXPORTED_PROJECT} ORDER BY p.name, p.id"
+            ))?;
             let rows = statement
                 .query_map([], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))

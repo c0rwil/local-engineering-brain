@@ -91,7 +91,8 @@ An optional Obsidian vault mirror exports to `~/.engram/vault` when enabled.
 The workspace UI and canonical documentation do not depend on it. With
 `[vault] auto_refresh`, a graph change schedules one export for that repository
 when the current refresh window closes (`refresh_interval_secs`, default 300).
-Further changes in the same window share that export.
+Further changes in the same window share that export. Like the full vault
+build, automatic exports skip hidden repositories and origin views.
 
 ## 5. Connect your agents (once, machine-wide)
 
@@ -505,6 +506,12 @@ knowledge never ping-pongs back.
 | Stop everything | `engram daemon stop` (waits up to `--wait-secs`, default 150, for the process to exit; `0` returns at once) |
 
 Never copy `brain.sqlite` with `cp` — WAL contents are lost. Backups only.
+
+The daily `consolidation_gc` job also removes job history. It deletes
+succeeded and dead `jobs` rows that finished more than
+`[jobs] job_retention_days` ago (default 30). Pending, running and failed rows
+stay. Its result reports the count as `job_rows_deleted`. After a row is
+removed, a job with the same dedupe key can be enqueued again.
 
 ## 11. Troubleshooting
 

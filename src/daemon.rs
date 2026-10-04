@@ -3446,11 +3446,12 @@ async fn index_project(
 
     // Derived vault refresh: a durable background job per project and refresh
     // window, so vault notes and diagrams track graph changes without blocking
-    // the index response. Requires jobs + vault to both be enabled.
+    // the index response. Requires jobs + vault to both be enabled, and only
+    // the projects the full vault build exports (not views, not hidden).
     if state.config.vault.enabled
         && state.config.vault.auto_refresh
         && state.config.jobs.enabled
-        && !is_view_project
+        && crate::vault::exports_project(&state.database, &resolved.project.id).unwrap_or(false)
     {
         let queue = JobQueue::new(state.database.clone());
         let project_id = resolved.project.id.clone();
@@ -5949,6 +5950,75 @@ mod tests {
         assert!(state.judge_stopping.load(Ordering::SeqCst));
         assert_eq!(landed.load(Ordering::SeqCst), 20, "queued writes landed");
         assert_eq!(state.scheduler.pending(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn automatic_vault_refresh_skips_hidden_projects() {
+        let temp = TempDir::new().expect("temp dir");
+        let mut config = test_config(&temp);
+        config.vault.enabled = true;
+        config.vault.root = temp.path().join("vault");
+        config.watch.enabled = false;
+        config.web.enabled = false;
+        config.links.auto_scan = false;
+        let [shown, hidden] = ["shown", "hidden"].map(|name| {
+            let root = temp.path().join(name);
+            std::fs::create_dir_all(&root).expect("project dir");
+            std::fs::write(root.join("lib.rs"), "pub fn run() {}\n").expect("source");
+            root
+        });
+        let client = DaemonClient::new(&config.daemon.socket_path, Duration::from_secs(5));
+        let (stop, receive) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = receive.await;
+        }));
+        wait_until_ready(&client).await;
+        let hidden_id = client
+            .resolve_project(&hidden)
+            .await
+            .expect("register")
+            .resolved
+            .project
+            .id;
+        client
+            .set_fact(&FactSetRequest {
+                project_id: hidden_id.clone(),
+                key: "internal.hidden".to_owned(),
+                value: "true".to_owned(),
+                note: None,
+            })
+            .await
+            .expect("hide");
+        client.index_project(&hidden, None).await.expect("index");
+        let shown_id = client
+            .index_project(&shown, None)
+            .await
+            .expect("index")
+            .resolved
+            .project
+            .id;
+        // Enqueues are queued behind the index response, in index order.
+        let mut projects = Vec::new();
+        for _ in 0..300 {
+            projects = client
+                .list_jobs(&JobListRequest {
+                    status: None,
+                    limit: 100,
+                })
+                .await
+                .expect("jobs")
+                .into_iter()
+                .filter(|job| job.job_type == JobType::VaultExport)
+                .filter_map(|job| job.project_id)
+                .collect::<Vec<_>>();
+            if projects.contains(&shown_id) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(projects, [shown_id], "only the shown project is exported");
+        stop.send(()).expect("stop");
+        server.await.expect("join").expect("serve");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
