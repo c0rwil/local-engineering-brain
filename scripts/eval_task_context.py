@@ -12,6 +12,7 @@ import datetime
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import statistics
 import subprocess
@@ -40,7 +41,41 @@ def definitions(database, project, components):
     return result
 
 
-def trial(database, socket, project, case, budget, repeat, mode, repository_root=None):
+# Definitions one pre-tool file brief lists (`BRIEF_SYMBOLS` in agenthooks.rs).
+BRIEF_SYMBOLS = 20
+
+
+def named_in(query, labels):
+    """Whether the task text spells one of the component's names (a label or
+    its last `::` segment) as a whole identifier, ignoring case."""
+    names = {name for label in labels for name in (label, label.rsplit("::", 1)[-1])}
+    return any(re.search(rf"(?<![\w:]){re.escape(name)}(?![\w])", query, re.IGNORECASE) for name in names)
+
+
+def brief_coverage(socket, project, case, targets, response, repository_root):
+    """Where each required definition lands in the pre-tool file brief of its
+    file: the daemon's file shape for the task, cut to the brief's length."""
+    listed = {}
+    for path in sorted({target["path"] for target in targets}):
+        shape = api(str(socket), "/api/v1/world/file-shape", {
+            "project_id": project, "file_path": path, "repository_root": repository_root,
+            "task_text": case["query"], "context_run_id": response.get("id"),
+        })
+        listed[path] = shape["symbols"][:BRIEF_SYMBOLS]
+    coverage = []
+    for target in targets:
+        symbols = listed[target["path"]]
+        ranks = [rank for rank, symbol in enumerate(symbols, 1) if symbol["label"] in target["labels"]]
+        rank = min(ranks, default=None)
+        coverage.append({
+            "brief_rank": rank,
+            "brief_span": bool(rank and symbols[rank - 1].get("lines")),
+            "named_in_task": named_in(case["query"], target["labels"]),
+        })
+    return coverage
+
+
+def trial(database, socket, project, case, budget, repeat, mode, repository_root=None, file_briefs=False):
     targets = definitions(database, project, case["components"])
     started = time.perf_counter()
     response = api(str(socket), "/api/v1/context/compile", {
@@ -65,6 +100,9 @@ def trial(database, socket, project, case, budget, repeat, mode, repository_root
         rank = min(ranks, default=None)
         coverage.append({**target, "rank": rank,
                          "source_type": selected[rank - 1]["source_type"] if rank else None})
+    if file_briefs and mode == "brain" and targets:
+        for component, brief in zip(coverage, brief_coverage(socket, project, case, targets, response, repository_root)):
+            component.update(brief)
     text = response["stable_prefix"] + response["dynamic_context"]
     return {
         "repeat": repeat, "mode": mode, "selected": selected, "components": coverage,
@@ -105,6 +143,23 @@ def summarize(cases):
         "latency_ms_median": statistics.median(trial["api_latency_ms"] for trial in trials),
         "latency_ms_max": max(trial["api_latency_ms"] for trial in trials),
         "repeat_consistent_cases": sum(len({json.dumps(trial["selected"], sort_keys=True) for trial in case["trials"] if trial["mode"] == "brain"}) == 1 for case in cases),
+        **brief_summary(components),
+    }
+
+
+def brief_summary(components):
+    """Brief coverage counts, present only when file briefs were measured."""
+    briefed = [component for component in components if "brief_rank" in component]
+    if not briefed:
+        return {}
+    named = [component for component in briefed if component["named_in_task"]]
+    return {
+        "brief_components": len(briefed),
+        "brief_listed": sum(component["brief_rank"] is not None for component in briefed),
+        "brief_listed_with_span": sum(component["brief_span"] for component in briefed),
+        "brief_named_components": len(named),
+        "brief_named_listed": sum(component["brief_rank"] is not None for component in named),
+        "brief_named_with_span": sum(component["brief_span"] for component in named),
     }
 
 
@@ -168,7 +223,7 @@ def evaluate_task(args, task, budget):
                     for repeat in range(1, args.repeats + 1):
                         for case in cases:
                             for mode in ("brain", "off"):
-                                case["trials"].append(trial(database, socket, ready["project_id"], case, budget, repeat, mode, request_root))
+                                case["trials"].append(trial(database, socket, ready["project_id"], case, budget, repeat, mode, request_root, args.file_briefs))
                     result["cases"] = cases
                     result["summary"] = summarize(cases)
             finally:
@@ -195,6 +250,8 @@ def main():
     parser.add_argument("--live-checkout", action="store_true",
                         help="keep the reindexed disposable clone during queries and send it as the request root (requires --reindex)")
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--file-briefs", action="store_true",
+                        help="also ask the daemon for each required file's pre-tool brief and record where required definitions land in its first 20")
     args = parser.parse_args()
     if args.output.exists() or not 1 <= args.repeats <= 10:
         parser.error("Use a new output path and 1–10 repeats")
@@ -207,7 +264,7 @@ def main():
         "daemon_sha256": sha256(args.daemon), "harness_sha256": sha256(Path(__file__)),
         "helpers_sha256": sha256(Path(__file__).with_name("eval_context_quality.py")),
         "case_sha256": sha256(args.cases), "reindex": args.reindex, "repeats": args.repeats,
-        "live_checkout": args.live_checkout,
+        "live_checkout": args.live_checkout, "file_briefs": args.file_briefs,
         "token_budget": document["default_token_budget"], "limitations": document["purpose"],
         "isolation": ("Copied databases and historical checkouts; the disposable reindexed clone is the request root during queries; no other live roots, background jobs, network models or source payload export."
                       if args.live_checkout else

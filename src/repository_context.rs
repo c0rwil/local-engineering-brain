@@ -1158,6 +1158,57 @@ impl SourceQuery {
     }
 }
 
+/// Task terms for ranking definitions outside the source map, such as those
+/// a pre-tool file brief lists. Parsing and identifier rules are the source
+/// map's own.
+pub struct TaskTerms(SourceQuery);
+
+impl TaskTerms {
+    #[must_use]
+    pub fn parse(task: &str) -> Self {
+        Self(SourceQuery::parse(task))
+    }
+
+    /// Whether a task identifier names the definition: its label or a
+    /// qualified suffix of it, so `Engine::run` and `run` both name
+    /// `Engine::run`. Plain prose words never name a definition.
+    #[must_use]
+    pub fn names(&self, label: &str) -> bool {
+        let canonical = label.replace('.', "::").to_lowercase();
+        std::iter::once(canonical.as_str())
+            .chain(
+                canonical
+                    .match_indices("::")
+                    .map(|(offset, _)| &canonical[offset + 2..]),
+            )
+            .any(|suffix| self.0.identifiers.contains_key(suffix))
+    }
+
+    /// Strength of a weaker match, 0.0 for none: a task identifier inside the
+    /// label or sharing at least two of its words, scored as in source
+    /// selection, plus 8 for each task word that is a whole part of the label
+    /// (at most four). One shared identifier word is not enough: `step_27`
+    /// would otherwise match every `step_*`.
+    #[must_use]
+    pub fn partial_score(&self, label: &str) -> f64 {
+        let identifiers = self
+            .0
+            .identifiers
+            .iter()
+            .map(|(identifier, parts)| identifier_score(identifier, parts, label, "", true))
+            .filter(|score| *score >= 48.0)
+            .fold(0.0, f64::max);
+        let parts = identifier_parts(label);
+        let words = self
+            .0
+            .prose_terms()
+            .filter(|term| term.len() >= 3 && parts.contains(term))
+            .take(4)
+            .count();
+        identifiers + f64::from(u8::try_from(words).unwrap_or(4)) * 8.0
+    }
+}
+
 fn query_character(c: char) -> bool {
     c.is_alphanumeric() || "_./:-".contains(c)
 }
@@ -2512,5 +2563,41 @@ mod tests {
             map.text
         );
         assert!(!map.text.contains("unimported"), "{}", map.text);
+    }
+
+    #[test]
+    fn task_terms_name_definitions_and_score_weaker_matches() {
+        let terms = TaskTerms::parse(
+            "Change `run` and engine_step_1500 so the checksum seed is configurable",
+        );
+        assert!(terms.names("Engine::run"));
+        assert!(terms.names("engine_step_1500"));
+        assert!(!terms.names("engine_step_150"));
+        assert!(
+            !terms.names("checksum_seed_mix"),
+            "prose words never name a definition"
+        );
+        assert!(
+            terms.partial_score("checksum_seed_mix") > terms.partial_score("reseed_checksum_table")
+        );
+        assert!(terms.partial_score("reseed_checksum_table") > 0.0);
+        assert!(
+            terms.partial_score("engine_step_15000") > 0.0,
+            "a task identifier inside a longer name"
+        );
+        assert!(terms.partial_score("unrelated_helper").abs() < f64::EPSILON);
+        assert!(
+            TaskTerms::parse("Fix step_27")
+                .partial_score("step_02")
+                .abs()
+                < f64::EPSILON,
+            "one shared identifier word is not a match"
+        );
+        assert!(
+            TaskTerms::parse("")
+                .partial_score("checksum_seed_mix")
+                .abs()
+                < f64::EPSILON
+        );
     }
 }
