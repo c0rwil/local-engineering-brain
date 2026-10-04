@@ -1782,7 +1782,9 @@ pub fn observed_exit_status(
     use serde_json::Value;
     let event = payload.get("hook_event_name").and_then(Value::as_str);
     if event == Some("PostToolUseFailure") {
-        if payload.get("is_interrupt").and_then(Value::as_bool) == Some(true) {
+        // Only Claude Code writes "Exit code N" itself. Other clients' failure
+        // text is the command's own output, which can begin with any line.
+        if !claude_code || payload.get("is_interrupt").and_then(Value::as_bool) == Some(true) {
             return None;
         }
         let error = payload.get("error").and_then(Value::as_str)?;
@@ -3409,6 +3411,9 @@ mod tests {
             changed[key] = value;
             assert_eq!(observed_exit_status(&changed, true), None, "{key}");
         }
+        // Other clients' failure text is command output; a first line that
+        // happens to read "Exit code N" must not become a recorded status.
+        assert_eq!(observed_exit_status(&failure, false), None);
         let codex = json!({"hook_event_name":"PostToolUse","tool_name":"exec_command",
             "tool_response":{"exit_code":3,"stdout":""}});
         assert_eq!(
