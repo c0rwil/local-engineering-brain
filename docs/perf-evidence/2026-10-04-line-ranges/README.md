@@ -457,3 +457,30 @@ matches it, and it lies past the first 20 definitions of its file. No coding
 agent was run. The baseline daemon SHA-256 is `c944043384408843…`, the
 candidate is `20cc0bfd761f8a61…`, and the harness SHA-256 is
 `9fa5416ba65f66ba…`.
+
+## Addendum: file briefs per task
+
+A conversation now gets one brief of a file per task. After a new prompt, the
+file is briefed again only if its brief would list other sources than the one
+delivered. Order and line spans alone do not count, as with the delivery rule
+for task source maps. A context run compiled for an earlier task no longer
+ranks a later task's brief.
+
+The measurement used one conversation, the 960 KiB fixture above, and six
+reads of it under five tasks. Step 1 named `engine_step_1500`, and step 2
+repeated it. Step 3 named `engine_step_0003`, a function near the top of the
+file. Step 4 named `engine_step_0007`, so it listed the same 20 functions in
+another order. Step 5 named two functions near the end, and step 6 named none.
+
+| Client | Baseline (`79e6635`): briefs, bytes | Per task: briefs, bytes |
+| --- | ---: | ---: |
+| Claude Code | 1, 1,055 B | 4, 4,220 B |
+| Codex | 1, 1,055 B | 4, 4,218 B |
+| Cursor | 1, 1,055 B | 4, 4,220 B |
+
+The repeated task (step 2) and the reordered list (step 4) added no brief. The
+re-briefs opened with the named function: `engine_step_0003` at step 3 and
+`engine_step_1200` at step 5. At step 6 the prompt named no function, but the
+task source map still selected one, and it differed between clients. That
+pick led the re-brief, so a vague task re-briefs whenever its source map picks
+a definition outside the delivered list. No coding agent was run.

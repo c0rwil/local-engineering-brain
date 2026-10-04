@@ -1741,8 +1741,57 @@ fn pretool_file_brief_lists_the_task_named_definition_first() {
         "{brief}"
     );
     assert_eq!(brief.matches("(Function)").count(), 20, "{brief}");
-    // Suppression is unchanged: the file is briefed once per conversation.
+    // Within one task the file is briefed once.
     let repeat = hook_context(&cli(root, &["hook", "pretool"], Some(read)));
     assert!(!repeat.contains("Defines"), "{repeat}");
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
+fn a_new_task_rebriefs_a_file_only_when_its_listed_sources_change() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let source = (0..30).fold(String::new(), |mut source, n| {
+        writeln!(source, "pub fn step_{n:02}() -> u32 {{\n    {n}\n}}\n").unwrap();
+        source
+    });
+    std::fs::write(repo.join("engine.rs"), &source).unwrap();
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let read = json!({"session_id":"tasks","cwd":repo,"tool_name":"Read",
+        "tool_input":{"file_path":repo.join("engine.rs")}});
+    let task = |prompt: &str| {
+        cli(
+            root,
+            &["hook", "prompt"],
+            Some(json!({"session_id":"tasks","cwd":repo,"prompt":prompt})),
+        );
+    };
+    let brief = || {
+        let context = hook_context(&cli(root, &["hook", "pretool"], Some(read.clone())));
+        context
+            .find("# Indexed reference data: engine.rs")
+            .map(|start| context[start..].to_owned())
+    };
+
+    task("Make step_05 return a constant");
+    let first = brief().expect("first brief");
+    assert!(
+        first.contains("task matches first): step_05 (Function) 21-23, step_00 (Function) 1-3"),
+        "{first}"
+    );
+    assert_eq!(brief(), None, "same task: no repeat");
+    // The same 20 definitions in another order are not briefed again.
+    task("Make step_10 return a constant");
+    assert_eq!(brief(), None, "reordering only: no re-brief");
+    // A task naming a definition outside the delivered list re-briefs once.
+    task("Make step_27 return a constant");
+    let rebrief = brief().expect("re-brief");
+    assert!(
+        rebrief.contains("task matches first): step_27 (Function) 109-111, step_00 (Function) 1-3"),
+        "{rebrief}"
+    );
+    assert_eq!(brief(), None, "once per task");
     cli(root, &["daemon", "stop"], None);
 }

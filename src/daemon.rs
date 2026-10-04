@@ -3127,15 +3127,21 @@ fn ranked_file_symbols(
         id: String,
         symbol: FileShapeSymbol,
     }
+    // A run compiled for another task (an earlier prompt) selects nothing.
+    let task_digest = request
+        .task_text
+        .as_deref()
+        .map(|task| crate::experience::sha256(task.as_bytes()));
     let selected: BTreeSet<String> = match &request.context_run_id {
         Some(run) => connection
             .prepare(
                 "SELECT ci.source_id FROM context_items ci
                  JOIN context_runs cr ON cr.id = ci.context_run_id
-                 WHERE ci.context_run_id = ?1 AND cr.project_id = ?2",
+                 WHERE ci.context_run_id = ?1 AND cr.project_id = ?2
+                   AND (?3 IS NULL OR cr.task_text_digest = ?3)",
             )?
             .query_map(
-                rusqlite::params![run.as_str(), request.project_id.as_str()],
+                rusqlite::params![run.as_str(), request.project_id.as_str(), task_digest],
                 |row| row.get(0),
             )?
             .collect::<std::result::Result<_, _>>()?,
@@ -6323,6 +6329,17 @@ mod tests {
             .expect("selected");
         assert_eq!(selected.symbols[0].label, "step_28", "{selected:?}");
         assert!(selected.symbols[0].task_match);
+        // A run compiled for an earlier task does not rank this one.
+        let stale = shape(
+            Some("Tidy up the documentation wording"),
+            Some(context.id.clone()),
+        )
+        .await
+        .expect("stale run");
+        assert_eq!(
+            order(&stale),
+            plain(&["step_00", "step_01", "step_02", "step_03"])
+        );
         // A run of another project selects nothing here.
         let other = client
             .file_shape(&FileShapeRequest {

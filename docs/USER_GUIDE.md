@@ -228,20 +228,23 @@ to a definition by name alone, so they count it only when exactly one file
 defines that name.
 
 **File briefs.** Before a file tool touches a file, the pretool hook lists what
-the index knows about it once per conversation: up to 20 definitions, callers
-in other files and imports. Definitions that the task source map selected or
-the task names come first. Next come definitions whose names contain a task
-identifier, share two of its words or contain words of the prompt, and the
-rest follow in file order. With no such match, the list is in file order;
-with one, its heading says `task matches first`. When the checkout's copy still has
-the indexed digest, each definition carries its lines, checked as for the
-task source map (`Defines (line spans): Engine::run (Function) 120-188`);
-otherwise the list has no spans. A file of at least `context.large_file_bytes`
-(default 65536; 0 turns it off) gets one more line with its size. A brief
-always fits the client's limit for one response, 8,000 bytes for Cursor and
-the injected-token budget for Codex. It drops its spans when only that form
-fits, and a brief that does not fit what is left of a call's budget waits for
-a later call. `context.source_line_ranges = false` also removes the spans.
+the index knows about it: up to 20 definitions, callers in other files and
+imports. A conversation gets one brief of a file per task. After a new prompt,
+the file is briefed again only if its brief would list other sources than the
+one delivered; a brief that differs only in order or line spans is not
+repeated. Definitions that the task source map selected or the task names come
+first. Next come definitions whose names contain a task identifier, share two
+of its words or contain words of the prompt, and the rest follow in file order.
+With no such match, the list is in file order; with one, its heading says
+`task matches first`. When the checkout's copy still has the indexed digest,
+each definition carries its lines, checked as for the task source map
+(`Defines (line spans): Engine::run (Function) 120-188`); otherwise the list
+has no spans. A file of at least `context.large_file_bytes` (default 65536; 0
+turns it off) gets one more line with its size. A brief always fits the
+client's limit for one response, 8,000 bytes for Cursor and the injected-token
+budget for Codex. It drops its spans when only that form fits, and a brief that
+does not fit what is left of a call's budget waits for a later call.
+`context.source_line_ranges = false` also removes the spans.
 
 **Codex subagents.** Codex runs subagents in their own threads, but their
 hooks carry the parent conversation's session id. Engram counts a spawned
