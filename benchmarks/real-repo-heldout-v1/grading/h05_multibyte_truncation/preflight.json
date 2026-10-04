@@ -1,0 +1,475 @@
+{
+  "suite_id": "real-repo-heldout-v1",
+  "task_id": "h05_multibyte_truncation",
+  "base_commit": "f566a1c24ddfc600fb21c0304680068158d50f35",
+  "reference_fix_commit": "dee1f322658ee319fbe0e3c64d67b89781cd46db",
+  "generated_at": "2026-10-04T11:23:47+00:00",
+  "python": "3.14.7",
+  "fixture_root": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h05_multibyte_truncation-20261004-042347",
+  "grader_sha256": "9ff70c8baf1cd0afe61f76e8725d700478e0e08f2bbc96a9fd1e0481bdee03ab",
+  "private_files_sha256": {
+    "hidden_tests.rs": "8550e1cc5eea9c8f4d96fced5e1ed73028d9015b3a8d023c891d8761a477f727"
+  },
+  "preflight_sha256": "fdd1fcbbfebda2a4865ff25ee74a33b8f6aeb6b9abd60b9c730420741ca8766f",
+  "shared_sha256": {
+    "preflight_common.py": "3430250732b8d6a001547d07e3dd55f981373872aeb3f8a7743549919fddc00a",
+    "rust_grader.py": "d8968d85f979c281f4f00298a2543328a792011e558d2645f0ef45c286050842"
+  },
+  "expected_check_count": 6,
+  "controls": [
+    {
+      "name": "base",
+      "kind": "base",
+      "source": "base",
+      "expect": "fail",
+      "description": "Historical base: byte-indexed truncation.",
+      "required_failures": [
+        "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+        "multibyte_context_fields_and_question_truncate_by_characters",
+        "multibyte_transcript_entries_truncate_by_characters",
+        "multibyte_text_within_the_character_limit_is_kept_whole"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "reference",
+      "kind": "reference",
+      "source": "reference",
+      "expect": "pass",
+      "description": "Historical fix.",
+      "required_failures": [],
+      "exact_failures": true
+    },
+    {
+      "name": "char-count-only",
+      "kind": "mutant",
+      "source": "base",
+      "expect": "fail",
+      "description": "Counts characters for the limit check but still slices by byte index.",
+      "required_failures": [
+        "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+        "multibyte_context_fields_and_question_truncate_by_characters",
+        "multibyte_transcript_entries_truncate_by_characters"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "byte-budget-at-char-boundary",
+      "kind": "mutant",
+      "source": "base",
+      "expect": "fail",
+      "description": "Avoids the panic by backing a byte budget off to a character boundary.",
+      "required_failures": [
+        "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+        "multibyte_context_fields_and_question_truncate_by_characters",
+        "multibyte_transcript_entries_truncate_by_characters",
+        "multibyte_text_within_the_character_limit_is_kept_whole"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "prompt-fields-only",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Fixes the prompt fields but keeps byte truncation for transcript history.",
+      "required_failures": [
+        "multibyte_transcript_entries_truncate_by_characters"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "char-indices-cut",
+      "kind": "alternative",
+      "source": "base",
+      "expect": "pass",
+      "description": "Legitimate alternative: finds the byte cut with char_indices instead of collecting chars.",
+      "required_failures": [],
+      "exact_failures": true
+    }
+  ],
+  "mutations": {
+    "char-count-only": "--- base/src/services/human_response.rs\n+++ char-count-only/src/services/human_response.rs\n@@ -408,7 +408,7 @@\n }\n \n fn truncate(value: &str, max_chars: usize) -> String {\n-    if value.len() <= max_chars {\n+    if value.chars().count() <= max_chars {\n         return value.to_string();\n     }\n     let suffix = \"... [truncated]\";\n",
+    "byte-budget-at-char-boundary": "--- base/src/services/human_response.rs\n+++ byte-budget-at-char-boundary/src/services/human_response.rs\n@@ -415,7 +415,11 @@\n     if max_chars <= suffix.len() {\n         return suffix[..max_chars].to_string();\n     }\n-    format!(\"{}{}\", value[..max_chars - suffix.len()].trim_end(), suffix)\n+    let mut cut = max_chars - suffix.len();\n+    while !value.is_char_boundary(cut) {\n+        cut -= 1;\n+    }\n+    format!(\"{}{}\", value[..cut].trim_end(), suffix)\n }\n \n fn is_human_relevant_text(value: &str) -> bool {\n",
+    "prompt-fields-only": "--- reference/src/services/human_response.rs\n+++ prompt-fields-only/src/services/human_response.rs\n@@ -291,7 +291,7 @@\n         {\n             parts.push(format!(\n                 \"- Step prompt: {}\",\n-                truncate(&prompt, MAX_HISTORY_FIELD_CHARS)\n+                truncate_bytes(&prompt, MAX_HISTORY_FIELD_CHARS)\n             ));\n         }\n         if let Some(action) = clean_text(Some(&step.action)) {\n@@ -301,14 +301,14 @@\n                     if !same_question(Some(&question), latest_question) {\n                         parts.push(format!(\n                             \"- Agent asked human: {}\",\n-                            truncate(&question, MAX_HISTORY_FIELD_CHARS)\n+                            truncate_bytes(&question, MAX_HISTORY_FIELD_CHARS)\n                         ));\n                     }\n                 }\n                 Err(_) if is_human_relevant_text(&action) => {\n                     parts.push(format!(\n                         \"- Agent action: {}\",\n-                        truncate(&action, MAX_HISTORY_FIELD_CHARS)\n+                        truncate_bytes(&action, MAX_HISTORY_FIELD_CHARS)\n                     ));\n                 }\n                 Err(_) => {}\n@@ -325,7 +325,7 @@\n         {\n             parts.push(format!(\n                 \"- Useful step output: {}\",\n-                truncate(&raw_output, MAX_HISTORY_FIELD_CHARS)\n+                truncate_bytes(&raw_output, MAX_HISTORY_FIELD_CHARS)\n             ));\n         }\n         if !parts.is_empty() {\n@@ -344,7 +344,7 @@\n             break;\n         }\n         if line.len() > MAX_TRANSCRIPT_CHARS {\n-            line = truncate(&line, MAX_TRANSCRIPT_CHARS);\n+            line = truncate_bytes(&line, MAX_TRANSCRIPT_CHARS);\n         }\n         total_chars += line.len();\n         capped.push(line);\n@@ -418,6 +418,17 @@\n     }\n     let head: String = value.chars().take(max_chars - suffix_len).collect();\n     format!(\"{}{}\", head.trim_end(), SUFFIX)\n+}\n+\n+fn truncate_bytes(value: &str, max_chars: usize) -> String {\n+    if value.len() <= max_chars {\n+        return value.to_string();\n+    }\n+    let suffix = \"... [truncated]\";\n+    if max_chars <= suffix.len() {\n+        return suffix[..max_chars].to_string();\n+    }\n+    format!(\"{}{}\", value[..max_chars - suffix.len()].trim_end(), suffix)\n }\n \n fn is_human_relevant_text(value: &str) -> bool {\n",
+    "char-indices-cut": "--- base/src/services/human_response.rs\n+++ char-indices-cut/src/services/human_response.rs\n@@ -408,14 +408,18 @@\n }\n \n fn truncate(value: &str, max_chars: usize) -> String {\n-    if value.len() <= max_chars {\n+    const SUFFIX: &str = \"... [truncated]\";\n+    if value.chars().nth(max_chars).is_none() {\n         return value.to_string();\n     }\n-    let suffix = \"... [truncated]\";\n-    if max_chars <= suffix.len() {\n-        return suffix[..max_chars].to_string();\n-    }\n-    format!(\"{}{}\", value[..max_chars - suffix.len()].trim_end(), suffix)\n+    if max_chars <= SUFFIX.len() {\n+        return SUFFIX[..max_chars].to_string();\n+    }\n+    let cut = value\n+        .char_indices()\n+        .nth(max_chars - SUFFIX.len())\n+        .map_or(value.len(), |(index, _)| index);\n+    format!(\"{}{}\", value[..cut].trim_end(), SUFFIX)\n }\n \n fn is_human_relevant_text(value: &str) -> bool {\n"
+  },
+  "runs": [
+    {
+      "fixture": "base",
+      "kind": "base",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+        "multibyte_context_fields_and_question_truncate_by_characters",
+        "multibyte_transcript_entries_truncate_by_characters",
+        "multibyte_text_within_the_character_limit_is_kept_whole"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "multibyte_context_fields_and_question_truncate_by_characters",
+        "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+        "multibyte_text_within_the_character_limit_is_kept_whole",
+        "multibyte_transcript_entries_truncate_by_characters"
+      ],
+      "driver_seconds": 29.276,
+      "result": {
+        "task": "h05_multibyte_truncation",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.305
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.011
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.01
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.009
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.008
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h05_multibyte_truncation-20261004-042347/base-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 184,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 29.227
+      }
+    },
+    {
+      "fixture": "reference",
+      "kind": "reference",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 27.482,
+      "result": {
+        "task": "h05_multibyte_truncation",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.301
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.011
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.01
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.01
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.014
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h05_multibyte_truncation-20261004-042347/reference-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 184,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 27.413
+      }
+    },
+    {
+      "fixture": "char-count-only",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+        "multibyte_context_fields_and_question_truncate_by_characters",
+        "multibyte_transcript_entries_truncate_by_characters"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "multibyte_context_fields_and_question_truncate_by_characters",
+        "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+        "multibyte_transcript_entries_truncate_by_characters"
+      ],
+      "driver_seconds": 28.231,
+      "result": {
+        "task": "h05_multibyte_truncation",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.309
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.011
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.009
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.01
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.009
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h05_multibyte_truncation-20261004-042347/char-count-only-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 185,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 28.174
+      }
+    },
+    {
+      "fixture": "byte-budget-at-char-boundary",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+        "multibyte_context_fields_and_question_truncate_by_characters",
+        "multibyte_transcript_entries_truncate_by_characters",
+        "multibyte_text_within_the_character_limit_is_kept_whole"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "multibyte_context_fields_and_question_truncate_by_characters",
+        "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+        "multibyte_text_within_the_character_limit_is_kept_whole",
+        "multibyte_transcript_entries_truncate_by_characters"
+      ],
+      "driver_seconds": 39.218,
+      "result": {
+        "task": "h05_multibyte_truncation",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.394
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.015
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.014
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.012
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.011
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h05_multibyte_truncation-20261004-042347/byte-budget-at-char-boundary-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 185,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 39.15
+      }
+    },
+    {
+      "fixture": "prompt-fields-only",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "multibyte_transcript_entries_truncate_by_characters"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "multibyte_transcript_entries_truncate_by_characters"
+      ],
+      "driver_seconds": 34.392,
+      "result": {
+        "task": "h05_multibyte_truncation",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.414
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.013
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.011
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.011
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.01
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h05_multibyte_truncation-20261004-042347/prompt-fields-only-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 185,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 34.309
+      }
+    },
+    {
+      "fixture": "char-indices-cut",
+      "kind": "alternative",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 57.658,
+      "result": {
+        "task": "h05_multibyte_truncation",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.806
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.042
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.031
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.043
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.038
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h05_multibyte_truncation-20261004-042347/char-indices-cut-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 185,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 57.567
+      }
+    }
+  ],
+  "status": "pass",
+  "toolchain": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)"
+}
