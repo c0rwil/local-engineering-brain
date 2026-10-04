@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -17,8 +18,32 @@ import uuid
 sys.dont_write_bytecode = True
 import run_real_repo_pilot as runner
 
-REVISION = "compact-macos-tools-v1"
-CHECK_NAMES = {"cli_exit", "exact_tool_count", "active_read", "private_read_denials", "sandboxed_bash", "unsandboxed_bypass_closed", "temp_inventory_stress"}
+REVISION = "compact-macos-tools-v2"
+CHECK_NAMES = {"cli_exit", "exact_tool_count", "active_read", "private_read_denials", "sandboxed_bash", "unsandboxed_bypass_closed", "temp_inventory_stress",
+               "private_claude_tmp", "shared_claude_tmp_unused"}
+SHARED_CLAUDE_TMP = Path("/private/tmp") / f"claude-{os.getuid()}"
+
+
+def session_ids(trace):
+    """Claude session ids reported in a stream-JSON trace."""
+    found = set()
+    for line in trace.read_text(errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and isinstance(event.get("session_id"), str):
+            found.add(event["session_id"])
+    return found
+
+
+def shared_claude_tmp_traces(work, sessions):
+    """Entries in the shared per-uid Claude temp root that belong to this run's sessions or checkout."""
+    if not SHARED_CLAUDE_TMP.is_dir():
+        return []
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(work))
+    return sorted(path.name for path in SHARED_CLAUDE_TMP.iterdir()
+                  if path.name.startswith(slug) or any(session in path.name for session in sessions))
 ARTIFACTS = {f"runtime-preflight/{arm}.{suffix}" for arm in ("off", "brain") for suffix in
              ("checks.json", "trace.jsonl", "tool-results.json", "stderr.log", "settings.json")} | {"runtime-preflight/private-canary.txt"}
 
@@ -33,7 +58,9 @@ def identity(data, active):
         "engram_sha256": runner.digest(runner.ENGRAM), "daemon_sha256": runner.digest(runner.DAEMON),
         "data": str(data), "active": str(active),
         "coding_environment": runner.coding_env(work, compact=True),
-        "settings": {arm: runner.settings(work, data, active, state, arm, compact=True)
+        # The policy without the sibling-root inventory: the executed policy adds a
+        # by-name denial for every other erp26work root present at each attempt.
+        "settings": {arm: runner.settings(work, data, active, state, arm, compact=True, sibling_roots=False)
                      for arm in ("off", "brain")},
     }
 
@@ -44,7 +71,8 @@ def validate_proof(data, active):
     if (proof.get("schema_version") != 1 or proof.get("status") != "pass"
             or proof.get("identity") != identity(data, active)
             or proof.get("arms") != ["off", "brain"]):
-        raise ValueError("Runtime preflight is absent, failed, or differs from current collection controls")
+        raise ValueError("Runtime preflight is absent, failed, or differs from current collection controls "
+                         "(it binds the checkout, scripts, binaries and environment; rerun it with --supersede)")
     if set(proof.get("artifacts", {})) != ARTIFACTS:
         raise ValueError("Runtime preflight proof lacks the exact tool execution artifact set")
     for relative, expected in proof["artifacts"].items():
@@ -138,7 +166,12 @@ def run_preflight(data, active):
     observed_identity = identity(data, active)
     sibling = Path(tempfile.mkdtemp(prefix="erp26work-preflight-sibling-", dir="/private/tmp"))
     (sibling / "private.txt").write_text("PRIVATE_RUNTIME_CANARY\n")
-    private += [sibling / "private.txt", runner.ROOT / "Cargo.toml"]
+    # Another session's Claude temp root: the static claude-* denial must cover it
+    # without the policy (or the identity) changing when it appears.
+    claude_canary = Path(tempfile.mkdtemp(prefix="claude-runtime-canary-", dir="/private/tmp"))
+    (claude_canary / "private.txt").write_text("PRIVATE_RUNTIME_CANARY\n")
+    write_probe = "runtime-preflight-write-probe-" + uuid.uuid4().hex
+    private += [sibling / "private.txt", claude_canary / "private.txt", runner.ROOT / "Cargo.toml"]
     # Generated after policy construction below: compact globs must cover future entries.
     future = Path("/private/tmp") / ("engram-runtime-canary-" + uuid.uuid4().hex)
     private.append(future)
@@ -176,6 +209,22 @@ def run_preflight(data, active):
                 "assert pathlib.Path('allowed.txt').read_text().strip() == 'RUNTIME_ALLOWED'\n"
                 "pathlib.Path('bash-write.txt').write_text('RUNTIME_BASH_OK')\n"
                 "assert os.environ.get('SANDBOX_RUNTIME') == '1'\n"
+                "import tempfile\n"
+                f"private_tmp = {str(runner.claude_tmp_target(active).resolve())!r}\n"
+                "tmp = os.environ.get('TMPDIR', '')\n"
+                "assert os.path.realpath(tmp).startswith(private_tmp + '/') or os.path.realpath(tmp) == private_tmp, 'TMPDIR outside the private Claude temp: ' + tmp\n"
+                "descriptor, name = tempfile.mkstemp()\n"
+                "os.close(descriptor)\n"
+                "os.unlink(name)\n"
+                f"for root in {[str(claude_canary), str(SHARED_CLAUDE_TMP)]!r}:\n"
+                "    if not os.path.isdir(root): continue\n"
+                "    try: os.listdir(root)\n"
+                "    except PermissionError: pass\n"
+                "    else: raise AssertionError('shared Claude temp listable: ' + root)\n"
+                "    try: open(os.path.join(root, " + repr(write_probe) + "), 'x').close()\n"
+                "    except PermissionError: pass\n"
+                "    else: raise AssertionError('shared Claude temp writable: ' + root)\n"
+                "print('RUNTIME_PRIVATE_TMP_OK')\n"
                 "print('RUNTIME_BASH_OK')\n"
             )
             command = ("set -e\npython3 - <<'RUNTIME_PREFLIGHT'\n" + script + "RUNTIME_PREFLIGHT\n"
@@ -193,6 +242,7 @@ def run_preflight(data, active):
                         "DISABLE_AUTOUPDATER": "1", "DISABLE_TELEMETRY": "1", "DISABLE_ERROR_REPORTING": "1",
                         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"})
             manager = runner.daemon(config, state) if arm == "brain" else contextlib.nullcontext()
+            runner.prepare_claude_tmp(active)
             started = time.monotonic()
             try:
                 with manager:
@@ -204,7 +254,12 @@ def run_preflight(data, active):
                                              stdout=trace, stderr=stderr, timeout=180)
             finally:
                 server.shutdown(); server.server_close()
+                runner.release_claude_tmp(active)
             runner.write_json(output / f"{arm}.tool-results.json", received)
+            private_claude = runner.claude_tmp_target(active) / f"claude-{os.getuid()}"
+            claude_tmp = {"private_entries": sorted(path.name for path in private_claude.iterdir()) if private_claude.is_dir() else [],
+                          "shared_entries_for_this_run": shared_claude_tmp_traces(work, session_ids(output / f"{arm}.trace.jsonl")),
+                          "shared_write_probe_created": any((root / write_probe).exists() for root in (claude_canary, SHARED_CLAUDE_TMP))}
             text = lambda row: json.dumps(row.get("content", ""))
             checks = {
                 "cli_exit": run.returncode == 0, "exact_tool_count": len(received) == len(calls),
@@ -213,8 +268,11 @@ def run_preflight(data, active):
                 "sandboxed_bash": len(received) >= 2 and received[-2].get("is_error") is not True and "RUNTIME_BASH_OK" in text(received[-2]),
                 "unsandboxed_bypass_closed": len(received) >= 1 and (received[-1].get("is_error") is True or "OVERRIDE_REMAINS_SANDBOXED" in text(received[-1])),
                 "temp_inventory_stress": before_stress == after_stress and len(stress_paths) == 320,
+                "private_claude_tmp": len(received) >= 2 and "RUNTIME_PRIVATE_TMP_OK" in text(received[-2]) and private_claude.is_dir(),
+                "shared_claude_tmp_unused": not claude_tmp["shared_entries_for_this_run"] and not claude_tmp["shared_write_probe_created"],
             }
-            runner.write_json(output / f"{arm}.checks.json", {"passed": all(checks.values()), "checks": checks, "elapsed_seconds": time.monotonic() - started})
+            runner.write_json(output / f"{arm}.checks.json", {"passed": all(checks.values()), "checks": checks, "claude_tmp": claude_tmp,
+                                                            "elapsed_seconds": time.monotonic() - started})
             if not all(checks.values()):
                 raise RuntimeError(f"{arm} runtime preflight failed; inspect preserved local logs")
             future.unlink()
@@ -223,15 +281,37 @@ def run_preflight(data, active):
         for path in stress_paths:
             path.unlink()
         shutil.rmtree(sibling)
+        shutil.rmtree(claude_canary)
+        (SHARED_CLAUDE_TMP / write_probe).unlink(missing_ok=True)
     if identity(data, active) != observed_identity:
         raise ValueError("Runtime preflight controls changed during tool execution; no passing proof was written")
     proof = {"schema_version": 1, "status": "pass", "identity": observed_identity, "arms": ["off", "brain"],
              "provider": "deterministic loopback stub; no remote model calls or live Max authentication",
              "execution_policy": "Preserved arm settings additionally deny a temporary sibling canary root. "
-                                 "The canary is removed before checking the captured production identity again.",
+                                 "The canary is removed before checking the captured production identity again. "
+                                 "A temporary claude-* canary root is created after the identity is captured and "
+                                 "must leave the policy unchanged.",
              "artifacts": {str(path.relative_to(data)): runner.digest(path) for path in output.glob("*.*") if path.is_file()}}
     runner.write_json(data / "runtime-preflight.json", proof)
     return proof
+
+
+def supersede(data, active):
+    """Keep an earlier preflight's evidence under a dated name and clear the active
+    root it left behind, so the preflight can run again (for example from the
+    checkout that will launch the collection). Refused once attempts exist."""
+    if (data / "manifest.json").exists() or (data / "trials").exists() or (data / "records.jsonl").exists():
+        raise ValueError("A runtime preflight cannot be superseded after the collection has started")
+    previous = [path for path in (data / "runtime-preflight", data / "runtime-preflight.json") if path.exists()]
+    if active.exists() and (active / ".pilot-owned").read_text() != "runtime-preflight\n":
+        raise ValueError("The active root was not left by a runtime preflight; inspect it before rerunning")
+    if previous:
+        archive = data / ("runtime-preflight.superseded-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
+        archive.mkdir(mode=0o700)
+        for path in previous:
+            path.rename(archive / path.name)
+    if active.exists():
+        shutil.rmtree(active)
 
 
 def main():
@@ -239,10 +319,15 @@ def main():
     parser.add_argument("--data", required=True, type=Path)
     parser.add_argument("--active", required=True, type=Path)
     parser.add_argument("--engram-release", required=True, type=Path)
+    parser.add_argument("--supersede", action="store_true",
+                        help="keep an earlier preflight's evidence as runtime-preflight.superseded-<time> and clear "
+                             "the active root it left, then run again; refused once attempts exist")
     args = parser.parse_args()
     runner.validate_paths(args.data, args.active, compact=True)
     runner.ENGRAM = (args.engram_release / "bin/engram").resolve(strict=True)
     runner.DAEMON = (args.engram_release / "bin/engramd").resolve(strict=True)
+    if args.supersede:
+        supersede(args.data.resolve(), args.active.resolve())
     run_preflight(args.data.resolve(), args.active.resolve())
     print(json.dumps({"status": "pass", "proof": str(args.data / "runtime-preflight.json")}))
 

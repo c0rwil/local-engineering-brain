@@ -57,21 +57,102 @@ class RunnerIsolationTests(unittest.TestCase):
         active = Path("/private/tmp/erp26work-compact-unit-active")
         sibling = Path("/private/tmp/erp26work-compact-unit-sibling")
         def inventory(path, pattern):
-            self.assertNotIn(pattern, ("engram-*", "erp26-*"))
+            self.assertNotIn(pattern, ("engram-*", "erp26-*", "claude-*"))
             return iter([sibling]) if pattern == "erp26work-*" else iter([])
         with mock.patch.object(Path, "glob", new=inventory), mock.patch.object(runner.sys, "platform", "darwin"):
             value = runner.settings(active / "work", data, active, active / "state", "off", compact=True)
         fs = value["sandbox"]["filesystem"]
         self.assertIn("/private/tmp/engram-**", fs["denyRead"])
         self.assertIn("/private/tmp/erp26-**", fs["denyRead"])
+        self.assertIn("/private/tmp/claude-**", fs["denyRead"])
         self.assertIn(str(sibling), fs["denyRead"])
         self.assertNotIn(str(active), fs["denyRead"])
         for tool in ("Read", "Edit", "Write", "Glob", "Grep"):
-            self.assertIn(f"{tool}(//private/tmp/engram-*)", value["permissions"]["deny"])
-            self.assertIn(f"{tool}(//private/tmp/engram-*/**)", value["permissions"]["deny"])
+            for prefix in ("engram-", "claude-"):
+                self.assertIn(f"{tool}(//private/tmp/{prefix}*)", value["permissions"]["deny"])
+                self.assertIn(f"{tool}(//private/tmp/{prefix}*/**)", value["permissions"]["deny"])
             self.assertIn(f"{tool}(/{sibling}/**)", value["permissions"]["deny"])
         self.assertLess(len(json.dumps(value)), 12000)
         self.assertIs(value["sandbox"]["allowUnsandboxedCommands"], False)
+
+    def test_compact_policy_ignores_other_claude_sessions_and_their_cwd_files(self):
+        """Unrelated Claude sessions come and go in /private/tmp/claude-UID; the frozen policy must not move."""
+        data = Path("/private/tmp/erp26-compact-unit-data")
+        active = Path("/private/tmp/erp26work-compact-unit-active")
+        scratch = tempfile.TemporaryDirectory(prefix="claude-runner-unit-", dir="/private/tmp")
+        self.addCleanup(scratch.cleanup)
+        shared = Path(scratch.name)
+        original_iterdir = Path.iterdir
+
+        def guarded_iterdir(path):
+            if path.name.startswith("claude-"):
+                raise AssertionError(f"compact policy enumerated {path}")
+            return original_iterdir(path)
+
+        def policy(arm):
+            with mock.patch.object(Path, "iterdir", new=guarded_iterdir), \
+                 mock.patch.object(runner.sys, "platform", "darwin"):
+                return runner.settings(active / "work", data, active, active / "state", arm, compact=True)
+
+        before = {arm: policy(arm) for arm in ("off", "brain")}
+        for name in ("cwd-a1b2", "cache-break-state-new-session.json", "-Users-someone-project"):
+            (shared / name).write_text("another session")
+        self.assertEqual({arm: policy(arm) for arm in ("off", "brain")}, before)
+        for value in before.values():
+            filesystem = value["sandbox"]["filesystem"]
+            self.assertEqual(filesystem["allowRead"], [])
+            self.assertEqual(set(filesystem["allowWrite"]), {str(active / "work"), str(active / "scratch")})
+            self.assertFalse(any("claude-" in path for path in filesystem["allowWrite"] + filesystem["denyWrite"]))
+
+    def test_compact_claude_temp_is_a_short_private_alias_inside_the_active_root(self):
+        active = Path("/private/tmp/erp26work-compact-unit-active")
+        env = runner.coding_env(active / "work", compact=True)
+        alias = runner.claude_tmp_alias(active)
+        self.assertEqual(env["CLAUDE_CODE_TMPDIR"], str(alias))
+        self.assertEqual(env["TMPDIR"], str(active / "scratch"))
+        self.assertLessEqual(len(str(alias / f"claude-{os.getuid()}").encode()), runner.CLAUDE_SANDBOX_TMP_LIMIT)
+        self.assertEqual(runner.claude_tmp_alias(active), alias)
+        self.assertNotEqual(runner.claude_tmp_alias(Path("/private/tmp/erp26work-other-active")), alias)
+        self.assertFalse(alias.name.startswith(("claude-", "engram-", "erp26")))
+        self.assertEqual(runner.coding_env(active / "work")["CLAUDE_CODE_TMPDIR"], str(active / "scratch"))
+
+    def test_claude_temp_alias_is_created_for_the_trial_and_only_runner_aliases_are_replaced(self):
+        alias = runner.claude_tmp_alias(self.active)
+        self.addCleanup(lambda: alias.unlink() if alias.is_symlink() else None)
+        self.assertFalse(alias.exists() or alias.is_symlink())
+        runner.prepare_claude_tmp(self.active)
+        self.assertEqual(Path(os.readlink(alias)), runner.claude_tmp_target(self.active))
+        self.assertEqual(runner.claude_tmp_target(self.active).stat().st_mode & 0o777, 0o700)
+        runner.prepare_claude_tmp(self.active)
+        runner.release_claude_tmp(self.active)
+        self.assertFalse(alias.is_symlink())
+        alias.symlink_to(self.root / "someone-else", target_is_directory=True)
+        runner.release_claude_tmp(self.active)
+        self.assertTrue(alias.is_symlink())
+        alias.unlink()
+        alias.mkdir()
+        self.addCleanup(lambda: alias.rmdir() if alias.is_dir() and not alias.is_symlink() else None)
+        with self.assertRaisesRegex(RuntimeError, "not a runner-owned"):
+            runner.prepare_claude_tmp(self.active)
+
+    def test_compact_agent_runs_with_its_private_claude_temp_and_releases_it(self):
+        alias = runner.claude_tmp_alias(self.active)
+        self.addCleanup(lambda: alias.unlink() if alias.is_symlink() else None)
+        seen = {}
+
+        def launch(argv, **kwargs):
+            seen["env"] = kwargs["env"]
+            seen["alias_target"] = os.readlink(alias)
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(runner.subprocess, "Popen", side_effect=launch):
+            result = runner.execute_agent(self.work, self.state / "settings.json", "synthetic task",
+                                          self.root / "trace.jsonl", self.root / "stderr.log", 10, 1.0, compact=True)
+        self.assertEqual(result["agent_exit_code"], 0)
+        self.assertEqual(seen["env"]["CLAUDE_CODE_TMPDIR"], str(alias))
+        self.assertEqual(Path(seen["alias_target"]), runner.claude_tmp_target(self.active))
+        self.assertFalse(alias.is_symlink())
+        self.assertTrue(runner.claude_tmp_target(self.active).is_dir())
 
     def test_compact_mode_requires_disjoint_active_prefix_and_macos(self):
         data = Path("/private/tmp/erp26-compact-unit-data")

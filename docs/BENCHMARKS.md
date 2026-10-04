@@ -38,7 +38,11 @@ tune Engram; the operator still has to confirm that. Two tasks put the fix insid
 files larger than the Read limit, and three need a fix that reaches several call
 sites or consumers. Its graders were calibrated locally, but the suite awaits
 operator review of prompts and graders. No agent has run against it, and it
-reports no results.
+reports no results. The follow-up collector can now run it: it builds the
+fixtures from the operator's repositories, recalibrates the graders against
+them, and collects the draft only with `--allow-draft-suite`, which the frozen
+manifest records. A detached launcher keeps progress and resumes; see
+[Collection](../benchmarks/real-repo-heldout-v1/README.md#collection).
 
 The v2 runner can also run both arms with the Codex CLI (`--agent codex`), with
 isolated per-arm Codex homes and a model-free loopback preflight; see the
