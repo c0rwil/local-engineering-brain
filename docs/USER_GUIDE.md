@@ -155,7 +155,7 @@ What the hooks do, invisibly, in every session — five injection moments:
 | session-start | session opens | standing brief: open episodes from earlier sessions (resume or close), last completed outcome. In an untracked git repo: a one-line enrollment hint, nothing else |
 | prompt | first prompt of a session | compiles task context and retains a redacted prompt; the first relevant tool use opens the episode |
 | pretool | before file tools, Codex patches or Codex shell calls | repo-scoped task context; file graph shapes when explicit paths are available. Multi-file patches route to their edited repositories |
-| bash | after each Bash tool call | recognizable verifications (test/build/lint/typecheck) recorded as deterministic evidence with exit codes — failures included |
+| bash | after each Bash tool call | recognizable verifications (test/build/lint/typecheck) recorded as deterministic evidence with the exit status the client reported — failures included. Runs whose status a pipe or `||` hides are not recorded (see [Verification evidence from hooks](#verification-evidence-from-hooks)) |
 | session-end | session closes | episode auto-closed conservatively (success only if the last verification passed) |
 
 The global hooks are **safe by design**: they engage only in repositories
@@ -206,6 +206,43 @@ Claude Code and Codex:
 MCP exposes the episode lifecycle to agents; clients without native hooks must
 call those tools to capture it. Optional local-model proxy injection runs through
 `engram-proxy` on 127.0.0.1:11435 (`x-engram-mode: off` is a true control).
+
+### Verification evidence from hooks
+
+The `bash` hook records a test, build, lint or typecheck run only when the
+coding client reported its exit status:
+
+- Claude Code reports a non-zero exit through `PostToolUseFailure` ("Exit code
+  N"). A completed foreground `PostToolUse` Bash call therefore has status 0.
+  Interrupted, backgrounded or timed-out calls, and calls whose non-zero status
+  Claude Code reinterpreted (for example `grep` finding nothing), are not recorded.
+- Codex supplies an explicit exit code in its tool result.
+
+The status must also belong to the verification. Engram records
+`cargo test`, `cd repo && cargo test` and `cargo fmt --check && cargo test`.
+It does not record `cargo test 2>&1 | tail -20`, `cargo test || true`,
+`cargo test; echo done` or background jobs, because the shell reports another
+command's status. To keep output short and still record the result, enable
+`pipefail` first: `set -o pipefail; cargo test 2>&1 | tail -40`. Runner wrappers
+that return the tool's status are recognized (`uv run`, `poetry run`, `npx`,
+`uvx`, `timeout N`, `python3 -m pytest`). Listing or help invocations such as
+`cargo test -- --list` are not verification.
+
+Each record keeps the last 4 KiB of output, the Git HEAD and SHA-256 digests of
+the files the session touched or left modified (up to 64 files, 512 KiB each and
+4 MiB in total; files beyond these bounds get no digest). If
+the agent declared an Engram task in the same session (`engram_task_start`, or a
+task ID passed to attempt or evidence tools), new records go to that task, so a
+later `engram_complete_task` can attach them to its lessons. After the agent
+completes that task, records return to the session's own episode. Evidence from
+runs before the declaration stays on the session episode.
+
+The evidence judge accepts a hook record for a touched file that was re-indexed
+after the run (for example by the commit watcher) only when the recorded digest
+equals the indexed digest: the run observed exactly those bytes. Evidence that
+agents report through MCP or completions has no such digests and keeps the
+stricter rule: it must be newer than the indexed version of every touched file.
+Only new runs carry digests; existing evidence is not changed.
 
 ## 6. Day to day: what's automatic vs. what you do
 

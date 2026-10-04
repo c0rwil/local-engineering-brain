@@ -231,6 +231,15 @@ source digest are checked again immediately before applying the decision. Touche
 files are checked against the live checkout, with bounded reads, rather than relying
 only on an index refresh. Changed or unavailable sources cause deferral.
 
+Evidence must also have observed the indexed version of every touched file. It
+qualifies when it was recorded after that file was indexed, or when a native hook
+recorded the file's SHA-256 beside the verification and it equals the indexed
+digest. A commit and the watcher's re-index therefore keep a hook-observed run of
+the same bytes eligible. Evidence reported by agents carries no hook digests and
+must be newer than every touched file's indexed version. The hook records only
+runs whose exit status the client reported; see the user guide on
+[verification evidence from hooks](USER_GUIDE.md#verification-evidence-from-hooks).
+
 Every decision, citation, attempt, error and reported usage is audited. Unchanged
 deferred proposals are not repeatedly billed; attach new evidence or revise the
 proposal to trigger another review. Runtime errors have a bounded retry count.

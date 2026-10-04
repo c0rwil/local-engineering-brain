@@ -12,11 +12,21 @@
 //! FAILURES, which is exactly what fail-then-pass preference distillation
 //! feeds on. The agent no longer has to remember to record anything.
 //!
+//! Only the harness's own report counts as the exit status: an explicit code,
+//! Claude Code's `PostToolUseFailure` "Exit code N", or a completed foreground
+//! `PostToolUse` (Claude Code reports every non-zero exit as a failure). The
+//! status must also belong to the verification: pipes, `||`, `;` after it and
+//! background jobs hide it, so those runs are not recorded. Each record carries
+//! content digests of the files the session touched or left dirty, which ties
+//! it to the source it actually ran against. When the agent declared an Engram
+//! task through MCP in the same session, evidence goes to that task.
+//!
 //! Every hook fails OPEN: a broken brain must never break a coding session.
 
 pub mod codex;
 pub mod cursor;
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -24,6 +34,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::ids::{ProjectId, TaskId};
+
+/// Evidence `metadata.source` written by the native hooks.
+pub const CLAUDE_HOOK_SOURCE: &str = "claude-code-hook";
+pub const CODEX_HOOK_SOURCE: &str = "codex-hook";
+pub const CURSOR_HOOK_SOURCE: &str = "cursor-hook";
+/// Verification output kept as the artifact. Runner summaries are at the end,
+/// so longer output keeps its tail.
+const VERIFICATION_EXCERPT_BYTES: usize = 4_096;
+/// Bounds for the source digests recorded beside one verification.
+const SOURCE_DIGEST_FILES: usize = 64;
+const SOURCE_DIGEST_FILE_BYTES: u64 = 512 * 1024;
+const SOURCE_DIGEST_TOTAL_BYTES: u64 = 4 * 1024 * 1024;
+const SOURCE_DIGEST_PATH_BYTES: usize = 512;
 
 /// Session → open-task linkage, stored beside the brain so all hook
 /// invocations of one session agree.
@@ -720,9 +743,9 @@ impl HookClient {
     #[must_use]
     pub fn evidence_source(self) -> &'static str {
         match self {
-            Self::ClaudeCode => "claude-code-hook",
-            Self::Codex => "codex-hook",
-            Self::Cursor => "cursor-hook",
+            Self::ClaudeCode => CLAUDE_HOOK_SOURCE,
+            Self::Codex => CODEX_HOOK_SOURCE,
+            Self::Cursor => CURSOR_HOOK_SOURCE,
         }
     }
 
@@ -907,15 +930,22 @@ fn write_private_sidecar(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Classify a shell command as a verification run. Returns the evidence
 /// kind (`test_result` | `lint_result` | `build_result` |
 /// `typecheck_result`) or `None` for ordinary commands.
+///
+/// Environment assignments, `env`/`time`/`timeout`/`nice` wrappers and runners
+/// that return their tool's exit status (`uv run`, `poetry run`, `pdm run`,
+/// `pipenv run`, `npx`, `bunx`, `uvx`, `pnpm exec`) are skipped. Help, version
+/// and listing invocations run nothing and are not verification.
 #[must_use]
 pub fn detect_verification(command: &str) -> Option<&'static str> {
-    let command = command.trim();
-    // First meaningful token sequence; tolerate env-var prefixes.
-    let normalized = command
-        .split_whitespace()
-        .skip_while(|token| token.contains('=') && !token.starts_with('/'))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let tokens = verification_tokens(command);
+    if tokens
+        .iter()
+        .any(|token| NON_RUN_FLAGS.contains(token) || *token == "--listTests")
+        || tokens.starts_with(&["cargo", "nextest", "list"])
+    {
+        return None;
+    }
+    let normalized = tokens.join(" ");
     let matches_start = |needles: &[&str]| {
         needles
             .iter()
@@ -941,7 +971,12 @@ pub fn detect_verification(command: &str) -> Option<&'static str> {
         "mvn test",
         "make test",
     ]) {
-        return Some("test_result");
+        // `--no-run` compiles the tests without executing any of them.
+        return Some(if tokens.contains(&"--no-run") {
+            "build_result"
+        } else {
+            "test_result"
+        });
     }
     if matches_start(&[
         "cargo clippy",
@@ -950,8 +985,12 @@ pub fn detect_verification(command: &str) -> Option<&'static str> {
         "npx eslint",
         "ruff",
         "ruff check",
+        "python -m ruff",
         "flake8",
+        "python -m flake8",
         "golangci-lint",
+        "actionlint",
+        "terraform fmt",
         "make lint",
         "npm run lint",
         "pnpm lint",
@@ -963,7 +1002,9 @@ pub fn detect_verification(command: &str) -> Option<&'static str> {
         "tsc",
         "npx tsc",
         "mypy",
+        "python -m mypy",
         "pyright",
+        "terraform validate",
         "cargo check",
         "make check",
     ]) {
@@ -984,6 +1025,758 @@ pub fn detect_verification(command: &str) -> Option<&'static str> {
         return Some("build_result");
     }
     None
+}
+
+/// Flags that print help, versions or test lists instead of running anything.
+const NON_RUN_FLAGS: &[&str] = &[
+    "--help",
+    "-h",
+    "--version",
+    "-V",
+    "--list",
+    "--collect-only",
+    "--co",
+];
+
+/// Command tokens after assignments, wrappers and status-preserving runners.
+fn verification_tokens(command: &str) -> Vec<&str> {
+    let mut tokens: Vec<&str> = command.split_whitespace().collect();
+    loop {
+        let assignments = tokens
+            .iter()
+            .take_while(|token| token.contains('=') && !token.starts_with('/'))
+            .count();
+        tokens.drain(..assignments);
+        let wrapper = match tokens.as_slice() {
+            ["time", "-p", ..]
+            | ["uv" | "poetry" | "pdm" | "pipenv", "run", ..]
+            | ["pnpm", "exec", ..] => 2,
+            ["nice", "-n", _, ..] => 3,
+            ["timeout", duration, ..] if is_duration(duration) => 2,
+            ["env" | "time" | "nice" | "npx" | "bunx" | "uvx", ..] => 1,
+            _ => 0,
+        };
+        if wrapper > 0 {
+            tokens.drain(..wrapper);
+        } else if tokens.first() == Some(&"cargo")
+            && tokens.get(1).is_some_and(|t| t.starts_with('+'))
+        {
+            tokens.remove(1); // `cargo +toolchain test`
+        } else if tokens.first() == Some(&"python3") {
+            tokens[0] = "python";
+        } else if assignments == 0 {
+            return tokens;
+        }
+    }
+}
+
+fn is_duration(token: &str) -> bool {
+    let digits = token.trim_end_matches(['s', 'm', 'h', 'd']);
+    !digits.is_empty()
+        && digits
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'.')
+}
+
+/// A recognized verification inside a shell command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShellVerification {
+    /// Evidence kind of the last recognized verification in the command.
+    pub kind: &'static str,
+    /// True when the shell's exit status is the verification's own: a zero
+    /// status then proves that every recognized verification exited 0.
+    pub status_bearing: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShellOperator {
+    And,
+    Or,
+    Sequence,
+    Background,
+    Pipe,
+}
+
+/// Find the last verification in shell text and whether its exit status
+/// reaches the shell. Status-bearing means: no `||` or background job
+/// anywhere, only `&&` (or pipelines joined by `&&`) after the verification,
+/// and the verification ends its pipeline unless `set -o pipefail` ran first.
+/// Syntax this reader does not model (subshells, groups, here-documents,
+/// backquotes, unbalanced quotes) is never status-bearing.
+#[must_use]
+pub fn classify_verification(command: &str) -> Option<ShellVerification> {
+    let Some(commands) = shell_commands(command) else {
+        let legacy = command
+            .trim()
+            .strip_prefix("cd ")
+            .and_then(|rest| rest.split_once("&&"))
+            .map_or(command, |(_, rest)| rest.trim());
+        return detect_verification(legacy).map(|kind| ShellVerification {
+            kind,
+            status_bearing: false,
+        });
+    };
+    let position = commands
+        .iter()
+        .rposition(|(text, _)| detect_verification(text).is_some())?;
+    let kind = detect_verification(&commands[position].0)?;
+    let mut start = position;
+    while start > 0 && commands[start - 1].1 == Some(ShellOperator::Pipe) {
+        start -= 1;
+    }
+    let mut end = position;
+    while end + 1 < commands.len() && commands[end].1 == Some(ShellOperator::Pipe) {
+        end += 1;
+    }
+    let mut pipefail = false;
+    for (index, (text, operator)) in commands[..start].iter().enumerate() {
+        let in_pipeline = *operator == Some(ShellOperator::Pipe)
+            || (index > 0 && commands[index - 1].1 == Some(ShellOperator::Pipe));
+        if let Some(enabled) = pipefail_setting(text).filter(|_| !in_pipeline) {
+            pipefail = enabled;
+        }
+    }
+    let status_bearing = commands.iter().all(|(_, operator)| {
+        !matches!(
+            operator,
+            Some(ShellOperator::Or | ShellOperator::Background)
+        )
+    }) && (end == position || pipefail)
+        && commands[end..]
+            .iter()
+            .enumerate()
+            .all(|(offset, (_, operator))| {
+                matches!(operator, None | Some(ShellOperator::And))
+                    || (offset > 0 && *operator == Some(ShellOperator::Pipe))
+            });
+    Some(ShellVerification {
+        kind,
+        status_bearing,
+    })
+}
+
+/// `Some(true)` for `set -o pipefail` forms (including `set -euo pipefail`
+/// and zsh `setopt pipefail`), `Some(false)` when they disable it.
+fn pipefail_setting(command: &str) -> Option<bool> {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    match tokens.as_slice() {
+        ["set", options @ ..] => options.windows(2).rev().find_map(|pair| {
+            let (flag, name) = (pair[0], pair[1]);
+            let short_option = flag.len() >= 2 && flag.ends_with('o') && !flag.starts_with("--");
+            match flag.as_bytes().first() {
+                Some(b'-') if short_option && name == "pipefail" => Some(true),
+                Some(b'+') if short_option && name == "pipefail" => Some(false),
+                _ => None,
+            }
+        }),
+        [command @ ("setopt" | "unsetopt"), options @ ..]
+            if options
+                .iter()
+                .any(|option| option.replace('_', "").eq_ignore_ascii_case("pipefail")) =>
+        {
+            Some(*command == "setopt")
+        }
+        _ => None,
+    }
+}
+
+/// Copies opaque shell spans (quotes, substitutions) into the current command.
+struct ShellScanner<'a> {
+    chars: std::iter::Peekable<std::str::Chars<'a>>,
+    current: String,
+}
+
+impl ShellScanner<'_> {
+    /// Copy a backslash escape and the character it protects.
+    fn escaped(&mut self) {
+        self.current.push('\\');
+        if let Some(next) = self.chars.next() {
+            self.current.push(next);
+        }
+    }
+
+    /// Copy a quoted span after its opening quote; `None` when unterminated
+    /// or when a double-quoted span contains a backquote substitution.
+    fn quoted(&mut self, open: char) -> Option<()> {
+        self.current.push(open);
+        while let Some(ch) = self.chars.next() {
+            match ch {
+                '\\' if open == '"' => self.escaped(),
+                '`' if open == '"' => return None,
+                _ => {
+                    self.current.push(ch);
+                    if ch == open {
+                        return Some(());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Copy `$( … )` after its opening `$(`, including nested parentheses.
+    fn substitution(&mut self) -> Option<()> {
+        self.current.push_str("$(");
+        let mut depth = 1_usize;
+        while let Some(ch) = self.chars.next() {
+            match ch {
+                '\'' | '"' => self.quoted(ch)?,
+                '\\' => self.escaped(),
+                '`' => return None,
+                _ => {
+                    self.current.push(ch);
+                    match ch {
+                        '(' => depth += 1,
+                        ')' if depth == 1 => return Some(()),
+                        ')' => depth -= 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Copy `${ … }` after its `$`.
+    fn parameter(&mut self) -> Option<()> {
+        self.current.push('$');
+        for ch in self.chars.by_ref() {
+            self.current.push(ch);
+            if ch == '}' {
+                return Some(());
+            }
+        }
+        None
+    }
+}
+
+/// Top-level simple commands of shell text, each with the operator after it.
+fn shell_commands(text: &str) -> Option<Vec<(String, Option<ShellOperator>)>> {
+    let mut scanner = ShellScanner {
+        chars: text.chars().peekable(),
+        current: String::new(),
+    };
+    let mut commands = Vec::new();
+    let mut word_start = true;
+    while let Some(ch) = scanner.chars.next() {
+        let starts_word = word_start;
+        word_start = ch.is_whitespace();
+        let operator = match ch {
+            '\'' | '"' => scanner.quoted(ch).map(|()| None)?,
+            '\\' => {
+                scanner.escaped();
+                None
+            }
+            '$' if scanner.chars.next_if_eq(&'(').is_some() => {
+                scanner.substitution().map(|()| None)?
+            }
+            '$' if scanner.chars.peek() == Some(&'{') => scanner.parameter().map(|()| None)?,
+            '`' | '(' | ')' | '{' | '}' => return None,
+            '#' if starts_word => {
+                while scanner.chars.next_if(|next| *next != '\n').is_some() {}
+                None
+            }
+            '<' if scanner.chars.peek() == Some(&'<') => return None,
+            '|' if scanner.chars.next_if_eq(&'|').is_some() => Some(ShellOperator::Or),
+            '|' => {
+                let _ = scanner.chars.next_if_eq(&'&'); // `|&` also pipes stderr
+                Some(ShellOperator::Pipe)
+            }
+            '&' if scanner.chars.next_if_eq(&'&').is_some() => Some(ShellOperator::And),
+            '&' if scanner.chars.peek() == Some(&'>') || scanner.current.ends_with(['>', '<']) => {
+                scanner.current.push(ch); // redirection such as `2>&1` or `&>`
+                None
+            }
+            '&' => Some(ShellOperator::Background),
+            ';' if scanner.chars.peek() == Some(&';') => return None,
+            ';' | '\n' => Some(ShellOperator::Sequence),
+            _ => {
+                scanner.current.push(ch);
+                None
+            }
+        };
+        if let Some(operator) = operator {
+            word_start = true;
+            let command = scanner.current.trim().to_owned();
+            scanner.current.clear();
+            if !command.is_empty() {
+                commands.push((command, Some(operator)));
+            } else if operator != ShellOperator::Sequence {
+                return None;
+            }
+        }
+    }
+    let last = scanner.current.trim();
+    if !last.is_empty() {
+        commands.push((last.to_owned(), None));
+    } else if commands.last().is_some_and(|(_, operator)| {
+        matches!(
+            operator,
+            Some(ShellOperator::And | ShellOperator::Or | ShellOperator::Pipe)
+        )
+    }) {
+        return None;
+    }
+    Some(commands)
+}
+
+/// The exit status the harness itself reported for a shell tool call, with
+/// how it was observed: `tool_response` (an explicit code), `failure_event`
+/// (Claude Code `PostToolUseFailure` "Exit code N") or `success_event`
+/// (a completed foreground Claude Code `PostToolUse` Bash call; Claude Code
+/// reports every non-zero exit as a failure event). Interrupted, backgrounded
+/// or reinterpreted (`returnCodeInterpretation`) calls have no known status.
+#[must_use]
+pub fn observed_exit_status(
+    payload: &serde_json::Value,
+    client: HookClient,
+) -> Option<(i32, &'static str)> {
+    use serde_json::Value;
+    let event = payload.get("hook_event_name").and_then(Value::as_str);
+    if event == Some("PostToolUseFailure") {
+        if payload.get("is_interrupt").and_then(Value::as_bool) == Some(true) {
+            return None;
+        }
+        let error = payload.get("error").and_then(Value::as_str)?;
+        let line = error.lines().next()?.trim();
+        let code = line
+            .strip_prefix("Error: ")
+            .unwrap_or(line)
+            .strip_prefix("Exit code ")?
+            .trim()
+            .parse::<i32>()
+            .ok()
+            .filter(|code| *code != 0)?;
+        return Some((code, "failure_event"));
+    }
+    let empty = Value::Null;
+    let response = payload
+        .get("tool_result")
+        .or_else(|| payload.get("tool_response"))
+        .unwrap_or(&empty);
+    if let Some(code) = extract_exit_code(response) {
+        return Some((code, "tool_response"));
+    }
+    if client != HookClient::ClaudeCode
+        || event != Some("PostToolUse")
+        || payload.get("tool_name").and_then(Value::as_str) != Some("Bash")
+        || payload
+            .pointer("/tool_input/run_in_background")
+            .and_then(Value::as_bool)
+            == Some(true)
+    {
+        return None;
+    }
+    let result = response.as_object()?;
+    let completed = result.get("stdout").is_some_and(Value::is_string)
+        && result.get("interrupted").and_then(Value::as_bool) == Some(false)
+        && [
+            "backgroundTaskId",
+            "backgroundedByUser",
+            "timedOutAfterMs",
+            "returnCodeInterpretation",
+        ]
+        .iter()
+        .all(|key| {
+            result
+                .get(*key)
+                .is_none_or(|value| value.is_null() || *value == Value::Bool(false))
+        });
+    completed.then_some((0, "success_event"))
+}
+
+/// Bounded verification output: stdout and stderr, or the failure text.
+#[must_use]
+pub fn verification_output(payload: &serde_json::Value) -> String {
+    use serde_json::Value;
+    let mut text = String::new();
+    match payload
+        .get("tool_result")
+        .or_else(|| payload.get("tool_response"))
+    {
+        Some(Value::String(output)) => text.push_str(output),
+        Some(Value::Object(result)) => {
+            let nonempty = |key: &str| {
+                result
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+            };
+            if let Some(output) = [
+                "stdout",
+                "aggregated_output",
+                "formatted_output",
+                "output",
+                "content",
+            ]
+            .into_iter()
+            .find_map(nonempty)
+            {
+                text.push_str(output);
+            }
+            if let Some(stderr) = nonempty("stderr") {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(stderr);
+            }
+        }
+        _ => {}
+    }
+    if text.trim().is_empty() {
+        if let Some(error) = payload.get("error").and_then(Value::as_str) {
+            text.push_str(error);
+        }
+    }
+    bounded_tail(&text, VERIFICATION_EXCERPT_BYTES)
+}
+
+/// Keep the end of long output, where runners print their verdicts.
+fn bounded_tail(text: &str, limit: usize) -> String {
+    if text.len() <= limit {
+        return text.to_owned();
+    }
+    let mut start = text.len() - limit.saturating_sub(64);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    if let Some(newline) = text[start..].find('\n').filter(|offset| *offset < 256) {
+        start += newline + 1;
+    }
+    format!("[{start} earlier bytes omitted]\n{}", &text[start..])
+}
+
+/// SHA-256 of files a verification plausibly exercised, keyed by
+/// checkout-relative path. Paths must stay inside `root`; missing files are
+/// skipped. Returns whether size or count bounds left candidates out.
+#[must_use]
+pub fn source_digests(root: &Path, candidates: &[String]) -> (BTreeMap<String, String>, bool) {
+    use std::io::Read as _;
+    let mut digests = BTreeMap::new();
+    let Ok(root) = root.canonicalize() else {
+        return (digests, !candidates.is_empty());
+    };
+    let mut truncated = false;
+    let mut remaining = SOURCE_DIGEST_TOTAL_BYTES;
+    for relative in candidates {
+        let path = Path::new(relative);
+        if digests.contains_key(relative)
+            || relative.is_empty()
+            || relative.len() > SOURCE_DIGEST_PATH_BYTES
+            || !path
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)))
+        {
+            continue;
+        }
+        if digests.len() >= SOURCE_DIGEST_FILES {
+            truncated = true;
+            break;
+        }
+        let Ok(canonical) = root.join(path).canonicalize() else {
+            continue;
+        };
+        if !canonical.starts_with(&root) || !canonical.is_file() {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        let limit = SOURCE_DIGEST_FILE_BYTES.min(remaining);
+        if std::fs::File::open(&canonical)
+            .and_then(|file| file.take(limit + 1).read_to_end(&mut bytes))
+            .is_err()
+        {
+            continue;
+        }
+        let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        if size > limit {
+            truncated = true;
+            continue;
+        }
+        remaining -= size;
+        digests.insert(relative.clone(), crate::experience::sha256(&bytes));
+    }
+    (digests, truncated)
+}
+
+/// Source digests a native hook recorded beside its verification. Evidence
+/// reported by agents, the CLI or completions never qualifies.
+#[must_use]
+pub fn hook_source_digests(metadata: &serde_json::Value) -> Option<BTreeMap<String, String>> {
+    if !matches!(
+        metadata.get("source").and_then(serde_json::Value::as_str),
+        Some(CLAUDE_HOOK_SOURCE | CODEX_HOOK_SOURCE | CURSOR_HOOK_SOURCE)
+    ) {
+        return None;
+    }
+    let digests = metadata.get("source_digests")?.as_object()?;
+    Some(
+        digests
+            .iter()
+            .filter_map(|(path, digest)| {
+                digest
+                    .as_str()
+                    .filter(|digest| {
+                        digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    })
+                    .map(|digest| (path.clone(), digest.to_ascii_lowercase()))
+            })
+            .collect(),
+    )
+}
+
+/// A harness-observed verification ready to record as hook evidence.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ObservedVerification {
+    pub kind: &'static str,
+    pub command: String,
+    pub exit_code: i32,
+    pub artifact: String,
+    pub metadata: serde_json::Value,
+    /// Identical command, status and source digests: a repeat observation.
+    pub fingerprint: String,
+}
+
+/// Build evidence for a shell call whose verification status the harness
+/// reported. `None` for ordinary commands, an unknown status, or a status the
+/// shell syntax hides. `session_paths` are paths this session touched.
+#[must_use]
+pub fn observe_verification(
+    payload: &serde_json::Value,
+    client: HookClient,
+    root: &Path,
+    git: Option<&crate::projects::GitState>,
+    session_paths: &[String],
+) -> Option<ObservedVerification> {
+    let input = payload
+        .get("tool_input")
+        .unwrap_or(&serde_json::Value::Null);
+    let command = tool_command(input);
+    let verification = classify_verification(command)?;
+    if !verification.status_bearing {
+        return None;
+    }
+    let (exit_code, exit_status) = observed_exit_status(payload, client)?;
+    let mut candidates = session_paths.to_vec();
+    if let Some(git) = git {
+        candidates.extend(git.changed_paths.iter().filter_map(|changed| {
+            git.repository_root
+                .join(changed)
+                .strip_prefix(root)
+                .ok()
+                .map(|relative| relative.to_string_lossy().into_owned())
+        }));
+    }
+    let (digests, truncated) = source_digests(root, &candidates);
+    let command: String = command.chars().take(500).collect();
+    let fingerprint = crate::experience::sha256(
+        &serde_json::to_vec(&(command.trim(), exit_code, &digests)).unwrap_or_default(),
+    );
+    let mut metadata = serde_json::json!({
+        "source": client.evidence_source(),
+        "exit_status": exit_status,
+        "head": git.and_then(|git| git.head.clone()),
+        "source_digests": digests,
+    });
+    if truncated {
+        metadata["source_digests_truncated"] = true.into();
+    }
+    if let Some(id) = payload
+        .get("tool_use_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty() && id.len() <= 256)
+    {
+        metadata["tool_use_id"] = id.into();
+    }
+    Some(ObservedVerification {
+        kind: verification.kind,
+        command,
+        exit_code,
+        artifact: verification_output(payload),
+        metadata,
+        fingerprint,
+    })
+}
+
+/// An Engram MCP call naming the task this session works on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TaskDeclaration {
+    /// The agent started or recorded work on this task.
+    Active {
+        task_id: TaskId,
+        project_id: Option<ProjectId>,
+    },
+    /// The agent closed this task; later verification is not part of it.
+    Closed(TaskId),
+}
+
+/// Read a successful Engram MCP task call (`engram_task_start`, attempts,
+/// evidence, completion, outcome) from a post-tool hook payload.
+#[must_use]
+pub fn task_declaration(payload: &serde_json::Value) -> Option<TaskDeclaration> {
+    use serde_json::Value;
+    if payload.get("hook_event_name").and_then(Value::as_str) == Some("PostToolUseFailure") {
+        return None;
+    }
+    let name = payload.get("tool_name")?.as_str()?;
+    let tool = [
+        "engram_task_start",
+        "engram_record_attempt",
+        "engram_record_evidence",
+        "engram_complete_task",
+        "engram_mark_outcome",
+    ]
+    .into_iter()
+    .find(|tool| {
+        name == *tool
+            || [b'_', b'.', b'/', b':'].iter().any(|separator| {
+                name.len() > tool.len()
+                    && name.ends_with(tool)
+                    && name.as_bytes()[name.len() - tool.len() - 1] == *separator
+            })
+    })?;
+    let input = payload.get("tool_input").unwrap_or(&Value::Null);
+    let task = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .and_then(|id| TaskId::parse(id).ok())
+    };
+    let project = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .and_then(|id| ProjectId::parse(id).ok())
+    };
+    match tool {
+        "engram_task_start" => {
+            let record = mcp_result_object(
+                payload
+                    .get("tool_response")
+                    .or_else(|| payload.get("tool_result"))?,
+                0,
+            )?;
+            if record
+                .get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| status != "open")
+            {
+                return None;
+            }
+            Some(TaskDeclaration::Active {
+                task_id: task(record.get("id"))?,
+                project_id: project(record.get("project_id"))
+                    .or_else(|| project(input.get("project_id"))),
+            })
+        }
+        "engram_complete_task" | "engram_mark_outcome" => {
+            Some(TaskDeclaration::Closed(task(input.get("task_id"))?))
+        }
+        _ => Some(TaskDeclaration::Active {
+            task_id: task(input.get("task_id"))?,
+            project_id: project(input.get("project_id")),
+        }),
+    }
+}
+
+/// The JSON object an MCP tool returned, from the shapes hosts pass to hooks.
+fn mcp_result_object(
+    value: &serde_json::Value,
+    depth: usize,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    use serde_json::Value;
+    if depth > 4 {
+        return None;
+    }
+    match value {
+        Value::Object(object) if object.contains_key("id") => Some(object.clone()),
+        Value::Object(object) => object
+            .get("structuredContent")
+            .or_else(|| object.get("content"))
+            .and_then(|inner| mcp_result_object(inner, depth + 1)),
+        Value::Array(items) => items.iter().find_map(|item| {
+            item.get("text")
+                .and_then(|text| mcp_result_object(text, depth + 1))
+        }),
+        Value::String(text) if text.len() <= 64 * 1024 => serde_json::from_str::<Value>(text)
+            .ok()
+            .and_then(|parsed| mcp_result_object(&parsed, depth + 1)),
+        _ => None,
+    }
+}
+
+/// Route this session's later verification evidence for a project to the
+/// declared task, or stop routing to a task the agent closed. Without a
+/// project in the call, the declaration applies to `fallback_scope`.
+///
+/// # Errors
+/// Returns filesystem errors writing the private declaration sidecar.
+pub fn record_task_declaration(
+    state_dir: &Path,
+    session_id: &str,
+    fallback_scope: &str,
+    declaration: &TaskDeclaration,
+) -> Result<()> {
+    match declaration {
+        TaskDeclaration::Active {
+            task_id,
+            project_id,
+        } => {
+            let scope = project_id.as_ref().map_or_else(
+                || fallback_scope.to_owned(),
+                |project| scoped_session_id(session_id, project),
+            );
+            write_private_sidecar(
+                &session_state_path(state_dir, &scope).with_extension("declared-task"),
+                task_id.as_str().as_bytes(),
+            )
+        }
+        TaskDeclaration::Closed(task_id) => {
+            for path in declaration_paths(state_dir, session_id) {
+                if std::fs::read_to_string(&path)
+                    .is_ok_and(|stored| stored.trim() == task_id.as_str())
+                {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The open task this session declared for one project scope.
+#[must_use]
+pub fn declared_task(state_dir: &Path, scope: &str) -> Option<TaskId> {
+    let text = std::fs::read_to_string(
+        session_state_path(state_dir, scope).with_extension("declared-task"),
+    )
+    .ok()?;
+    TaskId::parse(text.trim()).ok()
+}
+
+/// Forget every task declaration of a session (session end).
+pub fn clear_task_declarations(state_dir: &Path, session_id: &str) {
+    for path in declaration_paths(state_dir, session_id) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn declaration_paths(state_dir: &Path, session_id: &str) -> Vec<PathBuf> {
+    let prefix = format!(
+        "{}-",
+        &crate::experience::sha256(session_id.as_bytes())[..24]
+    );
+    let Ok(entries) = std::fs::read_dir(state_dir.join("hook-sessions")) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().is_some_and(|ext| ext == "declared-task")
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(&prefix))
+        })
+        .collect()
 }
 
 /// Pull an exit code out of the many shapes Claude Code tool results take.
@@ -1010,9 +1803,12 @@ pub fn extract_artifact(tool_result: &serde_json::Value) -> String {
     for key in ["stdout", "output", "content", "stderr"] {
         if let Some(text) = tool_result.get(key).and_then(serde_json::Value::as_str) {
             if !text.trim().is_empty() {
-                let mut excerpt = text.to_owned();
-                excerpt.truncate(2_000);
-                return excerpt;
+                // Truncate on a character boundary; multibyte output must not panic.
+                let mut end = text.len().min(2_000);
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                return text[..end].to_owned();
             }
         }
     }
@@ -1639,6 +2435,408 @@ mod tests {
         assert!(
             path.to_string_lossy()
                 .contains("hook-sessions/abcetcpasswd.json")
+        );
+    }
+
+    #[test]
+    fn runners_and_wrappers_classify_while_listings_run_nothing() {
+        for (command, kind) in [
+            ("uv run pytest -q", "test_result"),
+            ("python3 -m pytest tests", "test_result"),
+            ("timeout 600 cargo test -p engram", "test_result"),
+            ("env RUST_LOG=debug cargo +nightly test", "test_result"),
+            ("npx vitest run", "test_result"),
+            ("uvx ruff check .", "lint_result"),
+            ("terraform validate", "typecheck_result"),
+            ("cargo test --no-run", "build_result"),
+        ] {
+            assert_eq!(detect_verification(command), Some(kind), "{command}");
+        }
+        for command in [
+            "cargo test -- --list",
+            "pytest --collect-only",
+            "cargo nextest list",
+            "cargo test --help",
+            "python3 script.py",
+            "timeout cargo test",
+        ] {
+            assert_eq!(detect_verification(command), None, "{command}");
+        }
+    }
+
+    #[test]
+    fn exit_status_reaches_the_shell_only_through_and_chains_or_pipefail() {
+        for command in [
+            "cargo test",
+            "cd '/tmp/a b' && cargo test --lib",
+            "RUST_LOG=info cargo test 2>&1",
+            "cargo fmt --check && cargo clippy -- -D warnings && cargo test",
+            "cargo test && echo done",
+            "cargo test && git diff | head",
+            "echo y | cargo test",
+            "set -o pipefail; cargo test 2>&1 | tail -n 40",
+            "set -euo pipefail && cargo test |& tee out.log | tail -5",
+            "cargo test # every suite",
+            "cargo test --manifest-path \"$(pwd)/Cargo.toml\" > out.txt 2>&1",
+            "cd \"${HOME}/repo\" && cargo test",
+            "cargo test -- --test-threads=$(nproc)",
+        ] {
+            assert_eq!(
+                classify_verification(command),
+                Some(ShellVerification {
+                    kind: "test_result",
+                    status_bearing: true
+                }),
+                "{command}"
+            );
+        }
+        for command in [
+            "cargo test 2>&1 | tail -20",
+            "cd repo && cargo test 2>&1 | grep -E 'test result|FAILED' | head",
+            "cargo test || true",
+            "false || cargo test",
+            "cargo test; echo done",
+            "cargo test &",
+            "set -o pipefail | cat; cargo test | tail",
+            "set -o pipefail; set +o pipefail; cargo test | tail",
+            "(cargo test)",
+            "cargo test <<EOF\nx\nEOF",
+            "echo `date` && cargo test",
+            "cargo test 'unterminated",
+            "cargo test |",
+        ] {
+            assert!(
+                !classify_verification(command).is_some_and(|found| found.status_bearing),
+                "{command}"
+            );
+        }
+        assert_eq!(classify_verification("git status && echo cargo test"), None);
+        assert_eq!(classify_verification("ls | grep test"), None);
+    }
+
+    #[test]
+    fn claude_code_exit_status_comes_from_the_event_not_the_output() {
+        use serde_json::json;
+        let success = json!({"hook_event_name":"PostToolUse","tool_name":"Bash",
+            "tool_input":{"command":"cargo test"},
+            "tool_response":{"stdout":"test result: ok. 3 passed","stderr":"",
+                "interrupted":false,"isImage":false,"noOutputExpected":false}});
+        assert_eq!(
+            observed_exit_status(&success, HookClient::ClaudeCode),
+            Some((0, "success_event"))
+        );
+        assert_eq!(
+            observed_exit_status(&success, HookClient::Codex),
+            None,
+            "Codex reports its own exit code"
+        );
+        for (key, value) in [
+            ("interrupted", json!(true)),
+            ("backgroundTaskId", json!("bg-1")),
+            ("returnCodeInterpretation", json!("No matches found")),
+            ("timedOutAfterMs", json!(120_000)),
+        ] {
+            let mut changed = success.clone();
+            changed["tool_response"][key] = value;
+            assert_eq!(
+                observed_exit_status(&changed, HookClient::ClaudeCode),
+                None,
+                "{key}"
+            );
+        }
+        let mut background = success.clone();
+        background["tool_input"]["run_in_background"] = json!(true);
+        assert_eq!(
+            observed_exit_status(&background, HookClient::ClaudeCode),
+            None
+        );
+        let mut other_tool = success.clone();
+        other_tool["tool_name"] = json!("Read");
+        assert_eq!(
+            observed_exit_status(&other_tool, HookClient::ClaudeCode),
+            None
+        );
+        let failure = json!({"hook_event_name":"PostToolUseFailure","tool_name":"Bash",
+            "tool_input":{"command":"cargo test"},
+            "error":"Exit code 101\nerror: test failed","is_interrupt":false});
+        assert_eq!(
+            observed_exit_status(&failure, HookClient::ClaudeCode),
+            Some((101, "failure_event"))
+        );
+        let mut prefixed = failure.clone();
+        prefixed["error"] = json!("Error: Exit code 2");
+        assert_eq!(
+            observed_exit_status(&prefixed, HookClient::ClaudeCode),
+            Some((2, "failure_event"))
+        );
+        for (key, value) in [
+            ("is_interrupt", json!(true)),
+            ("error", json!("Permission to use Bash has been denied")),
+            ("error", json!("Exit code 0")),
+        ] {
+            let mut changed = failure.clone();
+            changed[key] = value;
+            assert_eq!(
+                observed_exit_status(&changed, HookClient::ClaudeCode),
+                None,
+                "{key}"
+            );
+        }
+        let codex = json!({"hook_event_name":"PostToolUse","tool_name":"exec_command",
+            "tool_response":{"exit_code":3,"stdout":""}});
+        assert_eq!(
+            observed_exit_status(&codex, HookClient::Codex),
+            Some((3, "tool_response"))
+        );
+        let legacy =
+            json!({"tool_name":"Bash","tool_response":{"stdout":"ok","interrupted":false}});
+        assert_eq!(
+            observed_exit_status(&legacy, HookClient::ClaudeCode),
+            None,
+            "without an event name a completed call proves nothing"
+        );
+    }
+
+    #[test]
+    fn verification_output_keeps_a_bounded_utf8_tail() {
+        let long = format!("{}\ntest result: ok. 9 passed", "é".repeat(5_000));
+        let excerpt = verification_output(&serde_json::json!({
+            "tool_response":{"stdout":long,"stderr":""}
+        }));
+        assert!(excerpt.len() <= VERIFICATION_EXCERPT_BYTES);
+        assert!(excerpt.starts_with('[') && excerpt.ends_with("test result: ok. 9 passed"));
+        assert_eq!(
+            verification_output(&serde_json::json!({"error":"Exit code 101\nthread panicked"})),
+            "Exit code 101\nthread panicked"
+        );
+        assert_eq!(
+            verification_output(&serde_json::json!({
+                "tool_response":{"stdout":"out","stderr":"warning: unused"}
+            })),
+            "out\nwarning: unused"
+        );
+        // Three-byte characters straddle the old 2,000-byte cut; it must not panic.
+        assert_eq!(
+            extract_artifact(&serde_json::json!({"stdout":"€".repeat(1_000)})).len(),
+            1_998
+        );
+    }
+
+    #[test]
+    fn engram_mcp_calls_declare_and_close_the_session_task() {
+        use serde_json::json;
+        let task = TaskId::new();
+        let project = ProjectId::new();
+        let record =
+            json!({"accepted_by_user":null,"id":task,"project_id":project,"status":"open"})
+                .to_string();
+        for response in [
+            json!(record),
+            json!([{"type":"text","text":record}]),
+            json!({"content":[{"type":"text","text":record}],"isError":false}),
+        ] {
+            let start = json!({"hook_event_name":"PostToolUse",
+                "tool_name":"mcp__leb__engram_task_start",
+                "tool_input":{"project_id":project,"prompt":"Fix"},"tool_response":response});
+            assert_eq!(
+                task_declaration(&start),
+                Some(TaskDeclaration::Active {
+                    task_id: task.clone(),
+                    project_id: Some(project.clone())
+                })
+            );
+        }
+        assert_eq!(
+            task_declaration(
+                &json!({"tool_name":"engram_record_attempt","tool_input":{"task_id":task}})
+            ),
+            Some(TaskDeclaration::Active {
+                task_id: task.clone(),
+                project_id: None
+            })
+        );
+        assert_eq!(
+            task_declaration(&json!({"tool_name":"mcp__engram__engram_complete_task",
+                "tool_input":{"task_id":task}})),
+            Some(TaskDeclaration::Closed(task.clone()))
+        );
+        assert_eq!(
+            task_declaration(&json!({"hook_event_name":"PostToolUseFailure",
+                "tool_name":"mcp__leb__engram_record_attempt","tool_input":{"task_id":task}})),
+            None,
+            "a failed call declares nothing"
+        );
+        for tool in ["mcp__leb__engram_recall", "Bash", "xengram_task_start"] {
+            assert_eq!(
+                task_declaration(&json!({"tool_name":tool,"tool_input":{"task_id":task}})),
+                None,
+                "{tool}"
+            );
+        }
+        assert_eq!(
+            task_declaration(
+                &json!({"tool_name":"engram_record_attempt","tool_input":{"task_id":"x"}})
+            ),
+            None
+        );
+
+        let temp = tempfile::tempdir().expect("temp");
+        let state = temp.path();
+        let scope = scoped_session_id("session-a", &project);
+        let active = TaskDeclaration::Active {
+            task_id: task.clone(),
+            project_id: Some(project.clone()),
+        };
+        record_task_declaration(state, "session-a", "fallback", &active).expect("declare");
+        assert_eq!(declared_task(state, &scope), Some(task.clone()));
+        for (session, closed) in [("session-a", TaskId::new()), ("session-b", task.clone())] {
+            record_task_declaration(state, session, "fallback", &TaskDeclaration::Closed(closed))
+                .expect("close");
+            assert_eq!(
+                declared_task(state, &scope),
+                Some(task.clone()),
+                "only the declaring session closing this task stops routing"
+            );
+        }
+        record_task_declaration(
+            state,
+            "session-a",
+            "fallback",
+            &TaskDeclaration::Closed(task.clone()),
+        )
+        .expect("close");
+        assert_eq!(declared_task(state, &scope), None);
+        let projectless = TaskDeclaration::Active {
+            task_id: task.clone(),
+            project_id: None,
+        };
+        record_task_declaration(state, "session-a", &scope, &projectless).expect("fallback");
+        assert_eq!(declared_task(state, &scope), Some(task));
+        clear_task_declarations(state, "session-a");
+        assert_eq!(declared_task(state, &scope), None);
+    }
+
+    #[test]
+    fn source_digests_stay_inside_the_checkout_and_bounded() {
+        let temp = tempfile::tempdir().expect("temp");
+        let root = temp.path().join("repo");
+        std::fs::create_dir_all(root.join("src")).expect("source dir");
+        std::fs::write(root.join("src/lib.rs"), b"pub fn a() {}").expect("source");
+        std::fs::write(temp.path().join("outside.rs"), b"private").expect("outside");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(temp.path().join("outside.rs"), root.join("src/link.rs"))
+            .expect("symlink");
+        let candidates = [
+            "src/lib.rs",
+            "../outside.rs",
+            "/etc/hosts",
+            "src/link.rs",
+            "src/missing.rs",
+            "src",
+            "src/lib.rs",
+        ]
+        .map(str::to_owned);
+        let (digests, truncated) = source_digests(&root, &candidates);
+        assert_eq!(
+            digests.into_iter().collect::<Vec<_>>(),
+            vec![(
+                "src/lib.rs".to_owned(),
+                crate::experience::sha256(b"pub fn a() {}")
+            )]
+        );
+        assert!(!truncated);
+        let many: Vec<String> = (0..70)
+            .map(|index| {
+                std::fs::write(root.join(format!("f{index}.rs")), b"x").expect("file");
+                format!("f{index}.rs")
+            })
+            .collect();
+        let (digests, truncated) = source_digests(&root, &many);
+        assert_eq!(digests.len(), SOURCE_DIGEST_FILES);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn only_native_hook_metadata_carries_source_digests() {
+        use serde_json::json;
+        let digest = "a".repeat(64);
+        let hook = json!({"source":CLAUDE_HOOK_SOURCE,
+            "source_digests":{"src/lib.rs":digest,"bad":"not-a-digest"}});
+        assert_eq!(hook_source_digests(&hook).expect("hook digests").len(), 1);
+        for metadata in [
+            json!({"capture":"completion","source_digests":{"src/lib.rs":digest}}),
+            json!({"source":"cli","source_digests":{"src/lib.rs":digest}}),
+            json!({"source":CODEX_HOOK_SOURCE}),
+            json!({}),
+        ] {
+            assert!(hook_source_digests(&metadata).is_none_or(|found| found.is_empty()));
+        }
+    }
+
+    #[test]
+    fn observed_verification_records_status_output_and_source_digests() {
+        use serde_json::json;
+        let temp = tempfile::tempdir().expect("temp");
+        let root = temp.path();
+        std::fs::write(root.join("lib.rs"), b"pub fn a() {}").expect("source");
+        let payload = |command: &str| {
+            json!({"hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"toolu_1",
+                "tool_input":{"command":command},
+                "tool_response":{"stdout":"test result: ok. 1 passed","stderr":"",
+                    "interrupted":false,"isImage":false}})
+        };
+        let touched = ["lib.rs".to_owned()];
+        let observed = observe_verification(
+            &payload("cargo test"),
+            HookClient::ClaudeCode,
+            root,
+            None,
+            &touched,
+        )
+        .expect("observed");
+        assert_eq!((observed.kind, observed.exit_code), ("test_result", 0));
+        assert_eq!(observed.artifact, "test result: ok. 1 passed");
+        assert_eq!(observed.metadata["source"], CLAUDE_HOOK_SOURCE);
+        assert_eq!(observed.metadata["exit_status"], "success_event");
+        assert_eq!(observed.metadata["tool_use_id"], "toolu_1");
+        assert_eq!(
+            observed.metadata["source_digests"]["lib.rs"],
+            crate::experience::sha256(b"pub fn a() {}")
+        );
+        for hidden in ["cargo test | tail -3", "cargo test || true", "git status"] {
+            assert!(
+                observe_verification(
+                    &payload(hidden),
+                    HookClient::ClaudeCode,
+                    root,
+                    None,
+                    &touched
+                )
+                .is_none(),
+                "{hidden}"
+            );
+        }
+        let repeat = observe_verification(
+            &payload("cargo test"),
+            HookClient::ClaudeCode,
+            root,
+            None,
+            &touched,
+        )
+        .expect("repeat");
+        assert_eq!(repeat.fingerprint, observed.fingerprint);
+        std::fs::write(root.join("lib.rs"), b"pub fn a() { changed() }").expect("edit");
+        let changed = observe_verification(
+            &payload("cargo test"),
+            HookClient::ClaudeCode,
+            root,
+            None,
+            &touched,
+        )
+        .expect("changed");
+        assert_ne!(
+            changed.fingerprint, observed.fingerprint,
+            "a rerun on edited source is a new observation"
         );
     }
 }
