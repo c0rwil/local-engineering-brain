@@ -514,6 +514,10 @@ impl ProductStore {
             if let (Some(id),Some(expiry))=(&memory,review.expires_at_ms) { tx.execute("INSERT INTO memory_expiry(memory_id,expires_at_ms) VALUES(?1,?2) ON CONFLICT(memory_id) DO UPDATE SET expires_at_ms=excluded.expires_at_ms",params![id.as_str(),expiry])?; }
             Ok(())
         })?;
+        // A decision resolves an automatic conflict quarantine this proposal
+        // caused: confirmed contradictions stay contradicted; the rest return.
+        MemoryStore::with_redactor(self.database.clone(), self.redactor.clone())
+            .release_review_conflicts(&review.project_id, &review.id)?;
         if memory.is_some() {
             "accepted"
         } else {

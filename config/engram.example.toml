@@ -158,6 +158,9 @@ allow_remote = false
 acceptance_threshold = 0.98
 endpoint = "http://127.0.0.1:11434/v1/chat/completions"
 model = ""
+# Local requests send the strict verdict JSON schema ("json_schema"). Use
+# "json_object" only for a runtime that rejects JSON schema response formats.
+structured_output = "json_schema"
 interval_seconds = 300
 timeout_seconds = 90
 batch_size = 2

@@ -503,6 +503,51 @@ impl MemoryStore {
         })
     }
 
+    /// Suspect memories whose latest state change carries exactly `reason`.
+    /// # Errors
+    /// Returns storage or invalid ID errors.
+    pub fn suspect_with_reason(
+        &self,
+        project_id: &ProjectId,
+        reason: &str,
+    ) -> Result<Vec<MemoryId>> {
+        let ids = self.database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT m.id FROM memories m WHERE m.project_id=?1 AND m.status='suspect'
+                 AND (SELECT json_extract(e.payload_json,'$.data.reason') FROM events e
+                      WHERE e.event_type='MEMORY_STATE_CHANGED'
+                        AND json_extract(e.payload_json,'$.data.memory_id')=m.id
+                      ORDER BY e.sequence DESC LIMIT 1)=?2
+                 ORDER BY m.id",
+            )?;
+            let rows = statement
+                .query_map(params![project_id.as_str(), reason], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })?;
+        ids.iter().map(|id| MemoryId::parse(id)).collect()
+    }
+
+    /// Restore memories still quarantined for a review conflict after a person
+    /// decided that review without confirming the contradiction. Memories the
+    /// person marked contradicted are no longer suspect and stay contradicted.
+    /// # Errors
+    /// Returns storage or state errors.
+    pub fn release_review_conflicts(&self, project_id: &ProjectId, review_id: &str) -> Result<u64> {
+        let mut released = 0_u64;
+        for id in self.suspect_with_reason(project_id, &review_conflict_reason(review_id))? {
+            self.mark_status(
+                &id,
+                MemoryStatus::Active,
+                &format!("review_conflict_released:{review_id}"),
+            )?;
+            released = released.saturating_add(1);
+        }
+        Ok(released)
+    }
+
     /// Detect symbol digest drift and quarantine affected active memories.
     ///
     /// The report distinguishes memories that had already been compiled into
@@ -1667,6 +1712,13 @@ pub(crate) fn normalize_claim(claim: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+}
+
+/// State-change reason for an active memory quarantined because a pending
+/// lesson proposal conflicts with it. That proposal's review resolves it.
+#[must_use]
+pub fn review_conflict_reason(review_id: &str) -> String {
+    format!("review_conflict:{review_id}")
 }
 
 fn unix_time_ms() -> i64 {
