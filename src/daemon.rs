@@ -933,13 +933,14 @@ impl DaemonClient {
             .await
     }
 
-    /// Record or merge one hook observation of an agent tool call.
+    /// Queue one hook observation of an agent tool call for a merged write.
+    /// Returns once the daemon has validated, timestamped and queued it.
     /// # Errors
-    /// Returns validation, scope or transport errors.
+    /// Returns validation, backpressure or transport errors.
     pub async fn record_tool_observation(
         &self,
         request: &crate::effectiveness::ToolObservationRequest,
-    ) -> Result<crate::effectiveness::ToolObservationResult> {
+    ) -> Result<crate::effectiveness::ToolObservationReceipt> {
         self.request(hyper::Method::POST, API_TOOL_OBSERVATION, Some(request))
             .await
     }
@@ -4985,7 +4986,7 @@ async fn record_usage(
 async fn record_tool_observation(
     State(state): State<DaemonState>,
     Json(mut request): Json<crate::effectiveness::ToolObservationRequest>,
-) -> std::result::Result<Json<crate::effectiveness::ToolObservationResult>, ApiError> {
+) -> std::result::Result<Json<crate::effectiveness::ToolObservationReceipt>, ApiError> {
     admit_work(&state, MutationPriority::Analytics)?;
     // Labels and paths come from external adapters; never persist credentials.
     request.source = state.redactor.redact_text(&request.source);
@@ -4993,17 +4994,29 @@ async fn record_tool_observation(
     for path in &mut request.paths {
         *path = state.redactor.redact_text(path);
     }
+    let call_id = request
+        .call_id()
+        .map_err(|error| ApiError::from_core(&error))?;
     // Time the observation on receipt, not when the low-priority write runs:
     // a pre-tool touch must stay ordered before the context compiled after it.
     let observed_at_ms = job_time_ms();
     let store = crate::effectiveness::EffectivenessStore::new(state.database.clone());
-    let handle = state
+    // Acknowledge once queued. The pre-tool hook calls this before compiling
+    // context; waiting for a lowest-priority commit would hold the hook behind
+    // every queued higher-priority write. Scope errors are logged, not returned.
+    let _queued = state
         .scheduler
         .submit(MutationPriority::Analytics, move || {
-            store.record_tool_observation_at(&request, observed_at_ms)
+            store
+                .record_tool_observation_at(&request, observed_at_ms)
+                .inspect_err(|error| eprintln!("tool observation not recorded: {error}"))
         })
         .map_err(|error| ApiError::from_core(&error))?;
-    Ok(Json(wait_for_mutation(&state, handle).await?))
+    Ok(Json(crate::effectiveness::ToolObservationReceipt {
+        call_id,
+        observed_at_ms,
+        queued: true,
+    }))
 }
 
 async fn product_mutate(

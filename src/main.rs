@@ -3176,6 +3176,10 @@ fn record_hook_tool_observation(
     phase: engram::effectiveness::ToolPhase,
     agent: engram::agenthooks::HookClient,
 ) {
+    // The daemon acknowledges once the write is queued. Bound the wait anyway:
+    // the pre-tool hook compiles context after this call, and measurement must
+    // never cost the agent its context. A dropped observation fails open.
+    const OBSERVATION_WAIT: Duration = Duration::from_millis(500);
     let context_run_id = engram::agenthooks::context_run_id(state_dir, scope);
     if let Some(request) = engram::effectiveness::hook_tool_observation(
         payload,
@@ -3185,7 +3189,11 @@ fn record_hook_tool_observation(
         phase,
         agent,
     ) {
-        let _ = block_on(client.record_tool_observation(&request));
+        let _ = block_on(async {
+            tokio::time::timeout(OBSERVATION_WAIT, client.record_tool_observation(&request))
+                .await
+                .map_err(|_| engram::Error::Daemon("tool observation timed out".to_owned()))?
+        });
     }
 }
 

@@ -121,6 +121,31 @@ pub struct ToolObservationResult {
     pub inserted: bool,
 }
 
+/// The daemon's acknowledgement of a validated, timestamped and queued
+/// observation. The write commits later at the lowest priority; project,
+/// task and context scope are checked when it runs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ToolObservationReceipt {
+    pub call_id: String,
+    /// Receipt time. It orders the touch against contexts compiled later.
+    pub observed_at_ms: i64,
+    pub queued: bool,
+}
+
+impl ToolObservationRequest {
+    /// Check the request shape and return the stored call digest.
+    ///
+    /// # Errors
+    /// Rejects malformed observations. Scope is checked by the write.
+    pub fn call_id(&self) -> Result<String> {
+        validate_observation(self)?;
+        Ok(crate::agenthooks::tool_usage_sample_id(
+            &self.session_id,
+            &self.tool_use_id,
+        ))
+    }
+}
+
 /// Delivered-context use in one repository and period. Association only.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default)]
@@ -131,7 +156,8 @@ pub struct ContextUse {
     pub observed_sessions: u64,
     /// Observed calls that named at least one file in this repository.
     pub observed_calls_with_paths: u64,
-    /// Distinct session files first read or edited in this period.
+    /// Distinct session files first read or edited, by a completed call, in
+    /// this period.
     pub touched_files: u64,
     /// Of those, files first touched before any context for this repository
     /// was delivered in that session.
@@ -149,8 +175,8 @@ pub struct PointerUse {
     pub delivered_contexts: u64,
     /// Delivered contexts with at least one file pointer.
     pub contexts_with_pointers: u64,
-    /// Contexts with pointers followed by at least one observed tool call in
-    /// the same agent session.
+    /// Contexts with pointers followed by at least one tool call in the same
+    /// agent session whose post-tool outcome was observed.
     pub observed_contexts: u64,
     /// Distinct context/file pointer pairs in observed contexts.
     pub pointers: u64,
@@ -159,12 +185,15 @@ pub struct PointerUse {
     /// Source pointers that could not be resolved to a file path.
     pub unresolved_pointers: u64,
     /// Pointed files already read or edited in that session before compilation.
+    /// Only completed calls are touches; failed and unfinished calls are not.
     pub already_touched: u64,
-    /// Other pointed files read or edited later in the same session.
+    /// Other pointed files read or edited by a completed call later in the
+    /// same session.
     pub touched_later: u64,
     /// `touched_later / (pointers - already_touched)`; null without a denominator.
     pub precision: Option<f64>,
-    /// Observed calls from delivery to the first touch, including that call.
+    /// Observed calls from delivery to the first touch, including that call and
+    /// any failed or unfinished calls in between.
     pub first_touch_calls: FirstTouch,
     /// Distinct session files first touched in this period after a context of
     /// this mode was delivered in that session for their repository, or from a
@@ -187,6 +216,7 @@ pub struct FirstTouch {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default)]
 pub struct ReadVolume {
+    /// Read calls with a reported post-tool outcome, completed or failed.
     pub reads: u64,
     /// Reads with offset, limit or a page range.
     pub ranged: u64,
@@ -201,9 +231,11 @@ pub struct ReadVolume {
     pub mean_result_bytes: Option<f64>,
     /// Reads rejected or truncated by the agent's Read size limits.
     pub limit_hits: u64,
+    /// Reads whose post-tool hook reported a failure. Not file touches.
     pub failed: u64,
-    /// Reads with a reported post-tool outcome.
-    pub completed: u64,
+    /// Read calls seen only before execution: denied, interrupted, still
+    /// running or missing their post-tool hook. Excluded from every figure above.
+    pub unfinished: u64,
 }
 
 /// The phase a post-tool hook payload reports: completed or failed.
@@ -258,12 +290,7 @@ pub fn hook_tool_observation(
         // A repository root resolves to an empty path; keep the call, not the path.
         paths: paths
             .iter()
-            .filter(|path| {
-                !path.is_empty()
-                    && path.len() <= MAX_PATH_BYTES
-                    && !path.chars().any(char::is_control)
-                    && !std::path::Path::new(path).is_absolute()
-            })
+            .filter(|path| repository_relative(path))
             .take(MAX_PATHS)
             .cloned()
             .collect(),
@@ -467,6 +494,19 @@ impl EffectivenessStore {
     }
 }
 
+/// A bounded path inside the repository, in the normalized form hooks derive
+/// from the checkout root: relative, without control characters, and without
+/// empty, `.` or `..` segments, which could name files outside the repository
+/// or never match a pointer.
+fn repository_relative(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= MAX_PATH_BYTES
+        && !path.chars().any(char::is_control)
+        && path
+            .split('/')
+            .all(|segment| !matches!(segment, "" | "." | ".."))
+}
+
 fn validate_observation(request: &ToolObservationRequest) -> Result<ToolAction> {
     for (label, value, limit) in [
         ("session_id", request.session_id.as_str(), 256),
@@ -485,16 +525,11 @@ fn validate_observation(request: &ToolObservationRequest) -> Result<ToolAction> 
             "tool observation accepts at most {MAX_PATHS} paths"
         )));
     }
-    for path in &request.paths {
-        if path.is_empty()
-            || path.len() > MAX_PATH_BYTES
-            || path.chars().any(char::is_control)
-            || std::path::Path::new(path).is_absolute()
-        {
-            return Err(Error::Config(
-                "tool observation paths must be bounded repository-relative paths".to_owned(),
-            ));
-        }
+    if !request.paths.iter().all(|path| repository_relative(path)) {
+        return Err(Error::Config(
+            "tool observation paths must be bounded, normalized repository-relative paths without `.` or `..` segments"
+                .to_owned(),
+        ));
     }
     let action = ToolAction::classify(&request.tool_name);
     let read_metrics =
@@ -620,11 +655,19 @@ struct Observation {
     action: ToolAction,
     paths: Vec<String>,
     observed_at_ms: i64,
+    /// A post-tool hook reported an outcome, completed or failed.
+    reported: bool,
+    /// A post-tool hook reported the call as completed.
+    completed: bool,
 }
 
 impl Observation {
+    /// A completed read or edit of the file. Calls seen only before execution
+    /// (denied, interrupted or unfinished) and failed calls are not touches.
+    /// A completed call keeps its earliest observation time.
     fn touches(&self, project: &str, path: &str) -> bool {
-        self.action.touches_files()
+        self.completed
+            && self.action.touches_files()
             && self.project_id == project
             && self.paths.iter().any(|candidate| candidate == path)
     }
@@ -742,11 +785,11 @@ fn attribute_pack(
     }
     entry.contexts_with_pointers += 1;
     let pointers = u64::try_from(pack.pointers.len()).unwrap_or(u64::MAX);
-    // Without a later observed call there was no observable opportunity to
-    // follow the pointers; that is unknown, not unused.
+    // Without a later call whose post-tool outcome was observed there was no
+    // observable opportunity to follow the pointers; that is unknown, not unused.
     if !calls
         .iter()
-        .any(|call| call.observed_at_ms > pack.created_at_ms)
+        .any(|call| call.reported && call.observed_at_ms > pack.created_at_ms)
     {
         entry.unobserved_pointers += pointers;
         return;
@@ -788,7 +831,7 @@ fn attribute_coverage(
     let mut first_touches: BTreeMap<&str, i64> = BTreeMap::new();
     for call in calls
         .iter()
-        .filter(|call| call.action.touches_files() && call.project_id == project)
+        .filter(|call| call.completed && call.action.touches_files() && call.project_id == project)
     {
         for path in &call.paths {
             first_touches
@@ -928,7 +971,8 @@ fn session_observations(
     until: i64,
 ) -> Result<HashMap<String, Vec<Observation>>> {
     let mut statement = connection.prepare(
-        "SELECT session_id, call_id, project_id, action, paths_json, observed_at_ms
+        "SELECT session_id, call_id, project_id, action, paths_json, observed_at_ms,
+                outcome IS NOT NULL, outcome IS 'ok'
          FROM tool_observations
          WHERE observed_at_ms < ?2 AND session_id IN (SELECT value FROM json_each(?1))
          ORDER BY session_id, observed_at_ms, call_id, project_id",
@@ -942,11 +986,13 @@ fn session_observations(
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, i64>(5)?,
+                row.get::<_, bool>(6)?,
+                row.get::<_, bool>(7)?,
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut observations: HashMap<String, Vec<Observation>> = HashMap::new();
-    for (session, call_id, project_id, action, paths, observed_at_ms) in rows {
+    for (session, call_id, project_id, action, paths, observed_at_ms, reported, completed) in rows {
         let paths: Vec<String> = serde_json::from_str(&paths)?;
         observations.entry(session).or_default().push(Observation {
             call_id,
@@ -957,6 +1003,8 @@ fn session_observations(
                 .map(|path| pointer_file(path).to_owned())
                 .collect(),
             observed_at_ms,
+            reported,
+            completed,
         });
     }
     Ok(observations)
@@ -983,12 +1031,17 @@ fn read_volume(
     since: i64,
     until: i64,
 ) -> Result<BTreeMap<String, ReadVolume>> {
+    // Only calls with a post-tool outcome executed. Pre-only rows (denied,
+    // interrupted or unfinished calls) are counted apart, never as reads.
     let mut statement = connection.prepare(
-        "SELECT coalesce(mode, ?4), count(*),
-                count(CASE WHEN ranged = 1 THEN 1 END), count(CASE WHEN ranged = 0 THEN 1 END),
-                count(result_bytes), coalesce(sum(result_bytes), 0),
-                count(CASE WHEN limit_hit = 1 THEN 1 END),
-                count(CASE WHEN outcome = 'failed' THEN 1 END), count(outcome)
+        "SELECT coalesce(mode, ?4), count(outcome),
+                count(CASE WHEN outcome IS NOT NULL AND ranged = 1 THEN 1 END),
+                count(CASE WHEN outcome IS NOT NULL AND ranged = 0 THEN 1 END),
+                count(CASE WHEN outcome IS NOT NULL THEN result_bytes END),
+                coalesce(sum(CASE WHEN outcome IS NOT NULL THEN result_bytes END), 0),
+                count(CASE WHEN outcome IS NOT NULL AND limit_hit = 1 THEN 1 END),
+                count(CASE WHEN outcome = 'failed' THEN 1 END),
+                count(CASE WHEN outcome IS NULL THEN 1 END)
          FROM tool_observations
          WHERE project_id = ?1 AND action = 'read' AND observed_at_ms >= ?2 AND observed_at_ms < ?3
          GROUP BY 1",
@@ -1004,7 +1057,7 @@ fn read_volume(
                 result_bytes: read_count(row, 5)?,
                 limit_hits: read_count(row, 6)?,
                 failed: read_count(row, 7)?,
-                completed: read_count(row, 8)?,
+                unfinished: read_count(row, 8)?,
                 ..ReadVolume::default()
             };
             Ok((row.get::<_, String>(0)?, reads))
@@ -1085,7 +1138,7 @@ impl ContextUse {
         for (mode, reads) in &self.reads_by_mode {
             lines.push(format!(
                 "    {mode} reads: {} ({} ranged, {} whole-file; {} ranged); mean result {} over {} sized; \
-                 limit hits {}; failed {}",
+                 limit hits {}; failed {}; unfinished {}",
                 reads.reads,
                 reads.ranged,
                 reads.whole_file,
@@ -1096,7 +1149,8 @@ impl ContextUse {
                 ),
                 reads.sized_reads,
                 reads.limit_hits,
-                reads.failed
+                reads.failed,
+                reads.unfinished
             ));
         }
         lines
@@ -1445,7 +1499,12 @@ mod tests {
             (None, None, None)
         );
         // A repository-root argument keeps the call but not an empty path.
-        let rooted = [String::new(), "/abs/x.rs".to_owned(), "src/a.rs".to_owned()];
+        let rooted = [
+            String::new(),
+            "/abs/x.rs".to_owned(),
+            "../outside.rs".to_owned(),
+            "src/a.rs".to_owned(),
+        ];
         let scoped = hook_tool_observation(
             &patch,
             &hook,
@@ -1604,9 +1663,29 @@ mod tests {
             None,
         );
         let mut cases = Vec::new();
-        let mut absolute = base.clone();
-        absolute.paths = vec!["/etc/hosts".to_owned()];
-        cases.push(absolute);
+        // Absolute, escaping or unnormalized paths would pollute attribution.
+        for path in [
+            "/etc/hosts",
+            "../../outside/secret.txt",
+            "src/../../secret.txt",
+            "src/..",
+            "./src/a.rs",
+            "src/./a.rs",
+            "src//a.rs",
+            "src/",
+        ] {
+            let mut invalid = base.clone();
+            invalid.paths = vec![path.to_owned()];
+            assert!(invalid.call_id().is_err(), "{path} must be rejected");
+            cases.push(invalid);
+        }
+        // Dots inside a file name are ordinary characters.
+        let mut dotted = base.clone();
+        dotted.paths = vec![
+            "src/..hidden/a..b.rs".to_owned(),
+            ".github/ci.yml".to_owned(),
+        ];
+        assert!(dotted.call_id().is_ok());
         let mut metrics = base.clone();
         metrics.result_bytes = Some(10);
         cases.push(metrics);
@@ -1773,13 +1852,13 @@ mod tests {
             }
         );
         // First touches: a.rs at 100 (the pre-period context was earlier but
-        // pointed elsewhere), b.rs pointed by the delivery, c.rs by the
-        // earlier context. s2 read a.rs before any context for that session.
-        assert_eq!(usage.touched_files, 4);
+        // pointed elsewhere) and b.rs, pointed by the delivery. The failed read
+        // of c.rs is not a touch. s2 read a.rs before any context for that session.
+        assert_eq!(usage.touched_files, 3);
         assert_eq!(usage.touched_files_before_context, 1);
-        assert_eq!(brain.touched_files, 3);
-        assert_eq!(brain.touched_files_pointed, 2);
-        assert_eq!(brain.coverage, Some(2.0 / 3.0));
+        assert_eq!(brain.touched_files, 2);
+        assert_eq!(brain.touched_files_pointed, 1);
+        assert_eq!(brain.coverage, Some(0.5));
         let reads = &usage.reads_by_mode;
         assert_eq!(
             reads["brain"],
@@ -1793,7 +1872,7 @@ mod tests {
                 mean_result_bytes: Some(1000.0),
                 limit_hits: 1,
                 failed: 1,
-                completed: 2,
+                unfinished: 0,
             }
         );
         assert_eq!(
@@ -1808,7 +1887,7 @@ mod tests {
                 mean_result_bytes: Some(225.0),
                 limit_hits: 0,
                 failed: 0,
-                completed: 2,
+                unfinished: 0,
             }
         );
         // A cross-repository pointer covers the linked repository's file.
@@ -1823,6 +1902,128 @@ mod tests {
         assert_eq!(lib.pointers_by_mode["brain"].touched_files_pointed, 1);
         assert_eq!(lib.pointers_by_mode["brain"].delivered_contexts, 0);
         assert!(lib.reads_by_mode.is_empty());
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn unfinished_and_failed_calls_are_not_touches() {
+        let f = fixture();
+        let pack = f.context(&f.app_task, 100, &[APP_A, APP_B, APP_C, APP_D]);
+        let record = |request: ToolObservationRequest, at: i64| {
+            f.store
+                .record_tool_observation_at(&request, at)
+                .expect("observation");
+        };
+        let app = |id: &str, name: &str, phase, path: &str| {
+            call(
+                &f.app,
+                &f.app_task,
+                "s1",
+                id,
+                name,
+                phase,
+                &[path],
+                Some(&pack),
+            )
+        };
+        // Denied or interrupted: the pre-tool hook saw it, no post-tool hook did.
+        record(
+            read(
+                app("denied", "Read", ToolPhase::Pre, "src/a.rs"),
+                false,
+                None,
+                None,
+            ),
+            110,
+        );
+        // A read rejected by the size limit, then an edit that failed.
+        record(
+            read(
+                app("failed", "Read", ToolPhase::Pre, "src/b.rs"),
+                false,
+                None,
+                None,
+            ),
+            120,
+        );
+        record(
+            read(
+                app("failed", "Read", ToolPhase::Failure, "src/b.rs"),
+                false,
+                None,
+                Some(true),
+            ),
+            125,
+        );
+        record(app("edit", "Edit", ToolPhase::Failure, "src/c.rs"), 130);
+        record(
+            read(
+                app("read", "Read", ToolPhase::Post, "src/d.rs"),
+                true,
+                Some(10),
+                Some(false),
+            ),
+            140,
+        );
+        // A context whose only later call never finished stays unobserved.
+        let other = f.context(&f.other_task, 300, &[APP_A]);
+        let pending = read(
+            call(
+                &f.app,
+                &f.other_task,
+                "s2",
+                "pending",
+                "Read",
+                ToolPhase::Pre,
+                &["src/a.rs"],
+                Some(&other),
+            ),
+            false,
+            None,
+            None,
+        );
+        f.store.record_tool_observation_at(&pending, 310).unwrap();
+        let usage = f
+            .database
+            .with_reader(|connection| report(connection, &f.app, 0, 1_000))
+            .expect("report");
+        let brain = &usage.pointers_by_mode["brain"];
+        assert_eq!((brain.delivered_contexts, brain.observed_contexts), (2, 1));
+        assert_eq!(
+            brain.unobserved_pointers, 1,
+            "the pending call has no outcome"
+        );
+        assert_eq!(brain.pointers, 4);
+        assert_eq!((brain.already_touched, brain.touched_later), (0, 1));
+        assert_eq!(
+            brain.precision,
+            Some(0.25),
+            "only the completed read of d.rs"
+        );
+        // Every observed call is an agent step on the way to the first touch.
+        assert_eq!(brain.first_touch_calls.median, Some(4.0));
+        assert_eq!(usage.touched_files, 1);
+        assert_eq!((brain.touched_files, brain.touched_files_pointed), (1, 1));
+        assert_eq!(
+            usage.reads_by_mode["brain"],
+            ReadVolume {
+                reads: 2,
+                ranged: 1,
+                whole_file: 1,
+                ranged_share: Some(0.5),
+                sized_reads: 1,
+                result_bytes: 10,
+                mean_result_bytes: Some(10.0),
+                limit_hits: 1,
+                failed: 1,
+                unfinished: 2,
+            }
+        );
+        let text = usage.summary_lines().join("\n");
+        assert!(
+            text.contains("limit hits 1; failed 1; unfinished 2"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -1887,7 +2088,7 @@ mod tests {
         let text = use_.summary_lines().join("\n");
         assert!(text.contains("touched later 2 of 3 (66.7%)"), "{text}");
         assert!(
-            text.contains("pointed to before first touch 2 of 3 files (66.7%)"),
+            text.contains("pointed to before first touch 1 of 2 files (50.0%)"),
             "{text}"
         );
         assert!(
