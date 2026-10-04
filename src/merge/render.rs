@@ -18,6 +18,7 @@ pub fn plan_text(plan: &MergePlan, pins: &[PinRewrite]) -> String {
         party_label(&plan.retired),
         party_label(&plan.survivor)
     );
+    visibility_note(&mut out, &plan.survivor, &plan.retired);
     out.push('\n');
     identity_section(&mut out, plan);
     out.push('\n');
@@ -40,11 +41,16 @@ pub fn plan_text(plan: &MergePlan, pins: &[PinRewrite]) -> String {
         plan.cancelled_jobs.clone(),
     );
     list_section(&mut out, "Pins", pins.iter().map(pin_line).collect());
-    list_section(
-        &mut out,
-        "Re-indexed after the merge, in order",
-        plan.reindex_paths.clone(),
-    );
+    match &plan.reindex_path {
+        Some(path) => {
+            let _ = writeln!(
+                out,
+                "Re-indexed after the merge: {path} (the survivor's primary checkout; its other \
+                 checkouts stay recorded paths)"
+            );
+        }
+        None => out.push_str("Re-indexed after the merge: nothing (no checkout exists)\n"),
+    }
     if let Some(refusal) = &plan.identity.refusal {
         let _ = writeln!(out, "Refused: {refusal}");
     } else {
@@ -208,22 +214,7 @@ pub fn outcome_text(outcome: &MergeOutcome, already: bool, follow_up: &FollowUpR
         "Pins",
         follow_up.pins.iter().map(pin_line).collect(),
     );
-    list_section(
-        &mut out,
-        "Re-index",
-        follow_up
-            .reindex
-            .iter()
-            .map(|result| {
-                let detail = result
-                    .scan_id
-                    .as_deref()
-                    .or(result.detail.as_deref())
-                    .map_or_else(String::new, |detail| format!(": {detail}"));
-                format!("{} {}{detail}", result.state, result.path)
-            })
-            .collect(),
-    );
+    reindex_line(&mut out, &follow_up.reindex);
     let finalize = &follow_up.finalize;
     let _ = writeln!(
         out,
@@ -236,23 +227,69 @@ pub fn outcome_text(outcome: &MergeOutcome, already: bool, follow_up: &FollowUpR
     );
     counts_line(
         &mut out,
-        "Written under the retired id since the merge, now moved",
-        &finalize.stragglers,
+        "Written under the retired id since the merge, then moved to the survivor",
+        &finalize.stragglers_since_merge,
     );
     if follow_up.complete {
         out.push_str("Done.\n");
     } else {
         out.push_str(
             "Some steps did not finish (see above). Fix them, then run the same command again: \
-             a repeated merge only retries the remaining steps.\n",
+             a repeated merge rewrites only pins that still hold the retired id, skips a \
+             re-index that already finished, and resolves anchors that still wait.\n",
         );
     }
     out
 }
 
+fn reindex_line(out: &mut String, reindex: &super::client::ReindexResult) {
+    let path = reindex.path.as_deref().unwrap_or("no checkout");
+    let detail = reindex
+        .detail
+        .as_deref()
+        .map_or_else(String::new, |detail| format!(": {detail}"));
+    match reindex.state.as_str() {
+        "indexed" => {
+            let _ = writeln!(
+                out,
+                "Re-index: indexed {path} (scan {}); {} memories quarantined because a symbol \
+                 they are anchored to changed in this tree (`engram memory list --path {path}` \
+                 shows them as suspect)",
+                reindex.scan_id.as_deref().unwrap_or("?"),
+                reindex.quarantined
+            );
+        }
+        state => {
+            let _ = writeln!(out, "Re-index: {state} {path}{detail}");
+        }
+    }
+}
+
 fn party_label(party: &MergeParty) -> String {
-    let hidden = if party.hidden { ", hidden" } else { "" };
-    format!("{} ({}{hidden})", party.name, party.id)
+    format!("{} ({})", party.name, party.id)
+}
+
+/// Say what hiding means after a merge: the survivor keeps its facts, so a
+/// hidden survivor hides the merged project as a whole.
+fn visibility_note(out: &mut String, survivor: &MergeParty, retired: &MergeParty) {
+    if survivor.hidden {
+        let _ = writeln!(
+            out,
+            "Survivor is hidden ({} has internal.hidden = true): the merged project will not \
+             appear in workspace views (browser, vault, product catalog){}.",
+            survivor.name,
+            if retired.hidden {
+                ""
+            } else {
+                "; the retired project is visible today"
+            }
+        );
+    } else if retired.hidden {
+        let _ = writeln!(
+            out,
+            "The retired project is hidden; the survivor stays visible in workspace views."
+        );
+    }
 }
 
 fn list_section(out: &mut String, title: &str, items: Vec<String>) {

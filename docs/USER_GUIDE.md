@@ -589,12 +589,17 @@ checkout; the retired project's rows per table and what happens to them;
 every key collision and its resolution; memories of both projects with the
 same claim; fact, link and origin-view decisions; memory anchors to
 re-attach; product records to re-anchor; unfinished jobs to cancel; the pins
-to rewrite; and the checkout paths re-indexed afterwards, in order.
+to rewrite; and the one checkout re-indexed afterwards. When the survivor is
+hidden (`internal.hidden`), the plan says so: its facts win, so the merged
+project will not appear in workspace views (browser, vault, product
+catalog).
 
 **Execution (`--yes`):**
 
 1. The daemon takes a transactionally consistent backup
    (`<database dir>/backups/pre-merge-<id>-<time>.sqlite`) and reports it.
+   The copy is written to a hidden partial file readable only by you and
+   renamed when complete, so an interrupted backup never looks like one.
 2. In the same scheduler job, one canonical transaction re-scopes every
    project-keyed table. The list of tables comes from the schema itself and
    each table has an explicit role; a table without one makes the merge
@@ -632,24 +637,39 @@ to rewrite; and the checkout paths re-indexed afterwards, in order.
    still holds the retired id, and reports each file. It writes them itself
    because an auto-started daemon may lack macOS privacy access that your
    terminal has.
-6. The CLI re-indexes the survivor over every checkout path, the retired ones
-   first and the survivor's oldest checkout last. It then finalizes: each
-   memory anchor on a dropped symbol is re-attached to the symbol with the
-   same stable identity (path and qualified name). A memory whose symbol is
-   gone is marked `suspect` with reason `merge_anchor_unresolved`, for
+6. The CLI re-indexes the survivor once, from its primary checkout (its
+   oldest existing checkout that is not a linked worktree), and reports how
+   many memories that scan quarantined for ordinary symbol drift. The other
+   checkouts, including the retired ones, are not scanned: their trees may
+   differ (another branch, an older clone), and drift detection against them
+   would quarantine memories that are fine. They stay recorded checkout paths
+   of the survivor.
+7. The CLI then finalizes: each memory anchor on a dropped symbol is
+   re-attached to the survivor's active symbol with the same stable identity
+   (path and qualified name). A memory whose symbol is gone, or only
+   tombstoned, is marked `suspect` with reason `merge_anchor_unresolved`, for
    revalidation; it is never promoted. Rows written under the retired id
-   since the merge are moved as well.
+   since the merge (requests and hook observations queued behind it) are
+   moved as well. The daemon runs that sweep once right after the merge and
+   the CLI runs it again; each run that changed something is recorded in a
+   `PROJECT_MERGE_FINALIZED` event and reported.
 
 A failure inside the transaction changes nothing. When a later step fails,
 for example a pin denied by privacy settings or a checkout that cannot be
 re-indexed, the merge itself is complete: fix the cause and run the same
-command again. A repeated merge reports "already merged" and retries only the
-remaining steps.
+command again. A repeated merge reports "already merged", rewrites only pins
+that still hold the retired id, skips the re-index when a completed follow-up
+recorded it, and resolves anchors that still wait.
 
 **After a merge** the retired id still works. Requests that carry it (a hook
 session that started before the merge, an MCP client, a script) are
 redirected to the survivor, and a checkout whose pin still holds the retired
-id resolves to the survivor. An agent session that was running in a retired
+id resolves to the survivor. Only typed project references are rewritten
+(`project_id` and its relatives, a project `scope_id`, `repo:` entity
+references); prompts, commands, artifacts, metadata, fact values and notes
+keep their text even when it names the retired id. The redirect is in place
+as soon as the merge commits, even if the client that started it
+disconnected. An agent session that was running in a retired
 checkout continues under the survivor; its current episode is split in two.
 
 ## Capturing operations lessons

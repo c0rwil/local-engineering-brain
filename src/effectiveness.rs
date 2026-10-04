@@ -213,10 +213,23 @@ impl EffectivenessStore {
     /// attempts to reuse a sample key with different content.
     pub fn record(&self, request: &UsageRecordRequest) -> Result<UsageRecordResult> {
         validate_request(request)?;
-        let request_json = serde_json::to_string(request)?;
         let now = unix_time_ms();
         let observed_at_ms = request.observed_at_ms.unwrap_or(now);
         self.database.write_immediate(|tx| {
+            // A sample queued (or resent) for a project that was merged since
+            // belongs to the survivor; a merge stores moved samples that way.
+            let resolved;
+            let request = match crate::merge::survivor_of(tx, &request.project_id)? {
+                Some(survivor) => {
+                    resolved = UsageRecordRequest {
+                        project_id: survivor,
+                        ..request.clone()
+                    };
+                    &resolved
+                }
+                None => request,
+            };
+            let request_json = serde_json::to_string(request)?;
             let previous = tx
                 .query_row(
                     "SELECT id, request_json, observed_at_ms FROM resource_usage

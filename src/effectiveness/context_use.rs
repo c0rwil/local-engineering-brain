@@ -428,6 +428,19 @@ impl EffectivenessStore {
         };
         let now = unix_time_ms();
         self.database.write_immediate(|tx| {
+            // Acknowledged once queued: an observation queued before its
+            // project was merged belongs to the survivor when it is written.
+            let resolved;
+            let request = match crate::merge::survivor_of(tx, &request.project_id)? {
+                Some(survivor) => {
+                    resolved = ToolObservationRequest {
+                        project_id: survivor,
+                        ..request.clone()
+                    };
+                    &resolved
+                }
+                None => request,
+            };
             validate_observation_scope(tx, request)?;
             let existing: Option<String> = tx
                 .query_row(

@@ -33,7 +33,7 @@ use crate::events::{
     DomainEvent, DuplicateClaim, MergeCollision, MergedFact, MergedLink, ProjectMergeAudit,
     append_generated_in_transaction, append_generated_with_id_in_transaction,
 };
-use crate::ids::{MemoryId, NodeId, ProjectId};
+use crate::ids::{MemoryId, ProjectId};
 use crate::projects::{CheckoutState, ProjectRegistry, probe_checkout};
 use crate::storage::Database;
 
@@ -769,8 +769,8 @@ pub struct MergePlan {
     pub cancelled_jobs: Vec<String>,
     /// The retired project's checkout paths, whose pins are rewritten.
     pub checkouts_to_repin: Vec<String>,
-    /// Checkout paths re-indexed after the merge, in order.
-    pub reindex_paths: Vec<String>,
+    /// The one checkout re-indexed after the merge (see [`primary_checkout`]).
+    pub reindex_path: Option<String>,
 }
 
 /// Plan a merge of `retired` into `survivor`. Read-only; call it with a
@@ -832,25 +832,34 @@ pub fn plan(
         links: link_decisions(connection, s, r)?,
         views,
         anchors: anchor_plan(connection, s, r)?,
-        product_records: product_records_naming(connection, r)?,
+        product_records: product_records_naming(connection, s, r)?,
         cancelled_jobs: unfinished_jobs(connection, r)?,
         checkouts_to_repin: retired.checkouts.clone(),
-        reindex_paths: reindex_order(&retired.checkouts, &survivor.checkouts),
+        reindex_path: primary_checkout(&survivor.checkouts, &retired.checkouts),
         survivor: survivor.clone(),
         retired: retired.clone(),
     })
 }
 
-/// The survivor's checkout paths after a merge, in re-index order: the
-/// retired project's first, then the survivor's own, so the survivor's
-/// oldest (usually primary) checkout is indexed last and defines the graph.
+/// The checkout the survivor is re-indexed from after a merge: its oldest
+/// existing checkout that is not a linked worktree, else its oldest existing
+/// checkout, else the retired project's oldest existing checkout. One scan
+/// of one tree: scanning the other checkouts too would run drift detection
+/// against trees that differ from the survivor's (another branch, an older
+/// clone) and quarantine memories that are fine. The other checkouts stay
+/// recorded paths of the survivor.
 #[must_use]
-pub fn reindex_order(retired_paths: &[String], survivor_paths: &[String]) -> Vec<String> {
-    let mut order = retired_paths.to_vec();
-    order.extend(survivor_paths.iter().rev().cloned());
-    let mut seen = BTreeSet::new();
-    order.retain(|path| seen.insert(path.clone()));
-    order
+pub fn primary_checkout(survivor_paths: &[String], retired_paths: &[String]) -> Option<String> {
+    let exists = |path: &&String| std::path::Path::new(path.as_str()).exists();
+    let linked_worktree =
+        |path: &&String| std::path::Path::new(path.as_str()).join(".git").is_file();
+    survivor_paths
+        .iter()
+        .filter(exists)
+        .find(|path| !linked_worktree(path))
+        .or_else(|| survivor_paths.iter().find(exists))
+        .or_else(|| retired_paths.iter().find(exists))
+        .cloned()
 }
 
 fn count(connection: &Connection, sql: &str, parameters: impl rusqlite::Params) -> Result<u64> {
@@ -1166,7 +1175,8 @@ fn anchors_on(
 ) -> Result<Vec<Anchor>> {
     let mut statement = connection.prepare(
         "SELECT mn.memory_id, n.stable_key, n.kind, n.label, n.file_path, mn.observed_digest,
-                (SELECT s.id FROM nodes s WHERE s.project_id = ?1 AND s.stable_key = n.stable_key)
+                (SELECT s.id FROM nodes s WHERE s.project_id = ?1 AND s.stable_key = n.stable_key
+                   AND s.tombstoned_at_ms IS NULL)
          FROM memory_nodes mn JOIN nodes n ON n.id = mn.node_id
          WHERE n.project_id = ?2 ORDER BY mn.memory_id, n.stable_key",
     )?;
@@ -1203,15 +1213,15 @@ fn anchor_plan(
     })
 }
 
-fn product_records_naming(connection: &Connection, retired: &ProjectId) -> Result<Vec<String>> {
-    let mut statement = connection.prepare(
-        "SELECT id FROM product_records
-         WHERE instr(document_json, ?1) > 0 OR instr(stamps_json, ?1) > 0 ORDER BY id",
-    )?;
-    let ids = statement
-        .query_map([retired.as_str()], |row| row.get::<_, String>(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(ids)
+fn product_records_naming(
+    connection: &Connection,
+    survivor: &ProjectId,
+    retired: &ProjectId,
+) -> Result<Vec<String>> {
+    Ok(reanchored_product_records(connection, survivor, retired)?
+        .into_iter()
+        .map(|record| record.id)
+        .collect())
 }
 
 fn unfinished_jobs(connection: &Connection, retired: &ProjectId) -> Result<Vec<String>> {
@@ -1256,10 +1266,15 @@ pub struct MergeOutcome {
     pub audit: ProjectMergeAudit,
     /// The retired project's checkout paths, whose pins the client rewrites.
     pub checkouts_to_repin: Vec<String>,
-    /// Checkout paths the client re-indexes, in order.
-    pub reindex_paths: Vec<String>,
+    /// The one checkout the client re-indexes (see [`primary_checkout`]).
+    pub reindex_path: Option<String>,
     /// Memory anchors still waiting for the re-index.
     pub pending_anchors: u64,
+    /// The checkout a completed follow-up re-indexed after the merge, as
+    /// recorded by its `PROJECT_MERGE_FINALIZED` event. A repeated merge
+    /// skips the re-index then.
+    #[serde(default)]
+    pub reindexed: Option<String>,
 }
 
 /// Merge `retired` into `survivor` in one canonical transaction, or report
@@ -1323,8 +1338,9 @@ pub fn execute(database: &Database, input: &MergeExecution) -> Result<MergeOutco
             repaired_view: views.repaired,
             retired_views: views.retired,
             checkouts_to_repin: retired_party.checkouts.clone(),
-            reindex_paths: reindex_order(&retired_party.checkouts, &survivor_party.checkouts),
+            reindex_path: primary_checkout(&survivor_party.checkouts, &retired_party.checkouts),
             pending_anchors: pending_anchor_count(transaction, survivor)?,
+            reindexed: None,
             audit,
         })
     })
@@ -1384,14 +1400,20 @@ pub fn earlier_merge(
     if project_state(connection, retired)? != Some(ProjectState::Merged(survivor.clone())) {
         return Ok(None);
     }
-    let Some((event_id, payload)) = connection
+    let Some((event_id, payload, sequence)) = connection
         .query_row(
-            "SELECT id, payload_json FROM events
+            "SELECT id, payload_json, sequence FROM events
              WHERE event_type = 'PROJECTS_MERGED'
                AND json_extract(payload_json, '$.data.retired_project_id') = ?1
              ORDER BY sequence DESC LIMIT 1",
             [retired.as_str()],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
         )
         .optional()?
     else {
@@ -1429,8 +1451,9 @@ pub fn earlier_merge(
         repaired_view,
         retired_views,
         checkouts_to_repin: audit.moved_aliases.clone(),
-        reindex_paths: reindex_order(&audit.moved_aliases, &survivor_others),
+        reindex_path: primary_checkout(&survivor_others, &audit.moved_aliases),
         pending_anchors: pending_anchor_count(connection, survivor)?,
+        reindexed: reindexed_after(connection, survivor, sequence)?,
         audit: *audit,
     }))
 }
@@ -1572,15 +1595,7 @@ fn move_rows(
                 params![s, r],
             )?;
         }
-        // The stored request is compared byte for byte on a repeated sample,
-        // which now arrives with the survivor's id.
-        "resource_usage" => {
-            transaction.execute(
-                "UPDATE resource_usage SET request_json = replace(request_json, ?3, ?4)
-                 WHERE project_id = ?2",
-                params![s, r, format!("\"{r}\""), format!("\"{s}\"")],
-            )?;
-        }
+        "resource_usage" => rescope_usage_requests(transaction, survivor, retired)?,
         _ => {}
     }
     let moved = transaction.execute(
@@ -1591,6 +1606,49 @@ fn move_rows(
         params![s, r],
     )?;
     add(&mut audit.moved, table, moved);
+    Ok(())
+}
+
+/// A stored usage request is compared byte for byte with a repeated sample,
+/// which now carries the survivor's id. Only its `project_id` field changes:
+/// it is re-serialized exactly as the recorder serializes requests, so a
+/// resent sample still matches.
+fn rescope_usage_requests(
+    transaction: &Transaction<'_>,
+    survivor: &ProjectId,
+    retired: &ProjectId,
+) -> Result<()> {
+    let rows = {
+        let mut statement = transaction
+            .prepare("SELECT rowid, request_json FROM resource_usage WHERE project_id = ?1")?;
+        statement
+            .query_map([retired.as_str()], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    for (rowid, request_json) in rows {
+        match serde_json::from_str::<crate::effectiveness::UsageRecordRequest>(&request_json) {
+            Ok(mut request) if request.project_id == *retired => {
+                request.project_id = survivor.clone();
+                transaction.execute(
+                    "UPDATE resource_usage SET request_json = ?2 WHERE rowid = ?1",
+                    params![rowid, serde_json::to_string(&request)?],
+                )?;
+            }
+            Ok(_) => {}
+            // A request stored by another build: rewrite the field in place.
+            Err(_) => {
+                transaction.execute(
+                    "UPDATE resource_usage SET request_json = json_set(request_json,
+                         '$.project_id', ?2)
+                     WHERE rowid = ?1 AND json_valid(request_json)
+                       AND json_extract(request_json, '$.project_id') = ?3",
+                    params![rowid, survivor.as_str(), retired.as_str()],
+                )?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1795,20 +1853,28 @@ fn carry_anchors(
     Ok((remapped, pending))
 }
 
-/// Re-anchor product knowledge that names the retired project: its id (and
-/// `repo:` references) become the survivor's, and anchors on its symbols
-/// move to the survivor's symbol with the same stable identity when one is
-/// indexed. Each changed record gets a new revision; unresolved symbol
-/// anchors then read as needing review.
-fn reanchor_product_records(
-    transaction: &Transaction<'_>,
+/// A product record whose typed references a merge re-points.
+struct ReanchoredRecord {
+    id: String,
+    version: i64,
+    archived: bool,
+    document: String,
+    stamps: String,
+}
+
+/// Product records with typed references to the retired project (see
+/// [`redirect_project_references`]) and their re-pointed documents. A symbol
+/// anchor (`node_id`) on the retired project's index moves to the survivor's
+/// active symbol with the same stable identity; without one it stays and the
+/// record reads as needing review. Ids that appear only in text are left
+/// alone, and such records are not touched.
+fn reanchored_product_records(
+    connection: &Connection,
     survivor: &ProjectId,
     retired: &ProjectId,
-    now: i64,
-    audit: &mut ProjectMergeAudit,
-) -> Result<()> {
-    let records = {
-        let mut statement = transaction.prepare(
+) -> Result<Vec<ReanchoredRecord>> {
+    let candidates = {
+        let mut statement = connection.prepare(
             "SELECT id, version, document_json, stamps_json, archived FROM product_records
              WHERE instr(document_json, ?1) > 0 OR instr(stamps_json, ?1) > 0 ORDER BY id",
         )?;
@@ -1824,106 +1890,154 @@ fn reanchor_product_records(
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?
     };
-    for (id, version, document, stamps, archived) in records {
+    let projects = BTreeMap::from([(retired.to_string(), survivor.to_string())]);
+    let mut records = Vec::new();
+    for (id, version, document, stamps, archived) in candidates {
         let mut document: serde_json::Value = serde_json::from_str(&document)?;
         let mut stamps: serde_json::Value = serde_json::from_str(&stamps)?;
-        let mut replacements = BTreeMap::from([
-            (retired.to_string(), survivor.to_string()),
-            (format!("repo:{retired}"), format!("repo:{survivor}")),
-        ]);
-        let mut strings = BTreeSet::new();
-        collect_strings(&document, &mut strings);
-        collect_strings(&stamps, &mut strings);
-        for text in strings {
-            if NodeId::parse(&text).is_err() {
-                continue;
-            }
-            let counterpart: Option<String> = transaction
+        let mut changed = redirect_project_references(&mut document, &projects);
+        changed |= redirect_project_references(&mut stamps, &projects);
+        let mut anchored = BTreeSet::new();
+        collect_node_ids(&document, &mut anchored);
+        collect_node_ids(&stamps, &mut anchored);
+        let mut nodes = BTreeMap::new();
+        for node in anchored {
+            let counterpart: Option<String> = connection
                 .query_row(
                     "SELECT s.id FROM nodes r
                      JOIN nodes s ON s.project_id = ?3 AND s.stable_key = r.stable_key
+                                 AND s.tombstoned_at_ms IS NULL
                      WHERE r.id = ?1 AND r.project_id = ?2",
-                    params![text, retired.as_str(), survivor.as_str()],
+                    params![node, retired.as_str(), survivor.as_str()],
                     |row| row.get(0),
                 )
                 .optional()?;
             if let Some(counterpart) = counterpart {
-                replacements.insert(text, counterpart);
+                nodes.insert(node, counterpart);
             }
         }
-        replace_strings(&mut document, &replacements);
-        replace_strings(&mut stamps, &replacements);
-        let next = version.saturating_add(1);
-        let (document, stamps) = (
-            serde_json::to_string(&document)?,
-            serde_json::to_string(&stamps)?,
-        );
+        changed |= remap_node_ids(&mut document, &nodes);
+        changed |= remap_node_ids(&mut stamps, &nodes);
+        if changed {
+            records.push(ReanchoredRecord {
+                id,
+                version,
+                archived,
+                document: serde_json::to_string(&document)?,
+                stamps: serde_json::to_string(&stamps)?,
+            });
+        }
+    }
+    Ok(records)
+}
+
+/// Write re-anchored product records, each as a new revision.
+fn reanchor_product_records(
+    transaction: &Transaction<'_>,
+    survivor: &ProjectId,
+    retired: &ProjectId,
+    now: i64,
+    audit: &mut ProjectMergeAudit,
+) -> Result<()> {
+    for record in reanchored_product_records(transaction, survivor, retired)? {
+        let next = record.version.saturating_add(1);
         transaction.execute(
             "UPDATE product_records SET version = ?2, document_json = ?3, stamps_json = ?4,
                  updated_at_ms = ?5 WHERE id = ?1",
-            params![id, next, document, stamps, now],
+            params![record.id, next, record.document, record.stamps, now],
         )?;
         transaction.execute(
             "INSERT INTO product_revisions
                  (record_id, version, document_json, stamps_json, archived, recorded_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, next, document, stamps, archived, now],
+            params![
+                record.id,
+                next,
+                record.document,
+                record.stamps,
+                record.archived,
+                now
+            ],
         )?;
-        audit.product_records.push(id);
+        audit.product_records.push(record.id);
     }
     Ok(())
 }
 
-fn collect_strings(value: &serde_json::Value, strings: &mut BTreeSet<String>) {
+fn collect_node_ids(value: &serde_json::Value, nodes: &mut BTreeSet<String>) {
     match value {
-        serde_json::Value::String(text) => {
-            strings.insert(text.clone());
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                match child {
+                    serde_json::Value::String(text) if key == "node_id" => {
+                        nodes.insert(text.clone());
+                    }
+                    _ => collect_node_ids(child, nodes),
+                }
+            }
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                collect_strings(item, strings);
-            }
-        }
-        serde_json::Value::Object(map) => {
-            for item in map.values() {
-                collect_strings(item, strings);
+                collect_node_ids(item, nodes);
             }
         }
         _ => {}
     }
 }
 
-fn replace_strings(value: &mut serde_json::Value, replacements: &BTreeMap<String, String>) {
+fn remap_node_ids(value: &mut serde_json::Value, nodes: &BTreeMap<String, String>) -> bool {
+    let mut changed = false;
     match value {
-        serde_json::Value::String(text) => {
-            if let Some(replacement) = replacements.get(text.as_str()) {
-                text.clone_from(replacement);
+        serde_json::Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                match child {
+                    serde_json::Value::String(text) if key == "node_id" => {
+                        if let Some(node) = nodes.get(text.as_str()) {
+                            text.clone_from(node);
+                            changed = true;
+                        }
+                    }
+                    _ => changed |= remap_node_ids(child, nodes),
+                }
             }
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                replace_strings(item, replacements);
-            }
-        }
-        serde_json::Value::Object(map) => {
-            for item in map.values_mut() {
-                replace_strings(item, replacements);
+                changed |= remap_node_ids(item, nodes);
             }
         }
         _ => {}
     }
+    changed
 }
 
 // ---------------------------------------------------------------------------
 // Finalize
 // ---------------------------------------------------------------------------
 
+/// What a [`finalize`] call is for.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct FinalizeOptions {
+    /// Attach waiting memory anchors, or mark their memories for
+    /// revalidation. Leave false while the survivor's re-index has not run.
+    pub resolve_anchors: bool,
+    /// The checkout the client re-indexed for this follow-up, recorded so a
+    /// repeated merge can skip the re-index.
+    pub reindexed: Option<String>,
+    /// `after_merge` or `client`, recorded in the audit event.
+    pub trigger: String,
+}
+
 /// Result of [`finalize`].
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct FinalizeOutcome {
     pub survivor: Option<ProjectId>,
-    /// Rows written under a retired id after its merge, now re-scoped.
+    /// Rows written under a retired id after its merge, re-scoped now.
     pub stragglers: BTreeMap<String, u64>,
+    /// All such rows since the latest merge into the survivor, including
+    /// those the daemon re-scoped on its own right after the merge.
+    #[serde(default)]
+    pub stragglers_since_merge: BTreeMap<String, u64>,
     pub anchors_remapped: u64,
     /// Memories whose anchors did not survive, marked suspect (revalidate).
     pub revalidate: Vec<MemoryId>,
@@ -1931,10 +2045,11 @@ pub struct FinalizeOutcome {
     pub pending_anchors: u64,
 }
 
-/// Finish merges into `survivor` after its re-index: re-scope rows written
-/// under a retired id since the merge, and, with `resolve_anchors`, attach
-/// each waiting memory anchor to the survivor's symbol with the same stable
-/// identity, or mark its memory suspect for revalidation. Never promotes.
+/// Finish merges into `survivor`: re-scope rows written under a retired id
+/// since its merge and, with `resolve_anchors`, attach each waiting memory
+/// anchor to the survivor's active symbol with the same stable identity or
+/// mark its memory suspect for revalidation (never promoting it). What it did
+/// is recorded in a `PROJECT_MERGE_FINALIZED` event.
 ///
 /// # Errors
 ///
@@ -1942,7 +2057,7 @@ pub struct FinalizeOutcome {
 pub fn finalize(
     database: &Database,
     survivor: &ProjectId,
-    resolve_anchors: bool,
+    options: &FinalizeOptions,
 ) -> Result<FinalizeOutcome> {
     let now = now_ms();
     database.write_immediate(|transaction| {
@@ -1969,12 +2084,87 @@ pub fn finalize(
                 }
             }
         }
-        if resolve_anchors {
+        if options.resolve_anchors {
             resolve_pending_anchors(transaction, survivor, now, &mut outcome)?;
         }
         outcome.pending_anchors = pending_anchor_count(transaction, survivor)?;
+        let changed = !outcome.stragglers.is_empty()
+            || outcome.anchors_remapped > 0
+            || !outcome.revalidate.is_empty();
+        if changed || options.reindexed.is_some() {
+            append_generated_in_transaction(
+                transaction,
+                &DomainEvent::ProjectMergeFinalized {
+                    project_id: survivor.clone(),
+                    trigger: options.trigger.clone(),
+                    stragglers: outcome.stragglers.clone(),
+                    anchors_remapped: outcome.anchors_remapped,
+                    revalidated: outcome.revalidate.clone(),
+                    reindexed: options.reindexed.clone(),
+                },
+                now,
+            )?;
+        }
+        outcome.stragglers_since_merge = stragglers_since_merge(transaction, survivor)?;
         Ok(outcome)
     })
+}
+
+/// `PROJECT_MERGE_FINALIZED` events since the latest merge into `survivor`.
+fn finalized_since_merge(
+    connection: &Connection,
+    survivor: &ProjectId,
+) -> Result<Vec<(i64, DomainEvent)>> {
+    let mut statement = connection.prepare(
+        "SELECT sequence, payload_json FROM events
+         WHERE event_type = 'PROJECT_MERGE_FINALIZED' AND project_id = ?1
+           AND sequence > coalesce((SELECT max(sequence) FROM events
+                                    WHERE event_type = 'PROJECTS_MERGED' AND project_id = ?1), 0)
+         ORDER BY sequence",
+    )?;
+    let rows = statement
+        .query_map([survivor.as_str()], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|(sequence, payload)| Ok((sequence, serde_json::from_str(&payload)?)))
+        .collect()
+}
+
+fn stragglers_since_merge(
+    connection: &Connection,
+    survivor: &ProjectId,
+) -> Result<BTreeMap<String, u64>> {
+    let mut totals = BTreeMap::new();
+    for (_, event) in finalized_since_merge(connection, survivor)? {
+        if let DomainEvent::ProjectMergeFinalized { stragglers, .. } = event {
+            for (table, rows) in stragglers {
+                *totals.entry(table).or_default() += rows;
+            }
+        }
+    }
+    Ok(totals)
+}
+
+/// The checkout a follow-up re-indexed after the merge at `merge_sequence`,
+/// when a recorded follow-up finished it and no anchor waits any more.
+fn reindexed_after(
+    connection: &Connection,
+    survivor: &ProjectId,
+    merge_sequence: i64,
+) -> Result<Option<String>> {
+    if pending_anchor_count(connection, survivor)? > 0 {
+        return Ok(None);
+    }
+    Ok(finalized_since_merge(connection, survivor)?
+        .into_iter()
+        .filter(|(sequence, _)| *sequence > merge_sequence)
+        .filter_map(|(_, event)| match event {
+            DomainEvent::ProjectMergeFinalized { reindexed, .. } => reindexed,
+            _ => None,
+        })
+        .next_back())
 }
 
 fn resolve_pending_anchors(
@@ -1987,7 +2177,7 @@ fn resolve_pending_anchors(
         let mut statement = transaction.prepare(
             "SELECT a.memory_id, a.stable_key, a.observed_digest,
                     (SELECT n.id FROM nodes n WHERE n.project_id = a.project_id
-                     AND n.stable_key = a.stable_key)
+                     AND n.stable_key = a.stable_key AND n.tombstoned_at_ms IS NULL)
              FROM project_merge_anchors a WHERE a.project_id = ?1
              ORDER BY a.memory_id, a.stable_key",
         )?;
@@ -2093,49 +2283,132 @@ pub fn redirects(connection: &Connection) -> Result<BTreeMap<String, String>> {
     Ok(resolved)
 }
 
-/// Replace every JSON string that is exactly a retired project id (or a
-/// `repo:` reference to one) with its survivor's. Ids have a fixed length,
-/// so the bytes are rewritten in place and stay valid JSON. Returns `None`
-/// when nothing matched.
-#[must_use]
-pub fn redirect_json_bytes(body: &[u8], redirects: &BTreeMap<String, String>) -> Option<Vec<u8>> {
-    let mut rewritten: Option<Vec<u8>> = None;
-    for (retired, survivor) in redirects {
-        if retired.len() != survivor.len() {
-            continue;
-        }
-        for (from, to) in [
-            (format!("\"{retired}\""), format!("\"{survivor}\"")),
-            (
-                format!("\"repo:{retired}\""),
-                format!("\"repo:{survivor}\""),
-            ),
-        ] {
-            let current = rewritten.as_deref().unwrap_or(body);
-            let positions = find_all(current, from.as_bytes());
-            if positions.is_empty() {
-                continue;
-            }
-            let mut bytes = current.to_vec();
-            for position in positions {
-                bytes[position..position + to.len()].copy_from_slice(to.as_bytes());
-            }
-            rewritten = Some(bytes);
-        }
-    }
-    rewritten
+/// Keys whose string value is a project id, in requests and product records.
+const PROJECT_ID_KEYS: &[&str] = &[
+    "project_id",
+    "linked_project_id",
+    "target_project_id",
+    "parent_project_id",
+    "source_project_id",
+];
+
+/// Keys whose string value may be a product entity reference to a
+/// repository, `repo:<project id>`.
+const ENTITY_REFERENCE_KEYS: &[&str] = &["entity_id", "parent_id", "source_id", "target_id"];
+
+/// Point the typed project references in `value` that name a retired project
+/// at its survivor: string values of the [`PROJECT_ID_KEYS`], elements of
+/// `project_ids`, a `scope_id` beside `"scope_type": "project"`, and
+/// `repo:<id>` references in the [`ENTITY_REFERENCE_KEYS`]. Every other
+/// string is left alone, whatever it contains: prompts, commands, artifacts,
+/// metadata, fact values and notes keep their text. Returns whether anything
+/// changed.
+pub fn redirect_project_references(
+    value: &mut serde_json::Value,
+    redirects: &BTreeMap<String, String>,
+) -> bool {
+    let mut changed = false;
+    redirect_value(value, redirects, &mut changed);
+    changed
 }
 
-fn find_all(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return Vec::new();
+fn redirect_value(
+    value: &mut serde_json::Value,
+    redirects: &BTreeMap<String, String>,
+    changed: &mut bool,
+) {
+    use serde_json::Value;
+    match value {
+        Value::Object(map) => {
+            let project_scope = map.get("scope_type").and_then(Value::as_str) == Some("project");
+            for (key, child) in map.iter_mut() {
+                let key = key.as_str();
+                match child {
+                    Value::String(text)
+                        if PROJECT_ID_KEYS.contains(&key)
+                            || (key == "scope_id" && project_scope) =>
+                    {
+                        redirect_id(text, redirects, changed);
+                    }
+                    Value::String(text) if ENTITY_REFERENCE_KEYS.contains(&key) => {
+                        let replacement = text
+                            .strip_prefix("repo:")
+                            .and_then(|id| redirects.get(id))
+                            .map(|survivor| format!("repo:{survivor}"));
+                        if let Some(replacement) = replacement {
+                            *text = replacement;
+                            *changed = true;
+                        }
+                    }
+                    Value::Array(items) if key == "project_ids" => {
+                        for item in items {
+                            if let Value::String(text) = item {
+                                redirect_id(text, redirects, changed);
+                            }
+                        }
+                    }
+                    _ => redirect_value(child, redirects, changed),
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redirect_value(item, redirects, changed);
+            }
+        }
+        _ => {}
     }
-    haystack
-        .windows(needle.len())
-        .enumerate()
-        .filter(|(_, window)| *window == needle)
-        .map(|(position, _)| position)
-        .collect()
+}
+
+fn redirect_id(text: &mut String, redirects: &BTreeMap<String, String>, changed: &mut bool) {
+    if let Some(survivor) = redirects.get(text.as_str()) {
+        text.clone_from(survivor);
+        *changed = true;
+    }
+}
+
+/// A JSON request body with its typed project references redirected (see
+/// [`redirect_project_references`]); `None` when nothing changed or the body
+/// is not JSON. Bodies that do not contain a retired id at all are not
+/// parsed.
+#[must_use]
+pub fn redirect_request_body(body: &[u8], redirects: &BTreeMap<String, String>) -> Option<Vec<u8>> {
+    let mentions_retired = redirects.keys().any(|retired| {
+        let needle = retired.as_bytes();
+        !needle.is_empty() && body.windows(needle.len()).any(|window| window == needle)
+    });
+    if !mentions_retired {
+        return None;
+    }
+    let mut value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    if !redirect_project_references(&mut value, redirects) {
+        return None;
+    }
+    serde_json::to_vec(&value).ok()
+}
+
+/// The active survivor that `id` was merged into, following later merges;
+/// `None` when `id` was never merged.
+///
+/// # Errors
+///
+/// Returns storage errors.
+pub fn survivor_of(connection: &Connection, id: &ProjectId) -> Result<Option<ProjectId>> {
+    let mut current = id.clone();
+    for hops in 0..16 {
+        let next: Option<Option<String>> = connection
+            .query_row(
+                "SELECT merged_into FROM projects WHERE id = ?1",
+                [current.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match next.flatten() {
+            Some(survivor) => current = ProjectId::parse(&survivor)?,
+            None => return Ok((hops > 0).then_some(current)),
+        }
+    }
+    Ok(None)
 }
 
 fn now_ms() -> i64 {

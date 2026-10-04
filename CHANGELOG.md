@@ -65,14 +65,21 @@ not yet stable, and the schema version is 7.
   transaction re-scopes every project-keyed table by an explicit role that
   is checked against the schema (a new project-keyed table without a role
   makes merges refuse, and a test fails): rows move, the retired structural
-  index is dropped and rebuilt by a re-index of every checkout, events stay
-  as history, collisions follow recorded rules, and a `PROJECTS_MERGED`
-  event plus a tombstone naming the survivor make replay reproduce the
-  result. The CLI rewrites the retired checkouts' pins and re-indexes;
-  memory anchors are re-attached by stable symbol identity or their
-  memories are marked for revalidation. Requests and pins that still carry
-  the retired id resolve to the survivor. Migration 0021 adds the tombstone
-  column, waiting anchors and the indexes that make dropping nodes fast.
+  index is dropped, events stay as history, collisions follow recorded
+  rules, and a `PROJECTS_MERGED` event plus a tombstone naming the survivor
+  make replay reproduce the result. The CLI rewrites the retired checkouts'
+  pins, re-indexes the survivor once from its primary checkout (scanning
+  other trees would quarantine memories through drift detection) and
+  finalizes: memory anchors are re-attached to active symbols with the same
+  stable identity or their memories are marked for revalidation, and rows
+  queued under the retired id are moved, each run audited in a
+  `PROJECT_MERGE_FINALIZED` event. Requests and pins that still carry the
+  retired id resolve to the survivor; only typed project references are
+  rewritten, never prompts, commands, artifacts or other text, and the
+  redirect is installed by the merge job itself, so a disconnected client
+  cannot skip it. A repeated merge skips completed steps. Migration 0021
+  adds the tombstone column, waiting anchors and the indexes that make
+  dropping nodes fast.
 - The V1 product: a local-first, evidence-grounded engineering world model for
   coding agents. A per-user Rust daemon (`lebd`) owns all mutation ordering
   behind a single bounded priority writer with a bounded reader pool, keeping
@@ -184,6 +191,10 @@ not yet stable, and the schema version is 7.
 
 ### Fixed
 
+- An interrupted backup (`engram backup create`, daily and pre-merge
+  backups) no longer leaves a partial, world-readable file that looks like a
+  backup: the copy is written to a hidden 0600 file and renamed when
+  complete.
 - A second daemon could start while the first was still draining: the first
   closed its listener at once, a hook auto-started another daemon, and both
   held the database (a new build migrated under the old one, and job recovery

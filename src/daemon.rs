@@ -477,9 +477,13 @@ pub enum ProjectMergeResponse {
 pub struct MergeFinalizeRequest {
     pub project_id: ProjectId,
     /// Attach waiting memory anchors, or mark their memories for
-    /// revalidation. Leave false while some checkout could not be re-indexed.
+    /// revalidation. Leave false while the survivor could not be re-indexed.
     #[serde(default)]
     pub resolve_anchors: bool,
+    /// The checkout this follow-up re-indexed; recorded so a repeated merge
+    /// can skip the re-index.
+    #[serde(default)]
+    pub reindexed: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2591,8 +2595,10 @@ async fn drain_gate(
 
 /// Redirect requests that still carry a merged project id (a stale pin, a
 /// hook sidecar written before the merge, an MCP client that cached it) to
-/// its survivor: JSON strings that are exactly a merged id are rewritten in
-/// place. The merge endpoints themselves see the ids they were given.
+/// its survivor. Only typed project references are rewritten (see
+/// [`crate::merge::redirect_project_references`]); prompts, commands,
+/// artifacts and other text keep every byte. The merge endpoints themselves
+/// see the ids they were given.
 async fn redirect_merged_projects(
     State(state): State<DaemonState>,
     request: axum::extract::Request,
@@ -2624,7 +2630,7 @@ async fn redirect_merged_projects(
         }
         .into_response();
     };
-    let bytes = crate::merge::redirect_json_bytes(&bytes, &redirects).map_or(bytes, Bytes::from);
+    let bytes = crate::merge::redirect_request_body(&bytes, &redirects).map_or(bytes, Bytes::from);
     next.run(axum::extract::Request::from_parts(
         parts,
         axum::body::Body::from(bytes),
@@ -2694,6 +2700,7 @@ async fn merge_projects(
     .await?;
     let plan = match prepared {
         PreparedMerge::AlreadyMerged(outcome) => {
+            reload_merged_projects(&state);
             return Ok(Json(ProjectMergeResponse::AlreadyMerged { outcome }));
         }
         PreparedMerge::Ready(plan) if dry_run => {
@@ -2722,23 +2729,14 @@ async fn merge_projects(
         identity: plan.identity.clone(),
         backup_path: Some(backup.display().to_string()),
     };
-    let database = state.database.clone();
-    // One scheduler job: no write lands between the backup and the merge.
+    let job_state = state.clone();
     let handle = state
         .scheduler
         .submit(MutationPriority::CorrectnessCritical, move || {
-            let earlier = database.with_reader(|connection| {
-                crate::merge::earlier_merge(connection, &input.survivor, &input.retired)
-            })?;
-            if let Some(outcome) = earlier {
-                return Ok((outcome, false));
-            }
-            database.backup(&backup)?;
-            crate::merge::execute(&database, &input).map(|outcome| (outcome, true))
+            merge_job(&job_state, &input, &backup)
         })
         .map_err(|error| ApiError::from_core(&error))?;
     let (outcome, merged) = wait_for_mutation(&state, handle).await?;
-    after_merge(&state, &outcome);
     let outcome = Box::new(outcome);
     Ok(Json(if merged {
         ProjectMergeResponse::Merged { outcome }
@@ -2747,10 +2745,30 @@ async fn merge_projects(
     }))
 }
 
-/// Make a committed merge visible: redirect its retired id from now on,
-/// invalidate cached graph reads, re-scope writes queued behind the merge,
-/// and re-embed model vectors the merge dropped.
-fn after_merge(state: &DaemonState, outcome: &crate::merge::MergeOutcome) {
+/// The scheduler job of an executed merge: the backup, the merge
+/// transaction, and making the merge visible. Nothing writes between the
+/// backup and the transaction, and the job finishes (redirects included)
+/// even when the client that asked for it has disconnected.
+fn merge_job(
+    state: &DaemonState,
+    input: &crate::merge::MergeExecution,
+    backup: &Path,
+) -> Result<(crate::merge::MergeOutcome, bool)> {
+    let earlier = state.database.with_reader(|connection| {
+        crate::merge::earlier_merge(connection, &input.survivor, &input.retired)
+    })?;
+    if let Some(outcome) = earlier {
+        reload_merged_projects(state);
+        return Ok((outcome, false));
+    }
+    state.database.backup(backup)?;
+    let outcome = crate::merge::execute(&state.database, input)?;
+    after_merge(state, &outcome);
+    Ok((outcome, true))
+}
+
+/// Load the survivor of every merged project id into the request redirect.
+fn reload_merged_projects(state: &DaemonState) {
     match state.database.with_reader(crate::merge::redirects) {
         Ok(redirects) => {
             if let Ok(mut guard) = state.merged_projects.write() {
@@ -2759,17 +2777,45 @@ fn after_merge(state: &DaemonState, outcome: &crate::merge::MergeOutcome) {
         }
         Err(error) => eprintln!("engramd: could not reload merged project ids: {error}"),
     }
+}
+
+/// Make a committed merge visible: redirect its retired id from now on,
+/// invalidate cached graph reads, re-scope writes queued behind the merge
+/// (recorded in an audit event and logged), and re-embed model vectors the
+/// merge dropped.
+fn after_merge(state: &DaemonState, outcome: &crate::merge::MergeOutcome) {
+    reload_merged_projects(state);
     if let Some(cache) = &state.world_cache {
         cache.bump(&outcome.survivor);
         cache.bump(&outcome.retired);
     }
     let database = state.database.clone();
     let survivor = outcome.survivor.clone();
-    let _ = state
+    let swept = state
         .scheduler
         .submit(MutationPriority::Analytics, move || {
-            crate::merge::finalize(&database, &survivor, false).map(drop)
+            let swept = crate::merge::finalize(
+                &database,
+                &survivor,
+                &crate::merge::FinalizeOptions {
+                    trigger: "after_merge".to_owned(),
+                    ..crate::merge::FinalizeOptions::default()
+                },
+            )?;
+            if !swept.stragglers.is_empty() {
+                eprintln!(
+                    "engramd: moved rows written under a merged id to {survivor}: {:?}",
+                    swept.stragglers
+                );
+            }
+            Ok(())
         });
+    if let Err(error) = swept {
+        eprintln!(
+            "engramd: could not queue the post-merge sweep ({error}); the merge command's \
+             last step runs it"
+        );
+    }
     let dropped_vectors = outcome
         .audit
         .rebuilt
@@ -2799,13 +2845,19 @@ async fn finalize_merge(
 ) -> std::result::Result<Json<crate::merge::FinalizeOutcome>, ApiError> {
     let database = state.database.clone();
     let survivor = request.project_id.clone();
+    let options = crate::merge::FinalizeOptions {
+        resolve_anchors: request.resolve_anchors,
+        reindexed: request.reindexed.clone(),
+        trigger: "client".to_owned(),
+    };
     let handle = state
         .scheduler
         .submit(MutationPriority::CorrectnessCritical, move || {
-            crate::merge::finalize(&database, &survivor, request.resolve_anchors)
+            crate::merge::finalize(&database, &survivor, &options)
         })
         .map_err(|error| ApiError::from_core(&error))?;
     let outcome = wait_for_mutation(&state, handle).await?;
+    reload_merged_projects(&state);
     if let Some(cache) = &state.world_cache {
         cache.bump(&request.project_id);
     }
@@ -5693,6 +5745,82 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("daemon did not become ready");
+    }
+
+    fn bare_state(config: Config) -> DaemonState {
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        DaemonState {
+            database: Database::open(&config.storage.db_path).expect("database"),
+            redactor: Redactor::new(&config.security.custom_redaction_patterns).expect("redactor"),
+            config: Arc::new(config),
+            scheduler: MutationScheduler::start(64),
+            blocking_slots: Arc::new(Semaphore::new(2)),
+            background_slots: Arc::new(Semaphore::new(1)),
+            judge_slot: Arc::new(Semaphore::new(1)),
+            judge_stopping: Arc::new(AtomicBool::new(false)),
+            world_cache: None,
+            metrics: Arc::new(MetricsRegistry::default()),
+            shutdown: Arc::new(tokio::sync::Notify::new()),
+            started: Instant::now(),
+            draining: Arc::new(AtomicBool::new(false)),
+            in_flight: Arc::new(AtomicUsize::new(0)),
+            merged_projects: MergedProjects::default(),
+        }
+    }
+
+    /// The merge job itself makes the merge visible, so a client that
+    /// disconnects while it runs (the handler is dropped then) cannot leave
+    /// the retired id without its redirect. A repeated merge reloads it too.
+    #[test]
+    fn the_merge_job_installs_redirects_without_the_handler() {
+        let temp = TempDir::new().expect("temp dir");
+        let state = bare_state(test_config(&temp));
+        let events = crate::events::EventStore::new(state.database.clone());
+        let survivor = ProjectId::parse("prj_aaaaaaaa-0000-4000-8000-000000000001").expect("id");
+        let retired = ProjectId::parse("prj_bbbbbbbb-0000-4000-8000-000000000002").expect("id");
+        for (project, name) in [(&survivor, "app"), (&retired, "app-copy")] {
+            events
+                .append(&crate::events::DomainEvent::ProjectRegistered {
+                    project_id: project.clone(),
+                    name: name.to_owned(),
+                    canonical_remote: None,
+                    root_commit: None,
+                    parent_project_id: None,
+                })
+                .expect("register");
+        }
+        let input = crate::merge::MergeExecution {
+            survivor: survivor.clone(),
+            retired: retired.clone(),
+            identity: crate::merge::IdentityEvidence {
+                same_repository: true,
+                canonical_remote: Some("example.com/org/app".to_owned()),
+                root_commit: Some("0123456789abcdef".to_owned()),
+                checkouts: Vec::new(),
+                refusal: None,
+            },
+            backup_path: None,
+        };
+        let backup = temp.path().join("backups/pre-merge.sqlite");
+        let redirect = |state: &DaemonState| {
+            state
+                .merged_projects
+                .read()
+                .expect("redirects")
+                .get(retired.as_str())
+                .cloned()
+        };
+        let (_, merged) = merge_job(&state, &input, &backup).expect("merge job");
+        assert!(merged);
+        assert!(backup.is_file(), "the backup comes first");
+        assert_eq!(redirect(&state).as_deref(), Some(survivor.as_str()));
+
+        // A restarted daemon, or one that lost the map: the repeated merge
+        // reports the earlier merge and installs the redirect again.
+        *state.merged_projects.write().expect("redirects") = Arc::default();
+        let (_, merged_again) = merge_job(&state, &input, &backup).expect("repeat");
+        assert!(!merged_again);
+        assert_eq!(redirect(&state).as_deref(), Some(survivor.as_str()));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

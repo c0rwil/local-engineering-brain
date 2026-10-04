@@ -155,6 +155,20 @@ pub enum DomainEvent {
         retired_views: Vec<ProjectId>,
         audit: Box<ProjectMergeAudit>,
     },
+    /// Follow-up of merges into `project_id`: rows written under a retired id
+    /// after its merge were re-scoped, waiting memory anchors were resolved,
+    /// and (`reindexed`) the client's re-index after the merge finished.
+    ProjectMergeFinalized {
+        project_id: ProjectId,
+        /// `after_merge` (the daemon, right after the transaction) or
+        /// `client` (the merge command's last step).
+        trigger: String,
+        stragglers: BTreeMap<String, u64>,
+        anchors_remapped: u64,
+        /// Memories marked suspect because an anchor did not survive.
+        revalidated: Vec<MemoryId>,
+        reindexed: Option<String>,
+    },
 }
 
 /// Audit record of one project merge: what moved, what was dropped for a
@@ -246,6 +260,7 @@ impl DomainEvent {
             Self::LearningDistilled { .. } => "LEARNING_DISTILLED",
             Self::ProcedureSynthesized { .. } => "PROCEDURE_SYNTHESIZED",
             Self::ProjectsMerged { .. } => "PROJECTS_MERGED",
+            Self::ProjectMergeFinalized { .. } => "PROJECT_MERGE_FINALIZED",
         }
     }
 
@@ -272,7 +287,8 @@ impl DomainEvent {
             | Self::MemoryPurged { project_id, .. }
             | Self::LearningDistilled { project_id, .. }
             | Self::ProcedureSynthesized { project_id, .. }
-            | Self::ProjectsMerged { project_id, .. } => project_id,
+            | Self::ProjectsMerged { project_id, .. }
+            | Self::ProjectMergeFinalized { project_id, .. } => project_id,
         }
     }
 
@@ -307,7 +323,8 @@ impl DomainEvent {
             | "MEMORY_PURGED"
             | "LEARNING_DISTILLED"
             | "PROCEDURE_SYNTHESIZED"
-            | "PROJECTS_MERGED" => {
+            | "PROJECTS_MERGED"
+            | "PROJECT_MERGE_FINALIZED" => {
                 let event: Self = serde_json::from_str(payload)?;
                 if event.event_type() != event_type {
                     return Err(Error::UnknownEventType {
@@ -638,7 +655,8 @@ impl EventStore {
                 | DomainEvent::MemoryStateChanged { .. }
                 | DomainEvent::MemoryPurged { .. }
                 | DomainEvent::LearningDistilled { .. }
-                | DomainEvent::ProcedureSynthesized { .. } => {}
+                | DomainEvent::ProcedureSynthesized { .. }
+                | DomainEvent::ProjectMergeFinalized { .. } => {}
             }
         }
         Ok(projection)
@@ -883,7 +901,8 @@ fn apply_project_projection(
         | DomainEvent::MemoryStateChanged { .. }
         | DomainEvent::MemoryPurged { .. }
         | DomainEvent::LearningDistilled { .. }
-        | DomainEvent::ProcedureSynthesized { .. } => {}
+        | DomainEvent::ProcedureSynthesized { .. }
+        | DomainEvent::ProjectMergeFinalized { .. } => {}
     }
     Ok(())
 }

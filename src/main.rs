@@ -1232,10 +1232,13 @@ fn run_project(
         }
     };
     if !*json {
-        eprintln!(
-            "Merge recorded. Rewriting pins and re-indexing {} checkout paths...",
-            outcome.reindex_paths.len()
-        );
+        match (&outcome.reindexed, &outcome.reindex_path) {
+            (Some(_), _) => eprintln!("Merge recorded. Checking pins..."),
+            (None, Some(path)) => {
+                eprintln!("Merge recorded. Rewriting pins and re-indexing {path}...");
+            }
+            (None, None) => eprintln!("Merge recorded. Rewriting pins..."),
+        }
     }
     let follow_up = block_on(engram::merge::client::follow_up(&client, &outcome))?;
     if *json {
@@ -1302,6 +1305,7 @@ fn print_merge_preview(
                 true,
             );
             let remaining = outcome.pending_anchors > 0
+                || outcome.reindexed.is_none()
                 || pins.iter().any(|pin| {
                     matches!(
                         pin.state,
@@ -1325,8 +1329,8 @@ fn print_merge_preview(
                 );
                 if remaining {
                     println!(
-                        "Pins or memory anchors still wait; run the same command with --yes to \
-                         finish them."
+                        "Pins, the re-index or memory anchors still wait; run the same command \
+                         with --yes to finish them."
                     );
                 }
             }

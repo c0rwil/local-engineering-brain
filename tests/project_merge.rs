@@ -7,8 +7,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::Duration;
 
-use engram::daemon::{DaemonClient, TaskStartRequest};
+use engram::daemon::{
+    DaemonClient, EvidenceCreateRequest, FactSetRequest, MemoryCreateRequest, TaskStartRequest,
+    WorldSearchRequest,
+};
+use engram::experience::EvidenceStrength;
 use engram::ids::ProjectId;
+use engram::memory::MemoryDraft;
 use tempfile::TempDir;
 
 struct Workspace {
@@ -138,6 +143,65 @@ fn pin_of(checkout: &Path) -> String {
     fs::read_to_string(checkout.join(".engram/project.toml")).expect("pin")
 }
 
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime")
+}
+
+fn scalar(workspace: &Workspace, sql: &str, parameter: &str) -> String {
+    let database = engram::storage::Database::open(workspace.database()).expect("database");
+    database
+        .with_reader(|connection| {
+            connection
+                .query_row(sql, [parameter], |row| row.get(0))
+                .map_err(engram::Error::from)
+        })
+        .expect("query")
+}
+
+/// A survivor memory anchored to the symbol `run` in the survivor's index.
+fn anchored_memory(workspace: &Workspace, survivor: &str) -> String {
+    let client = workspace.client();
+    let project_id = ProjectId::parse(survivor).expect("survivor id");
+    let runtime = runtime();
+    let nodes = runtime
+        .block_on(client.search_world(&WorldSearchRequest {
+            project_id: project_id.clone(),
+            query: "run".to_owned(),
+            limit: 10,
+        }))
+        .expect("search");
+    let run = nodes
+        .iter()
+        .find(|node| node.label == "run")
+        .expect("indexed symbol run");
+    runtime
+        .block_on(client.create_memory(&MemoryCreateRequest {
+            project_id: project_id.clone(),
+            memory: MemoryDraft {
+                scope_type: "project".to_owned(),
+                scope_id: survivor.to_owned(),
+                kind: "lesson".to_owned(),
+                claim: "run starts the synthetic worker".to_owned(),
+                rationale: "synthetic fixture".to_owned(),
+                confidence: 0.4,
+                importance: 0.5,
+                tags: Vec::new(),
+                valid_from_commit: None,
+                valid_to_commit: None,
+                trust_source: "human_stated".to_owned(),
+                evidence_ids: Vec::new(),
+                source_task_ids: Vec::new(),
+                node_ids: vec![run.id.clone()],
+            },
+        }))
+        .expect("memory")
+        .id
+        .to_string()
+}
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn merging_a_duplicate_registration_end_to_end() {
@@ -147,6 +211,34 @@ fn merging_a_duplicate_registration_end_to_end() {
     let (first, survivor) = duplicate_checkout(&workspace, &upstream, "first");
     let (second, retired) = duplicate_checkout(&workspace, &upstream, "second");
     assert_ne!(survivor, retired);
+    // The copy is on another commit where `run` differs. Re-indexing it as
+    // part of the merge would quarantine the survivor's memory about `run`.
+    fs::write(
+        second.join("lib.rs"),
+        "pub fn run() { helper(); }\npub fn helper() {}\n",
+    )
+    .expect("edit");
+    git(
+        &second,
+        &[
+            "-c",
+            "user.email=engram@example.invalid",
+            "-c",
+            "user.name=Engram Tests",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qam",
+            "change run",
+        ],
+    );
+    let indexed = workspace.json(&["index", first.to_str().unwrap(), "--json"]);
+    assert_eq!(
+        indexed["resolved"]["project"]["id"],
+        survivor.as_str(),
+        "{indexed}"
+    );
+    let memory = anchored_memory(&workspace, &survivor);
     // Knowledge recorded under the duplicate id.
     let started = workspace.json(&[
         "task",
@@ -215,25 +307,24 @@ fn merging_a_duplicate_registration_end_to_end() {
     assert!(Path::new(backup).is_file(), "backup at {backup}");
     assert_eq!(merged["follow_up"]["pins"][0]["state"], "rewritten");
     assert!(pin_of(&second).contains(&survivor), "{}", pin_of(&second));
-    let reindexed = merged["follow_up"]["reindex"]
-        .as_array()
-        .expect("reindex")
-        .iter()
-        .map(|result| {
-            (
-                result["path"].as_str().unwrap().to_owned(),
-                result["state"].clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(reindexed.len(), 2, "{reindexed:?}");
+    // One re-index, of the survivor's primary checkout; the copy's tree is
+    // never scanned, so the survivor's memory about `run` stays active.
+    let reindex = &merged["follow_up"]["reindex"];
+    assert_eq!(reindex["state"], "indexed", "{reindex}");
     assert!(
-        reindexed.iter().all(|(_, state)| state == "indexed"),
-        "{reindexed:?}"
+        reindex["path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("first")),
+        "{reindex}"
     );
-    assert!(
-        reindexed[0].0.ends_with("second"),
-        "retired checkouts first"
+    assert_eq!(reindex["quarantined"], 0, "{reindex}");
+    assert_eq!(
+        scalar(
+            &workspace,
+            "SELECT status FROM memories WHERE id = ?1",
+            &memory
+        ),
+        "active"
     );
 
     // The copy now resolves to the survivor and its task moved.
@@ -263,10 +354,7 @@ fn merging_a_duplicate_registration_end_to_end() {
 
     // A client that still sends the retired id (a hook sidecar written before
     // the merge, an MCP client) is redirected to the survivor.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("runtime");
+    let runtime = runtime();
     let stale = runtime
         .block_on(workspace.client().start_task(&TaskStartRequest {
             context_request_id: None,
@@ -276,6 +364,73 @@ fn merging_a_duplicate_registration_end_to_end() {
         }))
         .expect("redirected task");
     assert_eq!(stale.project_id.as_str(), survivor);
+    // Only typed ids move: text that is, or quotes, the retired id is kept.
+    let quoted = format!("see \"{retired}\"");
+    let evidence = runtime
+        .block_on(workspace.client().record_evidence(&EvidenceCreateRequest {
+            project_id: ProjectId::parse(&retired).expect("retired id"),
+            task_id: None,
+            attempt_id: None,
+            kind: "runtime_observation".to_owned(),
+            strength: EvidenceStrength::Observational,
+            commit_hash: None,
+            command: Some(retired.clone()),
+            exit_code: Some(0),
+            artifact_text: quoted.clone(),
+            metadata: serde_json::json!({"label": retired, "quoted": quoted}),
+        }))
+        .expect("evidence");
+    let stored: (String, String, String, String) = {
+        let database = engram::storage::Database::open(workspace.database()).expect("database");
+        database
+            .with_reader(|connection| {
+                connection
+                    .query_row(
+                        "SELECT project_id, command, artifact_text, metadata_json
+                         FROM evidence WHERE id = ?1",
+                        [evidence.id.as_str()],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    )
+                    .map_err(engram::Error::from)
+            })
+            .expect("evidence row")
+    };
+    assert_eq!(stored.0, survivor);
+    assert_eq!(stored.1, retired, "the command keeps its text");
+    assert_eq!(stored.2, quoted, "the artifact keeps its text");
+    let metadata: serde_json::Value = serde_json::from_str(&stored.3).expect("metadata");
+    assert_eq!(metadata["label"], retired.as_str(), "{metadata}");
+    assert_eq!(metadata["quoted"], quoted.as_str(), "{metadata}");
+    let prompt = runtime
+        .block_on(workspace.client().start_task(&TaskStartRequest {
+            context_request_id: None,
+            project_id: ProjectId::parse(&retired).expect("retired id"),
+            session_id: None,
+            prompt: retired.clone(),
+        }))
+        .expect("task");
+    assert_eq!(prompt.project_id.as_str(), survivor);
+    assert_eq!(prompt.prompt, retired, "the prompt keeps its text");
+    let fact = runtime
+        .block_on(workspace.client().set_fact(&FactSetRequest {
+            project_id: ProjectId::parse(&retired).expect("retired id"),
+            key: "storage.note".to_owned(),
+            value: retired.clone(),
+            note: Some(quoted.clone()),
+        }))
+        .expect("fact");
+    assert_eq!(
+        (fact.value.as_str(), fact.note.as_deref()),
+        (retired.as_str(), Some(quoted.as_str()))
+    );
+    assert_eq!(
+        scalar(
+            &workspace,
+            "SELECT project_id FROM project_facts WHERE key = ?1",
+            "storage.note"
+        ),
+        survivor
+    );
 
     // A repeated merge reports the earlier one and has nothing left to do.
     let again = workspace.json(&[
@@ -283,6 +438,7 @@ fn merging_a_duplicate_registration_end_to_end() {
     ]);
     assert_eq!(again["status"], "already_merged", "{again}");
     assert_eq!(again["follow_up"]["complete"], true, "{again}");
+    assert_eq!(again["follow_up"]["reindex"]["state"], "skipped", "{again}");
     assert_eq!(
         again["outcome"]["merge_event_id"],
         merged["outcome"]["merge_event_id"]
@@ -345,5 +501,80 @@ fn checkouts_of_different_repositories_are_never_merged() {
     assert!(
         !backups.exists() || fs::read_dir(&backups).expect("listing").next().is_none(),
         "no backup without a merge"
+    );
+}
+
+/// A client that disconnects while the merge job runs (Ctrl-C during the
+/// backup) must not leave the merged id without its redirect.
+#[test]
+fn redirects_are_installed_when_the_client_disconnects_mid_merge() {
+    use std::io::Write as _;
+    let workspace = Workspace::new();
+    let upstream = workspace.root().join("upstream");
+    commit(&upstream, "pub fn run() {}\n");
+    let (first, survivor) = duplicate_checkout(&workspace, &upstream, "first");
+    let (second, retired) = duplicate_checkout(&workspace, &upstream, "second");
+    let body = serde_json::json!({
+        "into": first.to_str().unwrap(),
+        "from": second.to_str().unwrap(),
+        "dry_run": false,
+    })
+    .to_string();
+    let mut stream = std::os::unix::net::UnixStream::connect(workspace.socket()).expect("connect");
+    write!(
+        stream,
+        "POST /api/v1/projects/merge HTTP/1.1\r\nhost: localhost\r\n\
+         content-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("request");
+    // Hang up as soon as the merge job starts writing its backup.
+    let backups = workspace.root().join("backups");
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while !backups
+        .read_dir()
+        .is_ok_and(|mut entries| entries.next().is_some())
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the merge job never started"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    drop(stream);
+    let merged = || {
+        let database = engram::storage::Database::open(workspace.database()).expect("database");
+        database
+            .with_reader(|connection| {
+                connection
+                    .query_row(
+                        "SELECT merged_into FROM projects WHERE id = ?1",
+                        [retired.as_str()],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .map_err(engram::Error::from)
+            })
+            .expect("project")
+    };
+    while merged().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the merge never committed"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(merged().as_deref(), Some(survivor.as_str()));
+    let stale = runtime()
+        .block_on(workspace.client().start_task(&TaskStartRequest {
+            context_request_id: None,
+            project_id: ProjectId::parse(&retired).expect("retired id"),
+            session_id: None,
+            prompt: "sent with the retired id after a disconnected merge".to_owned(),
+        }))
+        .expect("task");
+    assert_eq!(
+        stale.project_id.as_str(),
+        survivor,
+        "the redirect is in place"
     );
 }

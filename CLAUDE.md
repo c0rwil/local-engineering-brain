@@ -17,7 +17,7 @@ path, ever.
 | Install everything | `sh scripts/install.sh` (versioned releases under `~/.local/share/engram`, symlinks in `~/.local/bin`) |
 | Daemon status / stop / restart | `engram daemon status --json` / `engram daemon stop` (waits for the process to exit, `--wait-secs`) / `engram daemon restart` (new daemon inherits this terminal's env and macOS folder access) |
 | Diagnostics | `engram doctor --json` (daemon-side `checkout_access` and `project_identity`; CLI-side `codex_hooks` trust) |
-| Merge duplicate projects | `engram project merge --into <keep> --from <retire> --dry-run` (deterministic plan, `--json`), then `--yes`: backup, one transaction, pin rewrites, re-index. Table roles in `src/merge.rs` (`TABLE_ROLES`); a new project-keyed table must get one or merges refuse |
+| Merge duplicate projects | `engram project merge --into <keep> --from <retire> --dry-run` (deterministic plan, `--json`), then `--yes`: backup, one transaction, pin rewrites, one re-index of the survivor's primary checkout. Table roles in `src/merge.rs` (`TABLE_ROLES`); a new project-keyed table must get one or merges refuse. Merged-id redirects touch only typed id keys (`redirect_project_references`); add a key there when a request gains a new project-id field |
 | Index a repo | `engram index <path> --json` (local tree; add `--origin` for fetched origin/main via throwaway worktree) |
 | Compile context | `engram context "<query>" --path <repo> --budget N --json` |
 | Auto-freshness | daemon watcher re-indexes on commits/branch switches (`[watch]`, local 30s / origin 900s; committed HEADs only) |

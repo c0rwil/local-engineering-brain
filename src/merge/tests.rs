@@ -9,7 +9,7 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::events::{EventStore, ProjectProjection};
-use crate::ids::{AttemptId, ContextRunId, EdgeId, EvidenceId, TaskId};
+use crate::ids::{AttemptId, ContextRunId, EdgeId, EvidenceId, NodeId, TaskId};
 use crate::memory::{MemoryDraft, MemoryStore};
 
 const REMOTE: &str = "example.com/org/app";
@@ -710,10 +710,9 @@ fn merge_moves_rebuilds_and_records_every_collision() {
     ));
     assert_eq!(aliases, "/work/app,/work/app-copy,/work/app-worktree");
     assert_eq!(outcome.checkouts_to_repin, ["/work/app-copy"]);
-    assert_eq!(
-        outcome.reindex_paths,
-        ["/work/app-copy", "/work/app-worktree", "/work/app"]
-    );
+    // The fixture's checkout paths do not exist, so nothing is re-indexed.
+    assert_eq!(outcome.reindex_path, None);
+    assert_eq!(outcome.reindexed, None);
 
     // The audit event is the record of all of it.
     let payload: String = fixture.scalar(&format!(
@@ -922,8 +921,8 @@ fn finalize_attaches_waiting_anchors_or_marks_their_memories_for_revalidation() 
     let fixture = Fixture::new();
     fixture.merge();
     let s = fixture.survivor.as_str();
-    // Without anchor resolution (a checkout failed to re-index) nothing waits less.
-    let waiting = finalize(&fixture.database, &fixture.survivor, false).expect("sweep");
+    // Without anchor resolution (the re-index failed) the anchor keeps waiting.
+    let waiting = finalize(&fixture.database, &fixture.survivor, &sweep()).expect("sweep");
     assert_eq!(waiting.pending_anchors, 1);
     assert!(waiting.revalidate.is_empty());
 
@@ -935,7 +934,7 @@ fn finalize_attaches_waiting_anchors_or_marks_their_memories_for_revalidation() 
         "symbol:src/old.rs:Function:legacy",
         "d2",
     );
-    let attached = finalize(&fixture.database, &fixture.survivor, true).expect("finalize");
+    let attached = finalize(&fixture.database, &fixture.survivor, &resolve()).expect("finalize");
     assert_eq!(attached.anchors_remapped, 1);
     assert_eq!(attached.pending_anchors, 0);
     let anchor: String = fixture.scalar(&format!(
@@ -955,7 +954,7 @@ fn finalize_attaches_waiting_anchors_or_marks_their_memories_for_revalidation() 
             params![s, fixture.anchored.as_str()],
         )
         .expect("waiting anchor");
-    let marked = finalize(&fixture.database, &fixture.survivor, true).expect("finalize");
+    let marked = finalize(&fixture.database, &fixture.survivor, &resolve()).expect("finalize");
     assert_eq!(marked.revalidate, std::slice::from_ref(&fixture.anchored));
     let (status, epistemic): (String, String) = connection
         .query_row(
@@ -991,12 +990,113 @@ fn rows_written_under_a_retired_id_after_the_merge_are_swept() {
             params![straggler.as_str(), fixture.retired.as_str()],
         )
         .expect("stale write");
-    let outcome = finalize(&fixture.database, &fixture.survivor, false).expect("finalize");
+    let outcome = finalize(&fixture.database, &fixture.survivor, &sweep()).expect("finalize");
     assert_eq!(outcome.stragglers.get("tasks"), Some(&1));
     let project: String = fixture.scalar(&format!(
         "SELECT project_id FROM tasks WHERE id = '{straggler}'"
     ));
     assert_eq!(project, fixture.survivor.as_str());
+
+    // The sweep is audited, and a later finalize reports it as well.
+    let (trigger, swept): (String, i64) = fixture
+        .connection()
+        .query_row(
+            "SELECT json_extract(payload_json, '$.data.trigger'),
+                    json_extract(payload_json, '$.data.stragglers.tasks')
+             FROM events WHERE event_type = 'PROJECT_MERGE_FINALIZED'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("finalize event");
+    assert_eq!((trigger.as_str(), swept), ("after_merge", 1));
+    let later = finalize(&fixture.database, &fixture.survivor, &resolve()).expect("finalize");
+    assert!(later.stragglers.is_empty());
+    assert_eq!(later.stragglers_since_merge.get("tasks"), Some(&1));
+    let events: i64 =
+        fixture.scalar("SELECT COUNT(*) FROM events WHERE event_type = 'PROJECT_MERGE_FINALIZED'");
+    assert_eq!(
+        events, 2,
+        "the anchor resolution is a change worth recording"
+    );
+}
+
+fn sweep() -> FinalizeOptions {
+    FinalizeOptions {
+        trigger: "after_merge".to_owned(),
+        ..FinalizeOptions::default()
+    }
+}
+
+fn resolve() -> FinalizeOptions {
+    FinalizeOptions {
+        resolve_anchors: true,
+        reindexed: None,
+        trigger: "client".to_owned(),
+    }
+}
+
+#[test]
+fn anchors_on_tombstoned_symbols_are_unresolved() {
+    let fixture = Fixture::new();
+    // The survivor's copy of the anchored symbol was removed from its tree.
+    fixture
+        .connection()
+        .execute(
+            "UPDATE nodes SET tombstoned_at_ms = 1 WHERE id = ?1",
+            [fixture.survivor_node.as_str()],
+        )
+        .expect("tombstone");
+    let outcome = fixture.merge();
+    assert_eq!(
+        (
+            outcome.audit.anchors_remapped,
+            outcome.audit.anchors_pending
+        ),
+        (0, 2),
+        "nothing is re-attached to a tombstoned symbol"
+    );
+    let marked = finalize(&fixture.database, &fixture.survivor, &resolve()).expect("finalize");
+    assert_eq!(marked.anchors_remapped, 0);
+    let mut revalidate = marked.revalidate.clone();
+    revalidate.sort();
+    let mut expected = vec![fixture.anchored.clone(), fixture.pending.clone()];
+    expected.sort();
+    assert_eq!(revalidate, expected);
+    let anchors: i64 = fixture.scalar(&format!(
+        "SELECT COUNT(*) FROM memory_nodes WHERE node_id = '{}'",
+        fixture.survivor_node
+    ));
+    assert_eq!(anchors, 0);
+}
+
+#[test]
+fn a_completed_follow_up_is_recorded_for_a_repeated_merge() {
+    let fixture = Fixture::new();
+    fixture.merge();
+    let unresolved = finalize(
+        &fixture.database,
+        &fixture.survivor,
+        &FinalizeOptions {
+            resolve_anchors: false,
+            reindexed: Some("/work/app".to_owned()),
+            trigger: "client".to_owned(),
+        },
+    )
+    .expect("finalize");
+    assert_eq!(unresolved.pending_anchors, 1);
+    // An anchor still waits, so a repeated merge must re-index again.
+    assert_eq!(fixture.merge().reindexed, None);
+    finalize(
+        &fixture.database,
+        &fixture.survivor,
+        &FinalizeOptions {
+            resolve_anchors: true,
+            reindexed: Some("/work/app".to_owned()),
+            trigger: "client".to_owned(),
+        },
+    )
+    .expect("finalize");
+    assert_eq!(fixture.merge().reindexed.as_deref(), Some("/work/app"));
 }
 
 #[test]
@@ -1054,22 +1154,191 @@ fn a_survivor_with_its_own_origin_view_retires_the_other() {
     assert_eq!(survivor_view, own_view.as_str());
 }
 
+const RETIRED: &str = "prj_bbbbbbbb-0000-4000-8000-000000000002";
+const SURVIVOR: &str = "prj_aaaaaaaa-0000-4000-8000-000000000001";
+
+fn redirected(body: &serde_json::Value) -> serde_json::Value {
+    let redirects = BTreeMap::from([(RETIRED.to_owned(), SURVIVOR.to_owned())]);
+    let bytes = serde_json::to_vec(body).expect("body");
+    redirect_request_body(&bytes, &redirects).map_or_else(
+        || body.clone(),
+        |rewritten| serde_json::from_slice(&rewritten).expect("json"),
+    )
+}
+
 #[test]
-fn merged_ids_redirect_to_the_survivor_in_request_bodies() {
-    let mut redirects = BTreeMap::new();
-    redirects.insert(
-        "prj_bbbbbbbb-0000-4000-8000-000000000002".to_owned(),
-        "prj_aaaaaaaa-0000-4000-8000-000000000001".to_owned(),
-    );
-    let body = br#"{"project_id":"prj_bbbbbbbb-0000-4000-8000-000000000002","memory":{"scope_id":"prj_bbbbbbbb-0000-4000-8000-000000000002"},"entity":"repo:prj_bbbbbbbb-0000-4000-8000-000000000002","claim":"see prj_bbbbbbbb-0000-4000-8000-000000000002 for details"}"#;
-    let rewritten = redirect_json_bytes(body, &redirects).expect("rewritten");
-    let text = String::from_utf8(rewritten).expect("utf-8");
+fn only_typed_project_references_are_redirected() {
+    let quoted = format!("see \"{RETIRED}\"");
+    // Typed references move to the survivor.
+    let typed = redirected(&serde_json::json!({
+        "project_id": RETIRED,
+        "linked_project_id": RETIRED,
+        "project_ids": [RETIRED, "prj_other"],
+        "memory": {"scope_type": "project", "scope_id": RETIRED, "claim": RETIRED},
+        "query": {"entity_id": format!("repo:{RETIRED}")},
+        "item": {"value": {"parent_id": format!("repo:{RETIRED}"),
+                           "anchors": [{"project_id": RETIRED, "path": RETIRED}]}},
+        "projects": [{"project_id": RETIRED,
+                      "links": [{"target_project_id": RETIRED, "note": RETIRED}]}],
+    }));
     assert_eq!(
-        text,
-        r#"{"project_id":"prj_aaaaaaaa-0000-4000-8000-000000000001","memory":{"scope_id":"prj_aaaaaaaa-0000-4000-8000-000000000001"},"entity":"repo:prj_aaaaaaaa-0000-4000-8000-000000000001","claim":"see prj_bbbbbbbb-0000-4000-8000-000000000002 for details"}"#,
-        "exact ids are redirected; free text is left alone"
+        typed,
+        serde_json::json!({
+            "project_id": SURVIVOR,
+            "linked_project_id": SURVIVOR,
+            "project_ids": [SURVIVOR, "prj_other"],
+            "memory": {"scope_type": "project", "scope_id": SURVIVOR, "claim": RETIRED},
+            "query": {"entity_id": format!("repo:{SURVIVOR}")},
+            "item": {"value": {"parent_id": format!("repo:{SURVIVOR}"),
+                               "anchors": [{"project_id": SURVIVOR, "path": RETIRED}]}},
+            "projects": [{"project_id": SURVIVOR,
+                          "links": [{"target_project_id": SURVIVOR, "note": RETIRED}]}],
+        })
     );
-    assert!(redirect_json_bytes(br#"{"project_id":"prj_other"}"#, &redirects).is_none());
+    // The reviewer's cases: text that is, or quotes, a retired id keeps its
+    // bytes; only the typed project_id moves.
+    for text_value in [RETIRED.to_owned(), quoted.clone()] {
+        let evidence = serde_json::json!({
+            "project_id": RETIRED,
+            "kind": "test_result",
+            "command": text_value,
+            "artifact_text": text_value,
+            "metadata": {"source": text_value, "nested": [text_value]},
+        });
+        let rewritten = redirected(&evidence);
+        assert_eq!(rewritten["project_id"], SURVIVOR);
+        for field in ["command", "artifact_text"] {
+            assert_eq!(rewritten[field], text_value.as_str(), "{field}");
+        }
+        assert_eq!(rewritten["metadata"]["source"], text_value.as_str());
+        assert_eq!(rewritten["metadata"]["nested"][0], text_value.as_str());
+        let task = redirected(&serde_json::json!({"project_id": RETIRED, "prompt": text_value}));
+        assert_eq!(task["prompt"], text_value.as_str());
+        let fact = redirected(&serde_json::json!({
+            "project_id": RETIRED, "key": "hosting.base_url",
+            "value": text_value, "note": text_value,
+        }));
+        assert_eq!(fact["project_id"], SURVIVOR);
+        assert_eq!(
+            (&fact["value"], &fact["note"]),
+            (
+                &serde_json::json!(text_value),
+                &serde_json::json!(text_value)
+            )
+        );
+    }
+    // A scope id of another scope type is not a project reference.
+    let file_scope = redirected(&serde_json::json!({
+        "memory": {"scope_type": "file", "scope_id": RETIRED},
+    }));
+    assert_eq!(file_scope["memory"]["scope_id"], RETIRED);
+    // Bodies without a retired id are not parsed at all.
+    let redirects = BTreeMap::from([(RETIRED.to_owned(), SURVIVOR.to_owned())]);
+    assert!(redirect_request_body(br#"{"project_id":"prj_other"}"#, &redirects).is_none());
+    assert!(redirect_request_body(b"not json", &redirects).is_none());
+    let text_only = serde_json::to_vec(&serde_json::json!({"prompt": RETIRED})).expect("body");
+    assert!(redirect_request_body(&text_only, &redirects).is_none());
+}
+
+#[test]
+fn product_text_that_names_the_retired_id_is_left_alone() {
+    let fixture = Fixture::new();
+    let r = fixture.retired.as_str();
+    fixture
+        .connection()
+        .execute(
+            "INSERT INTO product_records(id, kind, version, document_json, stamps_json,
+                 archived, updated_at_ms)
+             VALUES ('cat_text', 'section', 1, ?1, '[]', 0, 0)",
+            [format!(
+                "{{\"type\":\"section\",\"value\":{{\"entity_id\":\"cat_entity\",\
+                 \"curated\":\"{r}\",\"title\":\"see \\\"{r}\\\"\"}}}}"
+            )],
+        )
+        .expect("record");
+    let plan = fixture.plan();
+    assert_eq!(
+        plan.product_records,
+        ["cat_section"],
+        "text-only mentions are not anchors"
+    );
+    fixture.merge();
+    let (version, document): (i64, String) = fixture
+        .connection()
+        .query_row(
+            "SELECT version, document_json FROM product_records WHERE id = 'cat_text'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("record");
+    assert_eq!(version, 1);
+    assert!(
+        document.contains(&format!("\"curated\":\"{r}\"")),
+        "{document}"
+    );
+}
+
+#[test]
+fn observations_and_usage_queued_before_a_merge_land_with_the_survivor() {
+    use crate::effectiveness::{
+        ToolObservationRequest, ToolPhase, UsageRecordRequest, VerificationObservationRequest,
+    };
+    let fixture = Fixture::new();
+    // A usage sample recorded before the merge, and resent with the retired
+    // id afterwards (a client retrying), stays one sample.
+    let store = crate::effectiveness::EffectivenessStore::new(fixture.database.clone());
+    let sample: UsageRecordRequest = serde_json::from_value(serde_json::json!({
+        "project_id": fixture.retired.as_str(),
+        "sample_id": "sample-queued",
+        "source": "claude_code",
+        "metrics": {"input_tokens": 10, "output_tokens": 5},
+    }))
+    .expect("usage request");
+    let first = store.record(&sample).expect("usage before the merge");
+    assert!(first.inserted);
+    fixture.merge();
+    let resent = store.record(&sample).expect("usage resent after the merge");
+    assert!(!resent.inserted, "the moved sample matches byte for byte");
+    assert_eq!(resent.id, first.id);
+    let verification = store
+        .record_verification_observation(&VerificationObservationRequest {
+            project_id: fixture.retired.clone(),
+            session_id: "queued-session".to_owned(),
+            tool_use_id: "call-2".to_owned(),
+            conversation_id: "queued-session".to_owned(),
+            task_id: Some(fixture.retired_task.clone()),
+            source: "claude_code".to_owned(),
+            kind: "test_result".to_owned(),
+            hidden: None,
+            note_delivered: false,
+        })
+        .expect("queued verification observation");
+    assert!(verification);
+    let verification_project: String = fixture.scalar(
+        "SELECT project_id FROM verification_observations WHERE session_id = 'queued-session'",
+    );
+    assert_eq!(verification_project, fixture.survivor.as_str());
+    let observed = store
+        .record_tool_observation(&ToolObservationRequest {
+            project_id: fixture.retired.clone(),
+            session_id: "queued-session".to_owned(),
+            tool_use_id: "call-1".to_owned(),
+            task_id: Some(fixture.retired_task.clone()),
+            context_run_id: None,
+            source: "claude_code".to_owned(),
+            tool_name: "Read".to_owned(),
+            phase: ToolPhase::Post,
+            paths: vec!["src/lib.rs".to_owned()],
+            ranged: None,
+            result_bytes: None,
+            limit_hit: None,
+        })
+        .expect("queued tool observation");
+    let project: String = fixture.scalar(&format!(
+        "SELECT project_id FROM tool_observations WHERE id = '{}'",
+        observed.id
+    ));
+    assert_eq!(project, fixture.survivor.as_str());
 }
 
 #[test]

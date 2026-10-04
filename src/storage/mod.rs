@@ -319,6 +319,11 @@ impl Database {
 
     /// Create a transactionally consistent backup using `SQLite`'s `VACUUM INTO`.
     ///
+    /// The copy is written to a hidden partial file (mode 0600 from the
+    /// start) beside the destination and renamed into place only once it is
+    /// complete, so an interrupted backup never leaves a file that looks like
+    /// a backup.
+    ///
     /// # Errors
     ///
     /// Returns an error when the destination exists or the backup cannot be written safely.
@@ -329,17 +334,45 @@ impl Database {
                 destination.display()
             )));
         }
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).map_err(|source| io_error(parent, source))?;
+        let parent = destination
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent).map_err(|source| io_error(parent, source))?;
+        let name = destination
+            .file_name()
+            .map_or_else(|| "backup".into(), |name| name.to_string_lossy());
+        let partial = parent.join(format!(
+            ".{name}.partial-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        // `VACUUM INTO` accepts an existing empty file and keeps its mode.
+        create_private_empty_file(&partial)?;
+        let written = (|| {
+            let writer = self
+                .inner
+                .writer
+                .lock()
+                .map_err(|_| Error::StorageLockPoisoned)?;
+            writer.execute("VACUUM INTO ?1", [partial.to_string_lossy().as_ref()])?;
+            drop(writer);
+            if destination.exists() {
+                return Err(Error::Config(format!(
+                    "backup destination already exists: {}",
+                    destination.display()
+                )));
+            }
+            fs::rename(&partial, destination).map_err(|source| io_error(destination, source))?;
+            restrict_file(destination)
+        })();
+        if written.is_err() {
+            let _ = fs::remove_file(&partial);
         }
-        let writer = self
-            .inner
-            .writer
-            .lock()
-            .map_err(|_| Error::StorageLockPoisoned)?;
-        writer.execute("VACUUM INTO ?1", [destination.to_string_lossy().as_ref()])?;
-        restrict_file(destination)?;
-        Ok(())
+        written
     }
 
     /// Remove obsolete WAL frames after an explicit content purge.
@@ -717,6 +750,21 @@ pub(crate) fn restrict_file(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Create a new, empty file that only its owner can read and write.
+fn create_private_empty_file(path: &Path) -> Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    options
+        .open(path)
+        .map(drop)
+        .map_err(|source| io_error(path, source))
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
@@ -741,6 +789,49 @@ mod tests {
     fn test_foreign_keys_enabled() {
         let (_temp, db) = database();
         assert!(db.integrity_report().expect("report").foreign_keys);
+    }
+
+    #[test]
+    fn backups_appear_complete_and_private_or_not_at_all() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let (temp, db) = database();
+        let backups = temp.path().join("backups");
+        let destination = backups.join("pre-merge-1.sqlite");
+        db.backup(&destination).expect("backup");
+        let mode = fs::metadata(&destination)
+            .expect("backup file")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        Database::verify_existing(&destination).expect("a complete, valid backup");
+        let listing = |directory: &Path| {
+            let mut names = fs::read_dir(directory)
+                .expect("listing")
+                .map(|entry| {
+                    entry
+                        .expect("entry")
+                        .file_name()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect::<Vec<_>>();
+            names.sort();
+            names
+        };
+        assert_eq!(
+            listing(&backups),
+            ["pre-merge-1.sqlite"],
+            "no partial file stays"
+        );
+        // A failed backup leaves nothing behind either.
+        assert!(db.backup(&destination).is_err(), "the destination exists");
+        let unwritable = temp.path().join("locked");
+        fs::create_dir_all(&unwritable).expect("dir");
+        fs::set_permissions(&unwritable, fs::Permissions::from_mode(0o500)).expect("chmod");
+        assert!(db.backup(&unwritable.join("b.sqlite")).is_err());
+        fs::set_permissions(&unwritable, fs::Permissions::from_mode(0o700)).expect("chmod");
+        assert!(listing(&unwritable).is_empty());
+        assert_eq!(listing(&backups), ["pre-merge-1.sqlite"]);
     }
 
     #[test]
