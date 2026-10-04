@@ -65,6 +65,7 @@ const API_DOCTOR: &str = "/api/v1/admin/doctor";
 const API_SHUTDOWN: &str = "/api/v1/admin/shutdown";
 const API_RESOLVE_PROJECT: &str = "/api/v1/projects/resolve";
 const API_LOOKUP_PROJECT: &str = "/api/v1/projects/lookup";
+const API_PROJECT_CHECKOUTS: &str = "/api/v1/projects/checkouts";
 const API_FILE_SHAPE: &str = "/api/v1/world/file-shape";
 const API_TASKS_BRIEF: &str = "/api/v1/tasks/brief";
 const API_INDEX_PROJECT: &str = "/api/v1/projects/index";
@@ -360,6 +361,18 @@ pub struct HealthResponse {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectResolveRequest {
     pub path: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectCheckoutsRequest {
+    pub project_id: ProjectId,
+}
+
+/// A project's existing registered checkouts, primary first.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectCheckouts {
+    pub project_id: ProjectId,
+    pub checkouts: Vec<PathBuf>,
 }
 
 /// Result of a read-only project lookup: `None` when no registered project
@@ -1193,6 +1206,21 @@ impl DaemonClient {
             hyper::Method::POST,
             API_TASKS_BRIEF,
             Some(&TasksBriefRequest {
+                project_id: project_id.clone(),
+            }),
+        )
+        .await
+    }
+
+    /// A project's existing registered checkouts, primary first, at most 32.
+    /// Reads only.
+    /// # Errors
+    /// Returns transport or storage errors.
+    pub async fn project_checkouts(&self, project_id: &ProjectId) -> Result<ProjectCheckouts> {
+        self.request(
+            hyper::Method::POST,
+            API_PROJECT_CHECKOUTS,
+            Some(&ProjectCheckoutsRequest {
                 project_id: project_id.clone(),
             }),
         )
@@ -2248,6 +2276,7 @@ where
         .route(API_PROJECT_EXPORT, post(export_project_handler))
         .route(API_RESOLVE_PROJECT, post(resolve_project))
         .route(API_LOOKUP_PROJECT, post(lookup_project))
+        .route(API_PROJECT_CHECKOUTS, post(project_checkouts))
         .route(API_FILE_SHAPE, post(file_shape))
         .route(API_TASKS_BRIEF, post(tasks_brief))
         .route(API_INDEX_PROJECT, post(index_project))
@@ -3340,6 +3369,22 @@ async fn lookup_project(
     })
     .await?;
     Ok(Json(ProjectLookupResponse { project }))
+}
+
+async fn project_checkouts(
+    State(state): State<DaemonState>,
+    Json(request): Json<ProjectCheckoutsRequest>,
+) -> std::result::Result<Json<ProjectCheckouts>, ApiError> {
+    let database = state.database.clone();
+    let project_id = request.project_id.clone();
+    let checkouts = run_blocking(&state, move || {
+        ProjectRegistry::new(database).checkout_roots(&project_id, 32)
+    })
+    .await?;
+    Ok(Json(ProjectCheckouts {
+        project_id: request.project_id,
+        checkouts,
+    }))
 }
 
 async fn resolve_project(

@@ -484,6 +484,29 @@ impl ProjectRegistry {
     }
 
     /// Recorded checkout paths without Git filtering, oldest first.
+    /// Existing checkout directories registered for a project, canonical,
+    /// primary checkouts first, then the most recently observed; at most
+    /// `limit`. Reads the registry and the filesystem only, without Git.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for storage failures.
+    pub fn checkout_roots(&self, project_id: &ProjectId, limit: usize) -> Result<Vec<PathBuf>> {
+        let mut roots: Vec<PathBuf> = Vec::new();
+        for path in self.raw_alias_paths(project_id)?.into_iter().rev() {
+            let Ok(root) = path.canonicalize() else {
+                continue;
+            };
+            if root.is_dir() && !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+        // Stable: the most recently observed order holds within each group.
+        roots.sort_by_key(|root| !root.join(".git").is_dir());
+        roots.truncate(limit);
+        Ok(roots)
+    }
+
     fn raw_alias_paths(&self, project_id: &ProjectId) -> Result<Vec<PathBuf>> {
         self.database.with_reader(|connection| {
             let mut statement = connection.prepare(

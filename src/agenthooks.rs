@@ -18,12 +18,14 @@
 //! status must also belong to every verification in the command, in one
 //! modeled directory: pipes, `||`, `;` after the first verification, background
 //! jobs and unmodeled `cd`s hide it, so those runs are not recorded. Before any
-//! daemon call the session marks the verification's result unknown; only a
-//! recorded observation replaces it, and the episode closes from the latest
-//! result of each verification. Each record carries content digests of the
-//! files the session touched or left dirty, which ties it to the source it
-//! actually ran against. When the agent declared an open Engram task through
-//! Engram's MCP server in the same session, evidence goes to that task.
+//! daemon call the session marks the verification's result unknown in the
+//! episodes it may belong to, found by the checkouts each episode records
+//! when it opens; only a recorded observation replaces it, and the episode
+//! closes from the latest result of each verification. Each record carries
+//! content digests of the files the session touched or left dirty, which
+//! ties it to the source it actually ran against. When the agent declared an
+//! open Engram task through Engram's MCP server in the same session, evidence
+//! goes to that task.
 //!
 //! Every hook fails OPEN: a broken brain must never break a coding session.
 
@@ -32,7 +34,7 @@ pub mod cursor;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -81,10 +83,17 @@ pub struct HookSession {
     /// invocation sees its own fingerprint and skips the duplicate row.
     #[serde(default)]
     pub last_evidence_fingerprint: Option<String>,
-    /// Checkout root of this episode's project, recorded once a verification
-    /// resolves it, so a later write-ahead can find the episode daemon-free.
+    /// First known checkout root of this episode's project, recorded when the
+    /// episode is created (sidecars from earlier builds recorded it at the
+    /// first resolved verification, or never).
     #[serde(default)]
     pub root: Option<PathBuf>,
+    /// Further checkout roots of the project: each checkout a hook resolved
+    /// for it in this session and the project's registered checkouts. With
+    /// `root`, the daemon-free write-ahead finds the episode a verification
+    /// belongs to by these. Bounded.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checkouts: Vec<PathBuf>,
     /// Latest result per verification identity, oldest first and bounded.
     /// The episode auto-closes from these, never from one last exit code.
     #[serde(default)]
@@ -108,7 +117,54 @@ pub struct VerificationResult {
 /// pass first, so a retained failure or unknown result still blocks success.
 const VERIFICATION_RESULTS_MAX: usize = 64;
 
+/// Checkout roots kept per episode.
+pub const EPISODE_CHECKOUTS_MAX: usize = 32;
+
 impl HookSession {
+    /// A new episode of `project_id` for one agent session.
+    #[must_use]
+    pub const fn new(task_id: TaskId, project_id: ProjectId, session_id: Option<String>) -> Self {
+        Self {
+            session_id,
+            task_id,
+            project_id,
+            last_verification_exit: None,
+            last_evidence_fingerprint: None,
+            root: None,
+            checkouts: Vec::new(),
+            verification_results: Vec::new(),
+        }
+    }
+
+    /// Every known checkout root of this episode's project.
+    pub fn roots(&self) -> impl Iterator<Item = &Path> {
+        self.root
+            .iter()
+            .chain(&self.checkouts)
+            .map(PathBuf::as_path)
+    }
+
+    /// Whether the episode knows any checkout of its project.
+    #[must_use]
+    pub fn has_roots(&self) -> bool {
+        self.root.is_some() || !self.checkouts.is_empty()
+    }
+
+    /// Remember a checkout root of this episode's project. Returns whether
+    /// it was new and kept.
+    pub fn note_checkout(&mut self, root: &Path) -> bool {
+        if self.root.is_none() {
+            self.root = Some(root.to_path_buf());
+            return true;
+        }
+        if self.roots().any(|known| known == root) || self.checkouts.len() >= EPISODE_CHECKOUTS_MAX
+        {
+            return false;
+        }
+        self.checkouts.push(root.to_path_buf());
+        true
+    }
+
     /// Set the latest result of one verification identity (`None` = unknown).
     pub fn set_verification_result(&mut self, key: &str, tests: bool, exit_code: Option<i32>) {
         self.verification_results.retain(|result| result.key != key);
@@ -1542,6 +1598,46 @@ pub fn shell_workdir(command: &str, base: &Path) -> Option<PathBuf> {
     )
 }
 
+/// A directory known to contain the one every verification in the command
+/// runs in, when [`shell_workdir`] cannot say which: `base`, if every
+/// directory change in the command is a static, relative descent. The shell
+/// then stays below `base` whether or not each change takes effect (for
+/// example `cd src; cargo test`). `None` for an absolute, home or parent
+/// target, a target that resolves outside `base` through a symbolic link,
+/// a change this reader cannot model, or shell syntax it cannot read.
+#[must_use]
+pub fn shell_workdir_bound(command: &str, base: &Path) -> Option<PathBuf> {
+    if let Some(exact) = shell_workdir(command, base) {
+        return Some(exact);
+    }
+    let canonical_base = base.canonicalize().ok();
+    for (text, _) in shell_commands(command)? {
+        match directory_change(&text) {
+            DirectoryChange::Unchanged => {}
+            DirectoryChange::Unmodeled => return None,
+            DirectoryChange::To(target) => {
+                let relative = Path::new(&target);
+                if target.starts_with('~')
+                    || !relative
+                        .components()
+                        .all(|part| matches!(part, Component::Normal(_) | Component::CurDir))
+                {
+                    return None;
+                }
+                // A symbolic link can lead out of `base`.
+                if let (Some(base), Ok(resolved)) =
+                    (&canonical_base, base.join(relative).canonicalize())
+                {
+                    if !resolved.starts_with(base) {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+    Some(base.to_path_buf())
+}
+
 /// Directory changes before the first verification, when every one is
 /// modeled and joined to the first verification by `&&` alone.
 fn workdir_changes(commands: &ShellCommands, first: usize) -> Option<Vec<String>> {
@@ -1726,6 +1822,10 @@ pub struct PendingVerification {
     pub tests: bool,
     /// The modeled directory the verifications run in.
     pub workdir: Option<PathBuf>,
+    /// A directory known to contain the one the verifications run in:
+    /// `workdir` when modeled, else a bound from [`shell_workdir_bound`].
+    /// `None` when even that is unknown.
+    pub within: Option<PathBuf>,
     /// Why the command hides the exit status, including a tool call the agent
     /// ran in the background; `None` when the status can be observed.
     pub hidden: Option<StatusHidden>,
@@ -1769,8 +1869,11 @@ pub fn pending_verification(
         .unwrap_or(&serde_json::Value::Null);
     let command = tool_command(input);
     let verification = classify_verification(command)?;
-    let workdir = shell_workdir(command, &tool_base_dir(cwd, input))
-        .map(|directory| normalize_tool_path(&directory));
+    let base = tool_base_dir(cwd, input);
+    let workdir = shell_workdir(command, &base).map(|directory| normalize_tool_path(&directory));
+    let within = workdir.clone().or_else(|| {
+        shell_workdir_bound(command, &base).map(|directory| normalize_tool_path(&directory))
+    });
     // Claude Code's `run_in_background` returns before the command exits.
     let backgrounded = input
         .get("run_in_background")
@@ -1781,6 +1884,7 @@ pub fn pending_verification(
         kind: verification.kind,
         tests: verification.tests,
         workdir,
+        within,
         hidden: verification
             .hidden
             .or_else(|| backgrounded.then_some(StatusHidden::Background)),
@@ -1788,34 +1892,75 @@ pub fn pending_verification(
 }
 
 /// Write-ahead without the daemon: record a pending verification's result as
-/// unknown in the episodes it may belong to, before recording can fail. The
-/// episodes whose recorded root most specifically contains its directory are
-/// marked; without such a root, every episode of the session is.
+/// unknown in the episodes it may belong to, before recording can fail. See
+/// [`write_ahead_targets`] for which episodes those are.
 pub fn mark_verification_unknown(
     state_dir: &Path,
     session_id: &str,
     pending: &PendingVerification,
 ) {
     let sessions = project_sessions(state_dir, session_id);
-    let depth = |session: &HookSession| {
-        let directory = pending.workdir.as_ref()?;
-        let root = session.root.as_ref()?;
-        directory
-            .starts_with(root)
-            .then(|| root.components().count())
-    };
-    let deepest = sessions
-        .iter()
-        .filter_map(|(_, session)| depth(session))
-        .max();
-    for (scope, mut session) in sessions {
-        if deepest.is_some_and(|deepest| depth(&session) != Some(deepest)) {
+    let targets = write_ahead_targets(&sessions, pending);
+    for (index, (scope, mut session)) in sessions.into_iter().enumerate() {
+        if !targets.contains(&index) {
             continue;
         }
         session.set_verification_result(&pending.key, pending.tests, None);
         session.last_verification_exit = None;
         let _ = save_session(state_dir, &scope, &session);
     }
+}
+
+/// The episodes (indexes into `sessions`) a pending verification may belong
+/// to, by the checkout roots each episode knows:
+///
+/// - A modeled directory belongs to the episodes whose root most
+///   specifically contains it. Outside every known root, it belongs to a
+///   repository with no episode in this session, so no episode is marked,
+///   provided every episode knows its checkouts.
+/// - An unmodeled directory with a bound (see [`shell_workdir_bound`])
+///   belongs to the episodes whose root most specifically contains the
+///   bound, and to episodes whose roots lie below it.
+/// - Otherwise, a directory that is truly unknown, outside every known root
+///   and unmodeled, or a session with an episode whose checkouts are
+///   unknown, marks every episode.
+#[must_use]
+pub fn write_ahead_targets(
+    sessions: &[(String, HookSession)],
+    pending: &PendingVerification,
+) -> Vec<usize> {
+    let every = || (0..sessions.len()).collect();
+    let Some(location) = pending.workdir.as_deref().or(pending.within.as_deref()) else {
+        return every();
+    };
+    let modeled = pending.workdir.is_some();
+    let depth = |session: &HookSession| {
+        session
+            .roots()
+            .filter(|root| location.starts_with(root))
+            .map(|root| root.components().count())
+            .max()
+    };
+    let deepest = sessions
+        .iter()
+        .filter_map(|(_, session)| depth(session))
+        .max();
+    let mut targets: Vec<usize> = (0..sessions.len())
+        .filter(|&index| {
+            let session = &sessions[index].1;
+            (deepest.is_some() && depth(session) == deepest)
+                // A bounded run may be anywhere below the bound, including
+                // a nested checkout.
+                || (!modeled
+                    && session
+                        .roots()
+                        .any(|root| root != location && root.starts_with(location)))
+        })
+        .collect();
+    if targets.is_empty() && !(modeled && sessions.iter().all(|(_, session)| session.has_roots())) {
+        targets = every();
+    }
+    targets
 }
 
 /// Write-ahead for a run whose directory is unknown: every earlier result of
@@ -3196,15 +3341,7 @@ mod tests {
     /// failed test; only the same verification passing again clears it.
     #[test]
     fn a_failed_test_is_not_masked_by_later_passing_checks() {
-        let mut session = HookSession {
-            session_id: None,
-            task_id: TaskId::new(),
-            project_id: ProjectId::new(),
-            last_verification_exit: None,
-            last_evidence_fingerprint: None,
-            root: None,
-            verification_results: Vec::new(),
-        };
+        let mut session = HookSession::new(TaskId::new(), ProjectId::new(), None);
         session.set_verification_result("/r\ncargo test", true, Some(101));
         for key in [
             "/r\ncargo fmt --check",
@@ -4104,6 +4241,123 @@ mod tests {
         // directory, and the verification there is not status-bearing.
         let input = serde_json::json!({"command":"export A=1; cd ../two && cargo test"});
         assert_eq!(tool_workdir(base, &input), PathBuf::from("/work/two"));
+    }
+
+    /// An unmodeled directory is still bounded by the tool's directory when
+    /// every change is a relative descent; anything else stays unknown.
+    #[test]
+    fn unmodeled_directories_are_bounded_by_relative_descents() {
+        let base = Path::new("/work/one");
+        for (command, bound) in [
+            ("cargo test", Some("/work/one")),
+            ("cd ../two && cargo test", Some("/work/one/../two")),
+            ("cd src; cargo test", Some("/work/one")),
+            ("cd a; cd b/c; cargo test", Some("/work/one")),
+            ("cargo test && cd sub && cargo test", Some("/work/one")),
+            ("cd ../two; cargo test", None),
+            ("cd /srv/app; cargo test", None),
+            ("cd ~/two; cargo test", None),
+            ("cd $REPO && cargo test", None),
+            ("cd - && cargo test", None),
+            ("source env.sh && cargo test", None),
+            ("(cd src && cargo test)", None),
+        ] {
+            assert_eq!(
+                shell_workdir_bound(command, base),
+                bound.map(PathBuf::from),
+                "{command}"
+            );
+        }
+        // A symbolic link that leads out of the directory does not bound it.
+        let temp = tempfile::TempDir::new().expect("temp");
+        let root = temp.path().canonicalize().expect("canonical");
+        std::fs::create_dir_all(root.join("repo/src")).expect("repo");
+        std::fs::create_dir_all(root.join("elsewhere")).expect("elsewhere");
+        std::os::unix::fs::symlink(root.join("elsewhere"), root.join("repo/out")).expect("link");
+        let repo = root.join("repo");
+        assert_eq!(
+            shell_workdir_bound("cd src; cargo test", &repo),
+            Some(repo.clone())
+        );
+        assert_eq!(shell_workdir_bound("cd out; cargo test", &repo), None);
+    }
+
+    fn episode(roots: &[&str]) -> (String, HookSession) {
+        let mut session = HookSession::new(TaskId::new(), ProjectId::new(), None);
+        for root in roots {
+            session.note_checkout(Path::new(root));
+        }
+        (format!("scope-{}", roots.join(",")), session)
+    }
+
+    fn pending(workdir: Option<&str>, within: Option<&str>) -> PendingVerification {
+        PendingVerification {
+            key: format!("{}\ncargo test", workdir.unwrap_or("?")),
+            kind: "test_result",
+            tests: true,
+            workdir: workdir.map(PathBuf::from),
+            within: within.or(workdir).map(PathBuf::from),
+            hidden: None,
+        }
+    }
+
+    /// The write-ahead marks only the episodes a verification may belong to,
+    /// by the checkout roots each episode knows, and every episode when the
+    /// directory is truly unknown.
+    #[test]
+    fn the_write_ahead_targets_episodes_by_their_checkouts() {
+        let sessions = vec![
+            episode(&["/w/a", "/wt/a-feature"]),
+            episode(&["/w/b"]),
+            episode(&["/w/a/sub"]),
+        ];
+        let targets = |workdir, within| write_ahead_targets(&sessions, &pending(workdir, within));
+        // A modeled directory: the most specific checkout, any of its roots.
+        assert_eq!(targets(Some("/w/b/src"), None), [1]);
+        assert_eq!(targets(Some("/wt/a-feature"), None), [0]);
+        assert_eq!(targets(Some("/w/a/sub/x"), None), [2]);
+        assert_eq!(targets(Some("/w/a"), None), [0]);
+        // Outside every known checkout: a repository without an episode.
+        assert!(targets(Some("/w/c"), None).is_empty());
+        // An unmodeled directory inside a checkout, including nested ones.
+        assert_eq!(targets(None, Some("/w/b")), [1]);
+        assert_eq!(targets(None, Some("/w/a")), [0, 2]);
+        assert_eq!(targets(None, Some("/w")), [0, 1, 2]);
+        // Unmodeled and outside every known checkout, or truly unknown.
+        assert_eq!(targets(None, Some("/w/c")), [0, 1, 2]);
+        assert_eq!(targets(None, None), [0, 1, 2]);
+        // An episode whose checkouts are unknown may own any directory.
+        let mut legacy = sessions.clone();
+        legacy.push(episode(&[]));
+        assert_eq!(
+            write_ahead_targets(&legacy, &pending(Some("/w/c"), None)),
+            [0, 1, 2, 3]
+        );
+        assert_eq!(
+            write_ahead_targets(&legacy, &pending(Some("/w/b/src"), None)),
+            [1]
+        );
+    }
+
+    #[test]
+    fn episodes_keep_each_checkout_once_and_bounded() {
+        let mut session = HookSession::new(TaskId::new(), ProjectId::new(), None);
+        assert!(!session.has_roots());
+        assert!(session.note_checkout(Path::new("/w/a")));
+        assert_eq!(session.root.as_deref(), Some(Path::new("/w/a")));
+        assert!(!session.note_checkout(Path::new("/w/a")));
+        assert!(session.note_checkout(Path::new("/wt/a")));
+        assert!(!session.note_checkout(Path::new("/wt/a")));
+        for index in 0..EPISODE_CHECKOUTS_MAX + 4 {
+            session.note_checkout(&PathBuf::from(format!("/wt/{index}")));
+        }
+        assert_eq!(session.checkouts.len(), EPISODE_CHECKOUTS_MAX);
+        assert_eq!(session.roots().count(), EPISODE_CHECKOUTS_MAX + 1);
+        // Sidecars from an earlier build read without checkouts.
+        let legacy: HookSession = serde_json::from_value(serde_json::json!({
+            "task_id": TaskId::new(), "project_id": ProjectId::new(), "root": "/w/a"}))
+        .expect("legacy sidecar");
+        assert_eq!(legacy.roots().collect::<Vec<_>>(), [Path::new("/w/a")]);
     }
 
     /// Item 6: only Engram's own MCP servers declare tasks.
