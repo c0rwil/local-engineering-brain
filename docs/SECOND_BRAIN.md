@@ -97,6 +97,66 @@ Reports include compiled contexts by mode, selected source kinds, contexts conta
 validated memories, task/context usage attribution, active lessons and pending reviews.
 Compilation does not prove the coding agent received, followed or benefited from a reference.
 
+### Delivered context use and Read volume
+
+Native hooks also record which repository files each agent tool call reads or edits.
+A call is identified by the agent's session and tool-use IDs; calls without them are
+not recorded. Each record keeps the tool name, an action class, repository-relative
+paths and, for Read calls, whether `offset`, `limit` or `pages` was supplied, the size
+of the text the tool returned and whether the agent's size limit rejected or truncated
+it. File content, shell commands and error text are never stored. The pre-tool hook
+records a touch before compiling any context that touch triggers. Records follow the
+`[jobs] context_run_retention_days` window.
+
+Each repository report (`context_use` in `--json`) compares delivered file pointers
+with later reads and edits in the same agent session:
+
+- **Precision**: pointed files read or edited after delivery, divided by pointed files
+  not already touched when the context was compiled. Already-touched files are counted
+  separately; a context compiled for the file being read cannot claim that read.
+- **Coverage**: of the files first read or edited after a context for their repository
+  was delivered in the session, the share that an earlier context had pointed to. A
+  pointer from a linked repository's context also counts.
+- **First-touch distance**: observed tool calls from delivery to the first touch,
+  including the touching call.
+- **Read volume**: ranged-read share, mean result bytes, size-limit hits and failures.
+  `brain` covers calls made after a context was delivered in that session and
+  repository. `unattributed` covers calls made before; it is not a control group.
+
+These are associations, not causation: an agent may have found a pointed file without
+the pointer. Contexts without a later observed tool call, contexts linked to no agent
+session, and every context delivered before tool observation existed are reported as
+unobserved and stay out of precision. Pointers resolve through their indexed node to a
+file path, so line ranges do not affect attribution; pointers that cannot be resolved
+are counted separately. Only Read and edit tools with explicit file arguments count as
+touches. Shell commands are not parsed for paths, so shell reads, including most Codex
+reads, are not attributed and do not appear as Read calls. Files created during a
+session count as touched although no earlier context could point to them. Failed reads
+still count as touches. Calls outside tracked repositories are not observed, so
+first-touch distances can undercount. Result bytes measure the text content the tool
+reported, not provider tokens; image, PDF and unknown results have no size.
+
+Only sessions running updated hooks are observed: earlier sessions stored no touched
+paths, so historical contexts stay unobserved. Hooks send observations to
+`POST /api/v1/effectiveness/tool`. Another harness can send one per call and phase
+(`pre`, `post` or `failure`); repeats of the same call merge, keeping the earliest
+time:
+
+```json
+{
+  "project_id": "prj_REPLACE_WITH_REAL_UUID",
+  "session_id": "agent-session-id",
+  "tool_use_id": "agent-tool-call-id",
+  "source": "my_harness",
+  "tool_name": "Read",
+  "phase": "post",
+  "paths": ["src/lib.rs"],
+  "ranged": true,
+  "result_bytes": 4096,
+  "limit_hit": false
+}
+```
+
 The usage ledger records reported input/output/cache tokens, tool calls and cost.
 Missing values stay unknown. Coverage appears beside totals; partial observations
 are not the full cost of a session. Cache token categories remain separate because
@@ -171,6 +231,15 @@ source digest are checked again immediately before applying the decision. Touche
 files are checked against the live checkout, with bounded reads, rather than relying
 only on an index refresh. Changed or unavailable sources cause deferral.
 
+Evidence must also have observed the indexed version of every touched file. It
+qualifies when it was recorded after that file was indexed, or when a native hook
+recorded the file's SHA-256 beside the verification and it equals the indexed
+digest. A commit and the watcher's re-index therefore keep a hook-observed run of
+the same bytes eligible. Evidence reported by agents carries no hook digests and
+must be newer than every touched file's indexed version. The hook records only
+runs whose exit status the client reported; see the user guide on
+[verification evidence from hooks](USER_GUIDE.md#verification-evidence-from-hooks).
+
 Every decision, citation, attempt, error and reported usage is audited. Unchanged
 deferred proposals are not repeatedly billed; attach new evidence or revise the
 proposal to trigger another review. Runtime errors have a bounded retry count.
@@ -196,6 +265,8 @@ The runtime must already be running. Engram does not download or launch a model.
 The adapter disables redirects, enforces loopback and bounds request/response size
 and time. A model's semantic judgment can still be wrong; inspect audit samples and
 test on held-out supported/unsupported lessons before trusting a new model widely.
+Proposals whose text or evidence matches prompt-injection patterns are held for
+human review and never sent to the model; see [SECURITY.md](SECURITY.md).
 
 A small Apple Silicon runtime can serve the local judge separately from a coding
 model. The tested MTPLX configuration uses a 4-bit Qwen3.5-4B model on port 8011:

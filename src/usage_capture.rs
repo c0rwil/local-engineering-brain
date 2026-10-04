@@ -1,8 +1,8 @@
 //! Bounded, read-only usage extraction from stock coding-agent transcripts.
 //!
-//! Only usage counters and explicitly reported model/provider metadata leave
-//! this module. Message content, tool arguments, and transcript text are never
-//! retained. Claude message snapshots should be ingested at session stop, once
+//! Only usage counters, explicitly reported model/provider metadata and Codex
+//! thread identity (`session_meta` ids and source labels) leave this module.
+//! Message content, tool arguments, and transcript text are never retained. Claude message snapshots should be ingested at session stop, once
 //! their provider usage is final. Codex counts are cumulative; only increments
 //! become additive ledger samples, and resets establish a fresh baseline.
 
@@ -280,6 +280,103 @@ fn counter_delta(previous: &mut UsageMetrics, current: &UsageMetrics) -> Counter
     }
 }
 
+/// Thread identity from the leading `session_meta` record of a Codex transcript.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodexSessionMeta {
+    /// This thread's own id (`payload.id`).
+    pub thread_id: Option<String>,
+    /// Root session id shared by every thread of one conversation tree. Codex
+    /// sends this value as `session_id` in every hook payload.
+    pub session_id: Option<String>,
+    /// Immediate parent thread of a sub-session.
+    pub parent_thread_id: Option<String>,
+    pub kind: CodexThreadKind,
+}
+
+/// What kind of Codex thread wrote a transcript.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CodexThreadKind {
+    /// A user-facing conversation, or a thread whose role is not recorded.
+    Root,
+    /// A worker thread that another thread spawned (`spawn_agent`).
+    Spawned,
+    /// A Codex-internal sub-session, named by its source label: the guardian
+    /// approval reviewer (`guardian`), `review`, `compact` or
+    /// `memory_consolidation`.
+    Internal(String),
+}
+
+/// Read only the leading `session_meta` record of a Codex transcript.
+///
+/// Returns `None` for missing or non-regular files, other transcript formats,
+/// and first lines above 2 MiB. No other transcript content is read.
+#[must_use]
+pub fn codex_session_meta(path: &Path) -> Option<CodexSessionMeta> {
+    use std::io::BufRead as _;
+    // Check before opening: opening a FIFO for reading would block the hook.
+    if !std::fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let file = File::open(path).ok()?;
+    let limit = u64::try_from(MAX_LINE_BYTES).unwrap_or(u64::MAX);
+    let mut line = Vec::new();
+    std::io::BufReader::new(file.take(limit + 1))
+        .read_until(b'\n', &mut line)
+        .ok()?;
+    if line.len() > MAX_LINE_BYTES {
+        return None;
+    }
+    let row: Value = serde_json::from_slice(&line).ok()?;
+    if row.get("type").and_then(Value::as_str) != Some("session_meta") {
+        return None;
+    }
+    let payload = row.get("payload")?;
+    Some(CodexSessionMeta {
+        thread_id: text_field(payload, "id"),
+        session_id: text_field(payload, "session_id"),
+        parent_thread_id: text_field(payload, "parent_thread_id"),
+        kind: codex_thread_kind(payload),
+    })
+}
+
+// Codex serializes `SessionSource` externally tagged: plain strings for client
+// surfaces, `{"subagent": ...}` for sub-sessions and `{"internal": ...}` for
+// internal sessions. `thread_source` is the newer, flatter label.
+fn codex_thread_kind(payload: &Value) -> CodexThreadKind {
+    let thread_source = payload.get("thread_source").and_then(Value::as_str);
+    if thread_source == Some("guardian_review") {
+        return CodexThreadKind::Internal("guardian".to_owned());
+    }
+    let source = payload.get("source");
+    if let Some(subagent) = source.and_then(|source| source.get("subagent")) {
+        return match subagent {
+            Value::Object(fields) if fields.contains_key("thread_spawn") => {
+                CodexThreadKind::Spawned
+            }
+            Value::Object(fields) => CodexThreadKind::Internal(
+                fields
+                    .get("other")
+                    .and_then(Value::as_str)
+                    .or_else(|| fields.keys().next().map(String::as_str))
+                    .unwrap_or("subagent")
+                    .to_owned(),
+            ),
+            Value::String(name) => CodexThreadKind::Internal(name.clone()),
+            _ => CodexThreadKind::Internal("subagent".to_owned()),
+        };
+    }
+    if let Some(internal) = source.and_then(|source| source.get("internal")) {
+        return CodexThreadKind::Internal(internal.as_str().unwrap_or("internal").to_owned());
+    }
+    match thread_source {
+        Some("subagent") => CodexThreadKind::Spawned,
+        Some("memory_consolidation") => {
+            CodexThreadKind::Internal("memory_consolidation".to_owned())
+        }
+        _ => CodexThreadKind::Root,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,5 +506,108 @@ mod tests {
             .set_len(MAX_TRANSCRIPT_BYTES + 1)
             .expect("file length");
         assert!(read_transcript(file.path()).is_err());
+    }
+
+    fn meta_file(payload: &Value) -> tempfile::NamedTempFile {
+        let file = tempfile::NamedTempFile::new().expect("temp");
+        let rows = lines(&[
+            json!({"type":"session_meta","payload":payload}),
+            codex_counts(10, 2, 0),
+        ]);
+        std::fs::write(file.path(), rows).expect("write");
+        file
+    }
+
+    #[test]
+    fn codex_session_meta_classifies_root_spawned_and_internal_threads() {
+        // Synthetic shapes of Codex 0.155 session_meta records.
+        let cases = [
+            (
+                json!({"id":"thread-root","session_id":"thread-root","source":"vscode",
+                    "thread_source":"user"}),
+                CodexThreadKind::Root,
+            ),
+            (
+                json!({"id":"thread-cli","session_id":"thread-cli","source":"cli"}),
+                CodexThreadKind::Root,
+            ),
+            (
+                json!({"id":"thread-worker","session_id":"thread-root",
+                    "parent_thread_id":"thread-root","thread_source":"subagent",
+                    "source":{"subagent":{"thread_spawn":{"parent_thread_id":"thread-root","depth":1}}}}),
+                CodexThreadKind::Spawned,
+            ),
+            (
+                json!({"id":"thread-guardian","session_id":"thread-root",
+                    "parent_thread_id":"thread-root","thread_source":"guardian_review",
+                    "source":{"subagent":{"other":"guardian"}}}),
+                CodexThreadKind::Internal("guardian".to_owned()),
+            ),
+            (
+                json!({"id":"thread-review","session_id":"thread-root",
+                    "source":{"subagent":"review"}}),
+                CodexThreadKind::Internal("review".to_owned()),
+            ),
+            (
+                json!({"id":"thread-memory","session_id":"thread-memory",
+                    "source":{"internal":"memory_consolidation"}}),
+                CodexThreadKind::Internal("memory_consolidation".to_owned()),
+            ),
+            (
+                json!({"id":"thread-label","session_id":"thread-root",
+                    "thread_source":"guardian_review"}),
+                CodexThreadKind::Internal("guardian".to_owned()),
+            ),
+        ];
+        for (payload, kind) in cases {
+            let file = meta_file(&payload);
+            let meta = codex_session_meta(file.path()).expect("session_meta");
+            assert_eq!(meta.kind, kind, "{payload}");
+            assert_eq!(meta.thread_id.as_deref(), payload["id"].as_str());
+            assert_eq!(meta.session_id.as_deref(), payload["session_id"].as_str());
+        }
+        let guardian = meta_file(
+            &json!({"id":"g","session_id":"root","parent_thread_id":"root",
+            "source":{"subagent":{"other":"guardian"}}}),
+        );
+        assert_eq!(
+            codex_session_meta(guardian.path())
+                .unwrap()
+                .parent_thread_id
+                .as_deref(),
+            Some("root")
+        );
+    }
+
+    #[test]
+    fn codex_session_meta_reads_only_a_bounded_leading_record() {
+        let missing = std::env::temp_dir().join("engram-missing-transcript.jsonl");
+        assert_eq!(codex_session_meta(&missing), None);
+        let file = tempfile::NamedTempFile::new().expect("temp");
+        std::fs::write(
+            file.path(),
+            lines(&[
+                codex_counts(1, 1, 0),
+                json!({"type":"session_meta","payload":{"id":"late"}}),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            codex_session_meta(file.path()),
+            None,
+            "only the leading record identifies the thread"
+        );
+        let claude =
+            lines(&[json!({"type":"assistant","message":{"id":"m","usage":{"input_tokens":1}}})]);
+        std::fs::write(file.path(), claude).unwrap();
+        assert_eq!(codex_session_meta(file.path()), None);
+        let mut oversized =
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"x\",\"pad\":\"".to_vec();
+        oversized.extend(std::iter::repeat_n(b'a', MAX_LINE_BYTES));
+        oversized.extend(b"\"}}\n");
+        std::fs::write(file.path(), oversized).unwrap();
+        assert_eq!(codex_session_meta(file.path()), None);
+        let directory = tempfile::TempDir::new().unwrap();
+        assert_eq!(codex_session_meta(directory.path()), None);
     }
 }

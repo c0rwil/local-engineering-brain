@@ -1,0 +1,647 @@
+{
+  "suite_id": "real-repo-heldout-v1",
+  "task_id": "h03_schemeless_navigation",
+  "base_commit": "9adccea20038f89381f0c49efa25909dc4d76f57",
+  "reference_fix_commit": "d3ab3e0222244dc133b508153a65f8bbbfa24d8b",
+  "generated_at": "2026-10-04T11:43:35+00:00",
+  "python": "3.14.7",
+  "fixture_root": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h03_schemeless_navigation-20261004-044328",
+  "grader_sha256": "2d6d04c64b1b867b00888f97558271a054487b705194b97aafc16ee026312153",
+  "private_files_sha256": {},
+  "preflight_sha256": "a250b2ff13cb46e0171371c20f9e9f02d7a9fa0c29549f03d8f0d2ccd4940941",
+  "shared_sha256": {
+    "preflight_common.py": "3430250732b8d6a001547d07e3dd55f981373872aeb3f8a7743549919fddc00a",
+    "py_harness.py": "a31966efeeda823f2fc13e09cfd04a0e0ae2a060164882194d0d56bc48b58e2e",
+    "rust_grader.py": "d8968d85f979c281f4f00298a2543328a792011e558d2645f0ef45c286050842"
+  },
+  "expected_check_count": 7,
+  "controls": [
+    {
+      "name": "base",
+      "kind": "base",
+      "source": "base",
+      "expect": "fail",
+      "description": "Historical base: every navigation path passes bare hosts through.",
+      "required_failures": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action",
+        "claude_goto_tool",
+        "qwen_goto_tool",
+        "qwen1_goto_tool",
+        "cua_goto_action"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "reference",
+      "kind": "reference",
+      "source": "reference",
+      "expect": "pass",
+      "description": "Historical fix.",
+      "required_failures": [],
+      "exact_failures": true
+    },
+    {
+      "name": "tool-handlers-only",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Normalizes the agents' goto tools but not the server's first navigation or the CDP base action.",
+      "required_failures": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "skip-cua-parser",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Misses the parser-based agent's goto action.",
+      "required_failures": [
+        "cua_goto_action"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "separator-heuristic",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Treats any URL without '://' as scheme-less, which breaks about:blank and data: URLs.",
+      "required_failures": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action",
+        "claude_goto_tool",
+        "qwen_goto_tool",
+        "qwen1_goto_tool",
+        "cua_goto_action"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "no-trim",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Prefixes the scheme without trimming surrounding whitespace.",
+      "required_failures": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action",
+        "claude_goto_tool",
+        "qwen_goto_tool",
+        "qwen1_goto_tool",
+        "cua_goto_action"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "urlsplit-allowlist",
+      "kind": "alternative",
+      "source": "reference",
+      "expect": "pass",
+      "description": "Legitimate alternative helper: urlsplit plus an allowlist of real schemes.",
+      "required_failures": [],
+      "exact_failures": true
+    },
+    {
+      "name": "normalize-at-route",
+      "kind": "alternative",
+      "source": "reference",
+      "expect": "pass",
+      "description": "Legitimate alternative: the server normalizes the start URL at its user-message route instead of in the loop.",
+      "required_failures": [],
+      "exact_failures": true
+    }
+  ],
+  "mutations": {
+    "tool-handlers-only": "--- reference/src/agi_agents/framework/agent_server_state.py\n+++ tool-handlers-only/src/agi_agents/framework/agent_server_state.py\n@@ -872,7 +872,6 @@\n             self._agent_state = state\n \n             if navigate and url:\n-                url = normalize_url(url)\n                 await self._page.goto(url)\n                 state.url = url\n \n--- reference/src/agi_agents/framework/base/cdp_agent.py\n+++ tool-handlers-only/src/agi_agents/framework/base/cdp_agent.py\n@@ -508,7 +508,7 @@\n         elif action.type == \"goto\":\n             url = action.parameters.get(\"url\", \"\")\n             if url:\n-                await page.goto(normalize_url(url))\n+                await page.goto(url)\n \n         elif action.type == \"wait\":\n             duration = action.parameters.get(\"duration\", 5.0)\n",
+    "skip-cua-parser": "--- reference/src/agi_agents/agi_0_cua/parser.py\n+++ skip-cua-parser/src/agi_agents/agi_0_cua/parser.py\n@@ -694,7 +694,7 @@\n             if not action.content:\n                 return \"Error: No URL\"\n \n-            url = normalize_url(action.content)\n+            url = action.content.strip()\n \n             await self.page.goto(url)\n             return \"Navigated\"\n",
+    "separator-heuristic": "--- reference/src/agi_agents/shared/url_utils.py\n+++ separator-heuristic/src/agi_agents/shared/url_utils.py\n@@ -29,6 +29,6 @@\n     stripped = url.strip()\n     if not stripped:\n         return url\n-    if _SCHEME_RE.match(stripped) or _SCHEMELESS_SCHEME_RE.match(stripped):\n+    if \"://\" in stripped:\n         return stripped\n     return f\"https://{stripped}\"\n",
+    "no-trim": "--- reference/src/agi_agents/shared/url_utils.py\n+++ no-trim/src/agi_agents/shared/url_utils.py\n@@ -26,7 +26,7 @@\n     and ``javascript:``. Scheme-less inputs (bare domains, ``localhost``,\n     ``localhost:3000`` and ``IP:port``) get ``https://``.\n     \"\"\"\n-    stripped = url.strip()\n+    stripped = url\n     if not stripped:\n         return url\n     if _SCHEME_RE.match(stripped) or _SCHEMELESS_SCHEME_RE.match(stripped):\n",
+    "urlsplit-allowlist": "--- reference/src/agi_agents/shared/url_utils.py\n+++ urlsplit-allowlist/src/agi_agents/shared/url_utils.py\n@@ -1,34 +1,18 @@\n \"\"\"URL helpers shared across agent navigation handlers.\"\"\"\n \n-import re\n+from urllib.parse import urlsplit\n \n-# Matches a leading ``scheme://`` (http, https, file, chrome, chrome-extension, ...).\n-_SCHEME_RE = re.compile(r\"^[a-zA-Z][a-zA-Z0-9+.\\-]*://\")\n-\n-# Schemes that are valid without an ``//`` authority separator.\n-_SCHEMELESS_SCHEME_RE = re.compile(\n-    r\"^(about|data|javascript|blob|mailto|tel|view-source):\",\n-    re.IGNORECASE,\n-)\n+_KNOWN_SCHEMES = {\n+    \"http\", \"https\", \"file\", \"about\", \"data\", \"chrome\", \"chrome-extension\", \"blob\",\n+    \"view-source\", \"javascript\", \"mailto\", \"tel\", \"ws\", \"wss\", \"ftp\",\n+}\n \n \n def normalize_url(url: str) -> str:\n-    \"\"\"Prepend ``https://`` to a scheme-less URL before browser navigation.\n-\n-    Browser engines (patchright/Playwright) raise \"Cannot navigate to invalid\n-    URL\" when handed a bare domain such as ``example.com``. Normalizing here\n-    means the agent no longer has to notice the error, prepend a scheme, and\n-    retry, saving a wasted step on the first navigation.\n-\n-    Already-schemed URLs are returned unchanged, including ``http://``,\n-    ``https://``, ``file://``, ``chrome://``, ``chrome-extension://`` and the\n-    authority-less schemes ``about:``, ``data:``, ``blob:``, ``view-source:``\n-    and ``javascript:``. Scheme-less inputs (bare domains, ``localhost``,\n-    ``localhost:3000`` and ``IP:port``) get ``https://``.\n-    \"\"\"\n+    \"\"\"Default scheme-less navigation targets to https.\"\"\"\n     stripped = url.strip()\n     if not stripped:\n         return url\n-    if _SCHEME_RE.match(stripped) or _SCHEMELESS_SCHEME_RE.match(stripped):\n+    if urlsplit(stripped).scheme.lower() in _KNOWN_SCHEMES:\n         return stripped\n-    return f\"https://{stripped}\"\n+    return \"https://\" + stripped\n",
+    "normalize-at-route": "--- reference/src/agi_agents/framework/agent_server_state.py\n+++ normalize-at-route/src/agi_agents/framework/agent_server_state.py\n@@ -872,7 +872,6 @@\n             self._agent_state = state\n \n             if navigate and url:\n-                url = normalize_url(url)\n                 await self._page.goto(url)\n                 state.url = url\n \n--- reference/src/agi_agents/framework/router.py\n+++ normalize-at-route/src/agi_agents/framework/router.py\n@@ -11,6 +11,7 @@\n \n from agi_agents.config import BaseAgentConfig, ConfigT\n from agi_agents.framework.sse import SSEEvent, SSEEventType\n+from agi_agents.shared.url_utils import normalize_url\n \n if TYPE_CHECKING:\n     from agi_agents.framework.agent_service import AgentService\n@@ -286,7 +287,7 @@\n                 max_steps=max_steps,\n                 step_delay=step_delay,\n                 navigate=is_new_state,\n-                url=getattr(req, \"start_url\", None),\n+                url=normalize_url(getattr(req, \"start_url\", None) or \"\") or None,\n             )\n \n             return {\"ok\": True, \"started\": started, **agent_service.state.snapshot()}\n"
+  },
+  "runs": [
+    {
+      "fixture": "base",
+      "kind": "base",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action",
+        "claude_goto_tool",
+        "qwen_goto_tool",
+        "qwen1_goto_tool",
+        "cua_goto_action"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action",
+        "claude_goto_tool",
+        "cua_goto_action",
+        "qwen1_goto_tool",
+        "qwen_goto_tool"
+      ],
+      "driver_seconds": 0.17,
+      "result": {
+        "task": "h03_schemeless_navigation",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": false,
+            "error": "AssertionError: agent server first navigation: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 412, in agent_server_first_navigation\n    check_battery(\"agent server first navigation\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agent server first navigation: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']\n",
+            "seconds": 0.023
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": false,
+            "error": "AssertionError: CDP base agent goto action: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 349, in cdp_base_goto_action\n    check_battery(\"CDP base agent goto action\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: CDP base agent goto action: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']\n",
+            "seconds": 0.002
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": false,
+            "error": "AssertionError: agi_0_claude goto tool: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 293, in claude_goto_tool\n    check_battery(\"agi_0_claude goto tool\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_0_claude goto tool: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']\n",
+            "seconds": 0.009
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": false,
+            "error": "AssertionError: agi_0_qwen goto tool: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['example.com'], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 305, in qwen_goto_tool\n    check_battery(\"agi_0_qwen goto tool\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_0_qwen goto tool: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['example.com'], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']\n",
+            "seconds": 0.004
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": false,
+            "error": "AssertionError: agi_1_qwen goto tool: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 318, in qwen1_goto_tool\n    check_battery(\"agi_1_qwen goto tool\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_1_qwen goto tool: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']\n",
+            "seconds": 0.005
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": false,
+            "error": "AssertionError: agi_0_cua goto action: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['example.com'], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 332, in cua_goto_action\n    check_battery(\"agi_0_cua goto action\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_0_cua goto action: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['example.com'], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']\n",
+            "seconds": 0.008
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.063
+      }
+    },
+    {
+      "fixture": "reference",
+      "kind": "reference",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 0.163,
+      "result": {
+        "task": "h03_schemeless_navigation",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": true,
+            "seconds": 0.021
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": true,
+            "seconds": 0.003
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": true,
+            "seconds": 0.01
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": true,
+            "seconds": 0.004
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": true,
+            "seconds": 0.004
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": true,
+            "seconds": 0.009
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.063
+      }
+    },
+    {
+      "fixture": "tool-handlers-only",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action"
+      ],
+      "driver_seconds": 0.165,
+      "result": {
+        "task": "h03_schemeless_navigation",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": false,
+            "error": "AssertionError: agent server first navigation: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 412, in agent_server_first_navigation\n    check_battery(\"agent server first navigation\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agent server first navigation: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']\n",
+            "seconds": 0.021
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": false,
+            "error": "AssertionError: CDP base agent goto action: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 349, in cdp_base_goto_action\n    check_battery(\"CDP base agent goto action\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: CDP base agent goto action: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['  example.com  '], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']\n",
+            "seconds": 0.002
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": true,
+            "seconds": 0.009
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": true,
+            "seconds": 0.003
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": true,
+            "seconds": 0.004
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": true,
+            "seconds": 0.008
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.059
+      }
+    },
+    {
+      "fixture": "skip-cua-parser",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "cua_goto_action"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "cua_goto_action"
+      ],
+      "driver_seconds": 0.233,
+      "result": {
+        "task": "h03_schemeless_navigation",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": true,
+            "seconds": 0.03
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": true,
+            "seconds": 0.004
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": true,
+            "seconds": 0.014
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": true,
+            "seconds": 0.005
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": true,
+            "seconds": 0.006
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": false,
+            "error": "AssertionError: agi_0_cua goto action: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['example.com'], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 332, in cua_goto_action\n    check_battery(\"agi_0_cua goto action\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_0_cua goto action: 'example.com' -> ['example.com'], expected ['https://example.com']; 'www.example.com/path?q=1#frag' -> ['www.example.com/path?q=1#frag'], expected ['https://www.example.com/path?q=1#frag']; '  example.com  ' -> ['example.com'], expected ['https://example.com']; 'localhost:3000' -> ['localhost:3000'], expected ['https://localhost:3000']; '127.0.0.1:8080/health' -> ['127.0.0.1:8080/health'], expected ['https://127.0.0.1:8080/health']\n",
+            "seconds": 0.011
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.085
+      }
+    },
+    {
+      "fixture": "separator-heuristic",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action",
+        "claude_goto_tool",
+        "qwen_goto_tool",
+        "qwen1_goto_tool",
+        "cua_goto_action"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action",
+        "claude_goto_tool",
+        "cua_goto_action",
+        "qwen1_goto_tool",
+        "qwen_goto_tool"
+      ],
+      "driver_seconds": 0.17,
+      "result": {
+        "task": "h03_schemeless_navigation",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": false,
+            "error": "AssertionError: agent server first navigation: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 412, in agent_server_first_navigation\n    check_battery(\"agent server first navigation\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agent server first navigation: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']\n",
+            "seconds": 0.022
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": false,
+            "error": "AssertionError: CDP base agent goto action: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 349, in cdp_base_goto_action\n    check_battery(\"CDP base agent goto action\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: CDP base agent goto action: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']\n",
+            "seconds": 0.002
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": false,
+            "error": "AssertionError: agi_0_claude goto tool: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 293, in claude_goto_tool\n    check_battery(\"agi_0_claude goto tool\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_0_claude goto tool: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']\n",
+            "seconds": 0.01
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": false,
+            "error": "AssertionError: agi_0_qwen goto tool: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 305, in qwen_goto_tool\n    check_battery(\"agi_0_qwen goto tool\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_0_qwen goto tool: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']\n",
+            "seconds": 0.004
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": false,
+            "error": "AssertionError: agi_1_qwen goto tool: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 318, in qwen1_goto_tool\n    check_battery(\"agi_1_qwen goto tool\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_1_qwen goto tool: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']\n",
+            "seconds": 0.005
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": false,
+            "error": "AssertionError: agi_0_cua goto action: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 332, in cua_goto_action\n    check_battery(\"agi_0_cua goto action\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_0_cua goto action: 'about:blank' -> ['https://about:blank'], expected ['about:blank']; 'data:text/html,hello' -> ['https://data:text/html,hello'], expected ['data:text/html,hello']\n",
+            "seconds": 0.008
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.063
+      }
+    },
+    {
+      "fixture": "no-trim",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action",
+        "claude_goto_tool",
+        "qwen_goto_tool",
+        "qwen1_goto_tool",
+        "cua_goto_action"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "agent_server_first_navigation",
+        "cdp_base_goto_action",
+        "claude_goto_tool",
+        "cua_goto_action",
+        "qwen1_goto_tool",
+        "qwen_goto_tool"
+      ],
+      "driver_seconds": 0.212,
+      "result": {
+        "task": "h03_schemeless_navigation",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": false,
+            "error": "AssertionError: agent server first navigation: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 412, in agent_server_first_navigation\n    check_battery(\"agent server first navigation\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agent server first navigation: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']\n",
+            "seconds": 0.03
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": false,
+            "error": "AssertionError: CDP base agent goto action: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 349, in cdp_base_goto_action\n    check_battery(\"CDP base agent goto action\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: CDP base agent goto action: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']\n",
+            "seconds": 0.004
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": false,
+            "error": "AssertionError: agi_0_claude goto tool: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 293, in claude_goto_tool\n    check_battery(\"agi_0_claude goto tool\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_0_claude goto tool: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']\n",
+            "seconds": 0.012
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": false,
+            "error": "AssertionError: agi_0_qwen goto tool: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 305, in qwen_goto_tool\n    check_battery(\"agi_0_qwen goto tool\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_0_qwen goto tool: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']\n",
+            "seconds": 0.007
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": false,
+            "error": "AssertionError: agi_1_qwen goto tool: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 318, in qwen1_goto_tool\n    check_battery(\"agi_1_qwen goto tool\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_1_qwen goto tool: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']\n",
+            "seconds": 0.007
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": false,
+            "error": "AssertionError: agi_0_cua goto action: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 332, in cua_goto_action\n    check_battery(\"agi_0_cua goto action\", navigate)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h03_schemeless_navigation/grade.py\", line 276, in check_battery\n    assert not failures, f\"{site}: \" + \"; \".join(failures)\n           ^^^^^^^^^^^^\nAssertionError: agi_0_cua goto action: '  example.com  ' -> ['https://  example.com  '], expected ['https://example.com']\n",
+            "seconds": 0.011
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.087
+      }
+    },
+    {
+      "fixture": "urlsplit-allowlist",
+      "kind": "alternative",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 0.191,
+      "result": {
+        "task": "h03_schemeless_navigation",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": true,
+            "seconds": 0.024
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": true,
+            "seconds": 0.002
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": true,
+            "seconds": 0.011
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": true,
+            "seconds": 0.004
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": true,
+            "seconds": 0.005
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": true,
+            "seconds": 0.009
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.074
+      }
+    },
+    {
+      "fixture": "normalize-at-route",
+      "kind": "alternative",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 0.219,
+      "result": {
+        "task": "h03_schemeless_navigation",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": true,
+            "seconds": 0.03
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": true,
+            "seconds": 0.004
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": true,
+            "seconds": 0.012
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": true,
+            "seconds": 0.004
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": true,
+            "seconds": 0.006
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": true,
+            "seconds": 0.01
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.08
+      }
+    }
+  ],
+  "status": "pass"
+}

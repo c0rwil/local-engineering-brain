@@ -27,7 +27,9 @@ engram doctor                      # every check should PASS
 
 The daemon (`engramd`) auto-starts on the first CLI call and owns the canonical
 database at `~/.engram/brain.sqlite`. You never manage it directly;
-`engram daemon status` / `engram daemon stop` exist when you need them.
+`engram daemon status` / `engram daemon stop` / `engram daemon restart` exist
+when you need them. `engram daemon status` shows the daemon's process id and,
+when an Engram client auto-started it, the process chain that started it.
 Configuration lives at `~/.config/engram/config.toml`
 (see `config/engram.example.toml` for every section).
 
@@ -83,9 +85,10 @@ The workspace UI and canonical documentation do not depend on it.
 
 ## 5. Connect your agents (once, machine-wide)
 
-Use your existing Claude Code or Codex client and its chosen model/provider.
-Engram attaches through native hooks and MCP. No replacement launcher or local
-model is required. `claude-mtplx` is only the optional MTPLX/local-model path.
+Use your existing Claude Code, Codex or Cursor client and its chosen
+model/provider. Engram attaches through native hooks and MCP. No replacement
+launcher or local model is required. `claude-mtplx` is only the optional
+MTPLX/local-model path.
 
 ```bash
 engram hooks install --global   # Claude Code: ~/.claude/settings.json
@@ -93,6 +96,8 @@ engram agent-md --global        # the agent tool loop: ~/.claude/CLAUDE.md
 claude mcp add --scope user engram -- "$HOME/.local/bin/engram-mcp"
 codex mcp add engram -- "$HOME/.local/bin/engram-mcp"
 engram hooks codex --install    # Codex native hooks; review them with /hooks
+engram hooks cursor --install   # Cursor agent hooks: ~/.cursor/hooks.json
+engram hooks cursor --mcp       # optional: engram-mcp in ~/.cursor/mcp.json
 ```
 
 These commands assume the default Engram install location. Keep an existing
@@ -103,18 +108,45 @@ uses an absolute executable path for GUI sessions. Open `/hooks` to review and
 trust the installed definitions; newly installed or changed hooks do not run
 until trusted. Start a new local session after connecting MCP.
 
+`engram doctor` reports Engram hooks that Codex will not run (`codex_hooks`):
+never trusted, changed since they were trusted, or disabled. It compares the
+trust hashes Codex keeps in `$CODEX_HOME/config.toml` with the installed
+definitions, using the rule Codex CLI 0.155.0-alpha.2.6 applies; `/hooks` in
+Codex stays the authority. A reinstall that changes a definition (for example
+a different executable path) needs trust again.
+
+Cursor's installer merges Engram's entries into `hooks.json` in the Cursor
+configuration directory: `--cursor-home DIR`, else `$ENGRAM_CURSOR_HOME`, else
+`~/.cursor`. It preserves other hooks, refuses a file it cannot parse, and
+leaves `mcp.json` alone unless you pass `--mcp`. `--mcp` registers the absolute
+`engram-mcp` path as the `engram` server; it keeps an existing server that
+already launches `engram-mcp` or `leb-mcp` and refuses to replace a foreign
+`engram` entry. `--print` shows the entries without writing anything.
+`--uninstall` removes only Engram's hook entries; add `--mcp` to also remove
+Engram's server entry. Cursor reloads `hooks.json` on save; the Hooks tab under
+Customize and the Hooks output channel show what ran. The entries point at
+`~/.local/bin/engram` when it exists. An `engram` without the Cursor adapter
+rejects `--cursor` with exit code 2, which Cursor treats as a block, so
+`--install` first runs the target binary's adapter and refuses to write when
+it fails. Install the Engram build before `--install`, and run `--uninstall`
+before downgrading to a build without Cursor support.
+
 | Client | Native connection |
 |---|---|
 | Claude Code CLI, IDE and local Code sessions in Claude Desktop | Shared Claude Code hooks and MCP settings |
 | Codex CLI, desktop app and IDE on the same host | Shared Codex hooks and MCP configuration, subject to hook trust |
+| Cursor desktop agent on the same host | Cursor user hooks (`engram hooks cursor --install`); MCP is a separate opt-in (`--mcp`) |
 | Other GUI clients with local stdio MCP support | Register the absolute `engram-mcp` executable; tools are available, but MCP alone does not guarantee automatic capture |
 | Remote/cloud agent sessions | Configure Engram on the execution host; local machine settings and localhost do not automatically follow |
 
 Claude Desktop's ordinary Chat tab is separate from its Code sessions. Configure
 its supported MCP integration separately; do not assume it runs coding hooks.
 See the official [Claude Code desktop configuration](https://code.claude.com/docs/en/desktop#coming-from-the-cli),
-[Codex hooks](https://learn.chatgpt.com/docs/hooks) and
-[shared Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+[Codex hooks](https://learn.chatgpt.com/docs/hooks),
+[shared Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli),
+[Cursor hooks](https://cursor.com/docs/hooks),
+[Cursor third-party hooks](https://cursor.com/docs/reference/third-party-hooks) and
+[Cursor MCP](https://cursor.com/docs/mcp).
 
 What the hooks do, invisibly, in every session — five injection moments:
 
@@ -123,7 +155,7 @@ What the hooks do, invisibly, in every session — five injection moments:
 | session-start | session opens | standing brief: open episodes from earlier sessions (resume or close), last completed outcome. In an untracked git repo: a one-line enrollment hint, nothing else |
 | prompt | first prompt of a session | compiles task context and retains a redacted prompt; the first relevant tool use opens the episode |
 | pretool | before file tools, Codex patches or Codex shell calls | repo-scoped task context; file graph shapes when explicit paths are available. Multi-file patches route to their edited repositories |
-| bash | after each Bash tool call | recognizable verifications (test/build/lint/typecheck) recorded as deterministic evidence with exit codes — failures included |
+| bash | after each Bash tool call | recognizable verifications (test/build/lint/typecheck) recorded as deterministic evidence with the exit status the client reported — failures included. Runs whose status a pipe or `||` hides are not recorded (see [Verification evidence from hooks](#verification-evidence-from-hooks)) |
 | session-end | session closes | episode auto-closed conservatively (success only if the last verification passed) |
 
 The global hooks are **safe by design**: they engage only in repositories
@@ -131,14 +163,95 @@ already registered in the brain and silently no-op everywhere else — a
 repo joins the brain only when you `engram index` it. Every hook fails open;
 a broken brain can never break a coding session.
 
+**Codex subagents.** Codex runs subagents in their own threads, but their
+hooks carry the parent conversation's session id. Engram counts a spawned
+worker's tool calls and verifications toward the parent's episode; the
+worker's prompt, written by the parent agent, does not replace the task
+prompt, drain the parent's relay inbox or receive prompt-time context.
+Internal sub-sessions, such as the guardian that reviews approval requests,
+are recognized from the `session_meta` record of their transcript and stay
+silent: no context, prompt capture, episode, usage or evidence, and they never
+close the parent's episode. Codex 0.155 turns hooks off inside guardian
+sessions unless managed requirements pin `features.hooks = true`.
+
+**Cursor sessions.** The Cursor entries handle `sessionStart`,
+`beforeSubmitPrompt`, `postToolUse`, `postToolUseFailure`, `stop` and
+`sessionEnd`, and answer with documented output fields only. Differences from
+Claude Code and Codex:
+
+- Cursor's documented prompt hook output has no context field, so Engram
+  records the redacted prompt and delivers task context and relay messages
+  with the first file (`Read`, `Write`, `Delete`) or shell result of a turn. A
+  turn without such a tool receives no Engram context. Each response carries
+  at most 8,000 bytes of context and 1,000 bytes of relay messages; the shipped
+  Cursor 3.17 client discards `additional_context` above 10,000 characters.
+- Permission hooks (`preToolUse`, `beforeReadFile`, `beforeShellExecution`)
+  are not used: Cursor blocks the action when such a hook returns invalid
+  output.
+- A shell verification becomes evidence only when its tool result carries an
+  exit code. The shipped Cursor 3.17 shell reports a failing command through
+  `postToolUseFailure` without one: it counts as a tool call, not evidence,
+  and it clears the session's last recorded result, so the episode cannot
+  auto-close as a success on an earlier pass.
+- Cursor 3.17 transcripts carry no token counters that Engram's transcript
+  reader recognizes, so Cursor sessions report tool calls but no model token
+  usage. Usage rows are labeled `cursor` and evidence `cursor-hook`.
+- Cursor also runs Claude Code hooks from `~/.claude/settings.json` by default
+  (Settings, Agents, Third-Party Imports). Engram's Claude Code entries
+  recognize Cursor's input and stay silent there, so Cursor sessions are
+  captured only through the Cursor entries, once.
+- Session-level events use the first workspace root; tool events route by
+  the tool's own paths. Cursor cloud agents do not read user-level hooks.
+
 MCP exposes the episode lifecycle to agents; clients without native hooks must
 call those tools to capture it. Optional local-model proxy injection runs through
 `engram-proxy` on 127.0.0.1:11435 (`x-engram-mode: off` is a true control).
 
+### Verification evidence from hooks
+
+The `bash` hook records a test, build, lint or typecheck run only when the
+coding client reported its exit status:
+
+- Claude Code reports a non-zero exit through `PostToolUseFailure` ("Exit code
+  N"). A completed foreground `PostToolUse` Bash call therefore has status 0.
+  Interrupted, backgrounded or timed-out calls, and calls whose non-zero status
+  Claude Code reinterpreted (for example `grep` finding nothing), are not recorded.
+- Codex supplies an explicit exit code in its tool result.
+
+The status must also belong to the verification. Engram records
+`cargo test`, `cd repo && cargo test` and `cargo fmt --check && cargo test`.
+It does not record `cargo test 2>&1 | tail -20`, `cargo test || true`,
+`cargo test; echo done` or background jobs, because the shell reports another
+command's status. To keep output short and still record the result, enable
+`pipefail` first: `set -o pipefail; cargo test 2>&1 | tail -40`. Runner wrappers
+that return the tool's status are recognized (`uv run`, `poetry run`, `npx`,
+`uvx`, `timeout N`, `python3 -m pytest`). Listing or help invocations such as
+`cargo test -- --list` are not verification. A verification whose result is
+not observed (hidden status, an interrupted run, or a failure reported without
+an exit code) clears the session's last result: the result is unknown, so an
+earlier pass cannot close the episode as success.
+
+Each record keeps the last 4 KiB of output, the Git HEAD and SHA-256 digests of
+the files the session touched or left modified (up to 64 files, 512 KiB each and
+4 MiB in total; files beyond these bounds get no digest). If
+the agent declared an Engram task in the same session (`engram_task_start`, or a
+task ID passed to attempt or evidence tools), new records go to that task, so a
+later `engram_complete_task` can attach them to its lessons. After the agent
+completes that task, records return to the session's own episode. Evidence from
+runs before the declaration stays on the session episode.
+
+The evidence judge accepts a hook record for a touched file that was re-indexed
+after the run (for example by the commit watcher) only when the recorded digest
+equals the indexed digest: the run observed exactly those bytes. Evidence that
+agents report through MCP or completions has no such digests and keeps the
+stricter rule: it must be newer than the indexed version of every touched file.
+Only new runs carry digests; existing evidence is not changed.
+
 ## 6. Day to day: what's automatic vs. what you do
 
 **Automatic with active native hooks:** context injection, evidence capture and
-episode bookkeeping, identifiable completed tool calls and available provider usage.
+episode bookkeeping, identifiable completed tool calls, the repository files they read
+or edit (paths and Read sizes, never content) and available provider usage.
 The **Effectiveness** tab shows measurements and gaps. An enabled evidence judge
 reviews pending lessons automatically. The daemon also handles
 re-indexing on commits and branch switches, origin refresh, guide regen,
@@ -210,6 +323,7 @@ knowledge never ping-pongs back.
 | Verify a backup | `engram backup verify` |
 | See what would inject and why | `engram context "…" --path <repo> --json` |
 | Regenerate the architecture guide | `engram architect --claude` |
+| Restart the daemon from this terminal | `engram daemon restart` (waits up to `--wait-secs`, default 120, for in-flight work) |
 | Stop everything | `engram daemon stop` |
 
 Never copy `brain.sqlite` with `cp` — WAL contents are lost. Backups only.
@@ -218,14 +332,72 @@ Never copy `brain.sqlite` with `cp` — WAL contents are lost. Backups only.
 
 - **Hook prints nothing in a repo** — the repo isn't registered
   (`engram index <repo>`), or the daemon is down (`engram doctor`).
+- **No Engram context in Cursor** — Cursor receives context after the first
+  file or shell tool of a turn, not at the prompt. Check the entries under
+  Customize, Hooks, and that `engram hooks cursor --install` targeted the
+  directory Cursor reads.
 - **Stale responses after upgrading** — restart the daemon
-  (`engram daemon stop`; the next CLI call auto-starts the new binary).
+  (`engram daemon restart`, or `engram daemon stop` and let the next CLI call
+  auto-start the new binary).
 - **Encyclopedia looks stale in the browser** — the page is no-cache, but
   a long-lived tab may need a reload; the data underneath refreshes on the
   watcher cadence.
 - **A memory looks wrong** — Forget it in the browser or via MCP
   `engram_forget`; if it was drift (the code changed under it), it is already
   quarantined automatically.
+- **`checkout_access` fails, or a hook or tool reports "macOS privacy
+  permission denied for … in engramd"** — the daemon cannot read that
+  repository. On macOS a process inherits privacy (TCC) folder access from
+  the app that started it, and an agent hook can auto-start `engramd` from an
+  app that may not read `~/Documents`, `~/Desktop` or `~/Downloads`. Indexing,
+  identity, Git state and evidence-review source checks then fail for those
+  repositories. `engram doctor` names the denied paths and the process chain
+  that started the daemon. Fix it with `engram daemon restart` from a terminal
+  that can read the folders, or grant `engramd` access in System Settings >
+  Privacy & Security (Full Disk Access or Files and Folders). Each reinstall
+  puts `engramd` at a new path under `~/.local/share/engram/releases/`, so such
+  a grant likely does not survive reinstalling. Engram does not restart the
+  daemon on its own: a restart interrupts every connected session, and two
+  apps with different folder grants would keep replacing each other's daemon.
+- **`codex_hooks` warns** — Codex has not trusted Engram's hooks, so Codex
+  sessions run without context injection or capture. Open Codex, run `/hooks`
+  and trust the Engram entries.
+- **`project_identity` warns** — see
+  [Duplicate project registrations](#duplicate-project-registrations).
+
+### Duplicate project registrations
+
+`engram doctor` warns when live checkouts of one repository (same canonical
+`origin` remote and root commit) belong to different project ids. This
+happens when a project was registered without its Git identity (for example
+while the daemon could not read Git), so a later clone could not be matched
+to it, or when separate clones carry different `.engram/project.toml` pins.
+Knowledge recorded under one id is not visible from the other.
+
+Engram never merges or re-identifies projects automatically. A project
+registered without Git identity gets its root commit and canonical remote
+recorded once Git is readable; its id does not change. The remote is recorded
+only when no other active project could be the same repository, so with
+duplicates neither claims it, and a later clone without metadata registers as
+a new project instead of silently joining one of them. Until a merge command
+exists:
+
+- Work in one checkout. `engram memory list --path <checkout>` shows the
+  memories each id holds.
+- Do not point one checkout's `project.toml` at the other id. Each recorded
+  checkout path belongs to exactly one project, so that checkout would stop
+  resolving.
+- Deleting a clone you no longer use clears the warning; its records stay
+  under its id.
+
+A safe merge command would need: an explicit choice of surviving and retired
+id; evidence that both are the same repository (the doctor's remote and root
+commit match); a backup and a dry run that counts the rows to move; one
+single-writer transaction that re-scopes project-keyed rows (memories, tasks,
+attempts, evidence, context runs, facts, links and checkout paths) with
+explicit rules for key collisions; an auditable merge event plus a tombstone
+for the retired id so replay reproduces the result; rewritten pins for the
+retired checkouts; and a re-index instead of moving derived indexes.
 
 ## Capturing operations lessons
 
@@ -333,6 +505,123 @@ replay database must match the daemon's database; for a frozen replay, start an
 isolated daemon serving the snapshot. Reports omit raw prompts, evidence
 artifacts, and repository source, and make no model or cloud calls.
 
+## Optional local embedding model (off by default, unmeasured)
+
+Semantic retrieval is off by default (`[context] semantic_retrieval = false`).
+When it is on, the default embedder is a hashed n-gram projection: a lexical
+approximation, not a learned model. Engram can instead call a local embedding
+model through an `OpenAI`-compatible `POST /v1/embeddings` endpoint, such as
+Ollama's. No benchmark has shown that either embedder improves task outcomes.
+The 2026-09-25 real-repository follow-up attributed Engram's added cost to the
+context agents carried after following source pointers, not to the injected
+text, and it did not measure memory retrieval. Treat the local model as an
+experiment: measure it before you enable it for real work.
+
+To try it, pull an embedding model. Chat models such as `qwen3:8b` are not
+embedding models. Sizes are from ollama.com/library on 2026-10-04:
+
+```sh
+ollama pull nomic-embed-text     # 274 MB, 768 dimensions
+ollama pull embeddinggemma       # 622 MB, 768 dimensions
+```
+
+Configure it in `~/.config/engram/config.toml` (or a workspace profile). A
+repository's `.engram/config.toml` can turn `semantic_retrieval` on or off and
+set the two bounds, but it cannot set provider settings.
+
+```toml
+[context]
+semantic_retrieval = true
+
+[semantic]
+provider = "local"
+model = "nomic-embed-text"
+query_prefix = "search_query: "        # model-specific; see the example config
+document_prefix = "search_document: "
+```
+
+Restart the daemon (`engram daemon stop`; the next CLI call starts it), then
+embed the memories of each repository:
+
+```sh
+engram semantic rebuild <repo>
+```
+
+The rebuild reports how many vectors it embedded, kept unchanged, and removed.
+It embeds outside the canonical writer in pages and skips memories whose text
+has not changed. Each stored vector records its model identity
+(`local:<model>`, plus a digest of the document prefix) and its dimension.
+Retrieval compares only vectors of the configured identity and dimension.
+After a change of model, prefix, or dimension, the previous vectors are not
+searched. That repository gets lexical and structural retrieval only until a
+rebuild has run. Retrieval also requests that rebuild: with background jobs
+enabled, the daemon queues a `semantic_rebuild` job, at most one per repository
+per hour. The rebuild deletes the other model's vectors for that repository.
+The hashed vectors are always kept up to date.
+
+If the endpoint is down, slow (over `query_timeout_ms`, default 2 s) or returns
+an error, that request uses the hashed vectors instead. The endpoint is then
+skipped for 30 seconds. The `why` note of every injected memory names the
+embedder that served it, any fallback and its reason, and any coverage gap. To
+see these notes, use `engram context "…" --path <repo> --json`. By default
+Ollama unloads a model after five idle minutes (`OLLAMA_KEEP_ALIVE`). A query
+that waits for the model to load again can exceed `query_timeout_ms` and fall
+back.
+
+Safety limits:
+
+- The endpoint must be loopback (`localhost`, `127.0.0.0/8` or `[::1]`), also
+  when `network.local_only = false`. `localhost` is pinned to 127.0.0.1.
+- Proxies and redirects are refused.
+- Each text is cut at 8 KiB, and a request holds at most 64 texts.
+- Response sizes are capped in proportion to the vectors requested.
+- Every request has a time limit.
+
+Memory text and task text go to the local endpoint only.
+
+### Measuring hashed against model embeddings
+
+`scripts/eval_semantic_retrieval.py` compares the arms `off` (lexical and
+structural), `hashed`, and `local` on one frozen snapshot with the same cases.
+Each arm runs an isolated daemon on its own copy of the snapshot and rebuilds its
+own vectors. The report contains hit@1/3/5 and MRR for the first relevant
+injected memory and the irrelevant memories injected per case. It also contains
+injections on negative cases, the embedder that served each trial, median
+semantic scores of relevant and other memories, and latency. It never contains
+memory text. A `local` run is invalid (exit 1) when any trial was served by a
+fallback.
+
+Plumbing check with the committed synthetic fixture (it is too small to
+measure quality):
+
+```sh
+python3 scripts/eval_semantic_retrieval.py --daemon ~/.local/bin/engramd \
+  --synthetic fixtures/semantic-retrieval-synthetic.json \
+  --model nomic-embed-text --query-prefix "search_query: " \
+  --document-prefix "search_document: " --output /tmp/esr-synthetic.json
+```
+
+Comparison on your own frozen snapshot. Cases use the replay format
+(`fixtures/capture-replay.json`): a case counts as relevant only when a
+validated memory's claim matches all of its `expected_patterns`. Mark a case
+that should inject nothing with `"negative": true`.
+
+```sh
+caffeinate -dims python3 scripts/eval_semantic_retrieval.py \
+  --daemon ~/.local/bin/engramd \
+  --freeze-from ~/.engram/brain.sqlite --snapshot /tmp/esr-snapshot.sqlite \
+  --cases <cases.json> --project <alias>=<registered-name> \
+  --model nomic-embed-text --query-prefix "search_query: " \
+  --document-prefix "search_document: " --output /tmp/esr-nomic.json
+```
+
+Run it once with `--min-similarity 0` first. Learned models often give
+unrelated text a positive cosine similarity, so too many memories inject. Pick
+a floor from the median semantic scores for relevant and other memories, then
+repeat the run with `--min-similarity`. Good retrieval diagnostics alone do not
+justify turning the stage on. They justify a paired task benchmark
+(`docs/BENCHMARKS.md`) with the brain-off control unchanged.
+
 ## Product knowledge and living documentation
 
 The browser now opens on **Product**. Add the product's purpose, intended behavior,
@@ -423,6 +712,13 @@ remain pending; attach actual supporting evidence through a completion retry.
 Similarity alone does not establish a contradiction. Explicitly identifying a
 contradiction quarantines the old claim. Accepted lessons do not mark the task
 accepted by the user.
+
+A proposal whose claim, rationale or evidence matches a prompt-injection pattern
+shows a **Possible prompt injection** notice with the matched rules. The judge does
+not review it. Edit the flagged text out, or tick the acknowledgment and accept it
+as written; that acceptance is recorded as a human override. `engram doctor`
+reports validated memories that match these patterns without changing them. See
+[prompt injection and memory poisoning](SECURITY.md).
 
 A proposal can include `expires_at_ms` for temporary operational knowledge.
 Expired memories stop injecting. Reverification can renew that expiry through a

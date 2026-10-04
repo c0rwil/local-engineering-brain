@@ -161,6 +161,11 @@ impl McpServer {
             "engram_review_lesson" => {
                 let request: crate::product::lessons::ReviewRequest =
                     serde_json::from_value(arguments.clone())?;
+                if request.acknowledge_security_flags {
+                    return Err(Error::Config(
+                        "acknowledge_security_flags is reserved for a human reviewer; flagged lessons are accepted in the web Knowledge inbox or with the CLI".to_owned(),
+                    ));
+                }
                 self.client
                     .lesson_mutate(&crate::product::lessons::LessonMutation::Review(request))
                     .await?
@@ -640,7 +645,7 @@ fn tool_catalog() -> Value {
                     "task_id": {"type": "string"}
                 }, "required": ["project_id", "task"], "additionalProperties": false
             })),
-            tool("engram_effectiveness", "Inspect measured usage, measurement coverage, retrieved context sources, learning state and controlled benchmark comparisons. Missing measurements are unknown; retrieval does not prove savings", &json!({
+            tool("engram_effectiveness", "Inspect measured usage, measurement coverage, retrieved context sources, hook-observed use of delivered file pointers and Read volume, learning state and controlled benchmark comparisons. Missing measurements are unknown; retrieval does not prove savings and context use is association, not causation", &json!({
                 "type":"object","properties":{"project_ids":{"type":"array","items":{"type":"string"}},"since_ms":{"type":"integer"},"until_ms":{"type":"integer"}},"additionalProperties":false
             })),
             tool("engram_record_usage", "Record actual provider or harness usage with a stable unique sample_id. Omit unknown metrics. Never estimate token counts, cost or avoided tool calls. Repeating an identical sample is safe", &json!({
@@ -945,6 +950,25 @@ mod tests {
                 .div_ceil(4)
                 <= 100
         );
+    }
+
+    #[tokio::test]
+    async fn agents_cannot_acknowledge_security_flags() {
+        let server = super::McpServer::new(
+            "/nonexistent/engram-test.sock",
+            std::time::Duration::from_secs(1),
+            1 << 20,
+        );
+        let error = server
+            .call_tool(Some(&serde_json::json!({
+                "name": "engram_review_lesson",
+                "arguments": {"id": "review_fixture", "expected_updated_at_ms": 1,
+                    "decision": "accept", "reviewed_related": true,
+                    "acknowledge_security_flags": true}
+            })))
+            .await
+            .expect_err("agent acknowledgment");
+        assert!(error.to_string().contains("reserved for a human reviewer"));
     }
 
     #[test]

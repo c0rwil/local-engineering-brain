@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use url::Url;
 use uuid::Uuid;
 
-use crate::error::{Error, Result, io_error};
+use crate::error::{Error, Result, checkout_io_error};
 use crate::events::{DomainEvent, EventStore};
 pub use crate::ids::ProjectId;
 use crate::storage::Database;
@@ -317,6 +317,9 @@ impl ProjectRegistry {
         let is_derived_view = metadata
             .as_ref()
             .is_some_and(|metadata| metadata.derived_view.unwrap_or(false));
+        if metadata.is_some() && !is_derived_view {
+            project = self.backfill_identity(project, git.as_ref())?;
+        }
         if !is_derived_view {
             for path in [&identity_root, &root] {
                 if git_optional_text(path, &["rev-parse", "--is-bare-repository"])?.as_deref()
@@ -352,6 +355,108 @@ impl ProjectRegistry {
             root,
             component,
             git,
+        })
+    }
+
+    /// Record Git identity that a metadata-pinned project is missing, for
+    /// example because it was registered while Git was unreadable. The project
+    /// id never changes and recorded values are never overwritten. The root
+    /// commit is filled whenever Git reports one. The remote is claimed only
+    /// when no other active project could be the same repository (see
+    /// [`Self::remote_is_unclaimed`]), so a duplicate registration stays
+    /// visible in `engram doctor` instead of one copy silently winning.
+    fn backfill_identity(
+        &self,
+        project: ProjectRecord,
+        git: Option<&GitState>,
+    ) -> Result<ProjectRecord> {
+        let Some(git) = git else {
+            return Ok(project);
+        };
+        let root_commit = project
+            .root_commit
+            .is_none()
+            .then(|| git.root_commit.clone())
+            .flatten();
+        let known_root = project.root_commit.as_deref().or(root_commit.as_deref());
+        let canonical_remote = match (&project.canonical_remote, &git.canonical_remote) {
+            (None, Some(remote))
+                if self.remote_is_unclaimed(&project.id, remote, known_root)? =>
+            {
+                Some(remote.clone())
+            }
+            _ => None,
+        };
+        if root_commit.is_none() && canonical_remote.is_none() {
+            return Ok(project);
+        }
+        self.events.append(&DomainEvent::ProjectIdentityObserved {
+            project_id: project.id.clone(),
+            canonical_remote,
+            root_commit,
+        })?;
+        self.find_by_id(&project.id)?.ok_or_else(|| {
+            Error::Config("project projection missing after identity backfill".to_owned())
+        })
+    }
+
+    /// Whether `project_id` may record `remote` as its canonical remote. Not
+    /// when another active project already holds it, nor when another active,
+    /// non-view project without a remote records the same root commit, nor
+    /// when one has no identity at all but a Git checkout on disk: each of
+    /// those could be the same repository registered twice.
+    fn remote_is_unclaimed(
+        &self,
+        project_id: &ProjectId,
+        remote: &str,
+        root_commit: Option<&str>,
+    ) -> Result<bool> {
+        if self.find_by_remote(remote)?.is_some() {
+            return Ok(false);
+        }
+        let candidates = self.database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT p.id, p.root_commit FROM projects p
+                 WHERE p.id <> ?1 AND p.tombstoned_at_ms IS NULL
+                   AND p.canonical_remote IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM project_facts f
+                                   WHERE f.project_id = p.id AND f.key = 'internal.view_of')",
+            )?;
+            let rows = statement
+                .query_map([project_id.as_str()], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })?;
+        for (other, other_root) in candidates {
+            let possibly_same = if let Some(other_root) = other_root {
+                root_commit == Some(other_root.as_str())
+            } else {
+                // No identity recorded at all: a Git checkout on disk could
+                // be this repository until its own resolution records one.
+                self.raw_alias_paths(&ProjectId::parse(&other)?)?
+                    .iter()
+                    .any(|path| fs::symlink_metadata(path.join(".git")).is_ok())
+            };
+            if possibly_same {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Recorded checkout paths without Git filtering, oldest first.
+    fn raw_alias_paths(&self, project_id: &ProjectId) -> Result<Vec<PathBuf>> {
+        self.database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT path FROM project_aliases WHERE project_id = ?1
+                 ORDER BY observed_at_ms ASC, path ASC",
+            )?;
+            let rows = statement
+                .query_map([project_id.as_str()], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows.into_iter().map(PathBuf::from).collect())
         })
     }
 
@@ -570,16 +675,7 @@ impl ProjectRegistry {
     ///
     /// Returns an error for storage failures.
     pub fn alias_paths(&self, project_id: &ProjectId) -> Result<Vec<PathBuf>> {
-        let mut paths = self.database.with_reader(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT path FROM project_aliases WHERE project_id = ?1
-                 ORDER BY observed_at_ms ASC, path ASC",
-            )?;
-            let rows = statement
-                .query_map([project_id.as_str()], |row| row.get::<_, String>(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            Ok(rows.into_iter().map(PathBuf::from).collect::<Vec<_>>())
-        })?;
+        let mut paths = self.raw_alias_paths(project_id)?;
         paths.retain(|path| {
             git_optional_text(path, &["rev-parse", "--is-bare-repository"])
                 .ok()
@@ -686,19 +782,17 @@ impl GitState {
     pub fn discover(path: &Path) -> Result<Option<Self>> {
         let root_output = git_output(path, &["rev-parse", "--show-toplevel"])?;
         if !root_output.status.success() {
+            // Git exits non-zero both for "not a repository" and for a folder
+            // this process may not read (a macOS privacy denial looks the
+            // same). A denial must never degrade silently into no-Git
+            // identity: registrations made that way lack remote and root.
+            ensure_checkout_readable(path)?;
             return Ok(None);
         }
         let root_text = output_text(&root_output)?;
         let repository_root = canonical_path(Path::new(&root_text))?;
 
-        let remote = git_optional_text(&repository_root, &["remote", "get-url", "origin"])?
-            .map(|value| normalize_remote(&value, &repository_root));
-        let mut roots =
-            git_optional_text(&repository_root, &["rev-list", "--max-parents=0", "HEAD"])?
-                .map(|value| value.lines().map(str::to_owned).collect::<Vec<_>>())
-                .unwrap_or_default();
-        roots.sort();
-        let root_commit = roots.into_iter().next();
+        let (remote, root_commit) = repository_identity(&repository_root)?;
         let head = git_optional_text(&repository_root, &["rev-parse", "HEAD"])?;
         let branch = git_optional_text(
             &repository_root,
@@ -764,6 +858,198 @@ impl GitState {
             ));
         }
         parse_name_status_paths(&output.stdout)
+    }
+}
+
+/// Canonical `origin` remote and lowest root commit of a repository root:
+/// the identity inputs registration uses (spec section 7).
+fn repository_identity(repository_root: &Path) -> Result<(Option<String>, Option<String>)> {
+    let remote = git_optional_text(repository_root, &["remote", "get-url", "origin"])?
+        .map(|value| normalize_remote(&value, repository_root));
+    let mut roots = git_optional_text(repository_root, &["rev-list", "--max-parents=0", "HEAD"])?
+        .map(|value| value.lines().map(str::to_owned).collect::<Vec<_>>())
+        .unwrap_or_default();
+    roots.sort();
+    Ok((remote, roots.into_iter().next()))
+}
+
+/// How a registered checkout looks to the probing process. The daemon runs
+/// the probe for `engram doctor` because its own permissions are the ones
+/// that matter: on macOS it inherits privacy (TCC) access from whichever app
+/// started it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CheckoutState {
+    /// The recorded path no longer exists (a moved or deleted checkout).
+    Missing,
+    /// The operating system refused access to `path`.
+    Denied { path: PathBuf, reason: String },
+    /// Any other failure, reported verbatim.
+    Failed { reason: String },
+    /// Readable. `identity` is present for Git checkouts.
+    Readable { identity: Option<LiveIdentity> },
+}
+
+/// Live identity of a readable Git checkout.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiveIdentity {
+    /// Project pinned by the checkout's `.engram/project.toml` (or legacy
+    /// `.leb/project.toml`), when present.
+    pub pinned_project_id: Option<ProjectId>,
+    pub canonical_remote: Option<String>,
+    pub root_commit: Option<String>,
+}
+
+/// One recorded checkout path of an active project.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckoutProbe {
+    pub project_id: ProjectId,
+    pub project_name: String,
+    /// Hidden from the workspace browser (`internal.hidden`); still active.
+    pub hidden: bool,
+    pub path: PathBuf,
+    pub state: CheckoutState,
+}
+
+/// Bounded survey of the recorded checkouts of every active, non-view project.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CheckoutSurvey {
+    pub probes: Vec<CheckoutProbe>,
+    /// More recorded paths existed than the survey bound allowed.
+    pub truncated: bool,
+}
+
+impl ProjectRegistry {
+    /// Probe the recorded checkout paths of every active project, excluding
+    /// derived origin views, from this process. Read-only: nothing is
+    /// registered or persisted. At most `max_paths` paths are examined.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors. Filesystem and Git failures become probe states.
+    pub fn survey_checkouts(&self, max_paths: usize) -> Result<CheckoutSurvey> {
+        let projects = self.database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT p.id, p.name,
+                        EXISTS(SELECT 1 FROM project_facts f WHERE f.project_id = p.id
+                               AND f.key = 'internal.hidden' AND f.value = 'true')
+                 FROM projects p
+                 WHERE p.tombstoned_at_ms IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM project_facts f WHERE f.project_id = p.id
+                                   AND f.key = 'internal.view_of')
+                 ORDER BY p.name, p.id",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, bool>(2)?,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })?;
+        let mut survey = CheckoutSurvey::default();
+        for (id, name, hidden) in projects {
+            let project_id = ProjectId::parse(&id)?;
+            // Access is probed on every path; Git identity (several Git
+            // processes each) only on the first few checkouts per project.
+            let mut identified = 0_usize;
+            for path in self.raw_alias_paths(&project_id)? {
+                if survey.probes.len() >= max_paths {
+                    survey.truncated = true;
+                    return Ok(survey);
+                }
+                let state = probe_checkout(&path, identified < IDENTITY_PROBES_PER_PROJECT);
+                if matches!(state, CheckoutState::Readable { identity: Some(_) }) {
+                    identified += 1;
+                }
+                survey.probes.push(CheckoutProbe {
+                    project_id: project_id.clone(),
+                    project_name: name.clone(),
+                    hidden,
+                    state,
+                    path,
+                });
+            }
+        }
+        Ok(survey)
+    }
+}
+
+/// Checkouts per project whose live Git identity a survey reads.
+const IDENTITY_PROBES_PER_PROJECT: usize = 3;
+
+/// Probe one checkout path: existence, directory listing, the `.git` entry
+/// and local project metadata. With `identify`, a Git checkout also reports
+/// its pinned project and live Git identity.
+#[must_use]
+pub fn probe_checkout(path: &Path, identify: bool) -> CheckoutState {
+    let classify = |path: &Path, error: std::io::Error| {
+        if error.kind() == std::io::ErrorKind::PermissionDenied {
+            CheckoutState::Denied {
+                path: path.to_path_buf(),
+                reason: error.to_string(),
+            }
+        } else {
+            CheckoutState::Failed {
+                reason: format!("{}: {error}", path.display()),
+            }
+        }
+    };
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return CheckoutState::Missing;
+        }
+        Err(error) => return classify(path, error),
+        Ok(_) => {}
+    }
+    if let Err(error) = fs::read_dir(path) {
+        return classify(path, error);
+    }
+    let metadata_file = metadata_dir(path).join("project.toml");
+    if let Err(error) = File::open(&metadata_file)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        return classify(&metadata_file, error);
+    }
+    let git = path.join(".git");
+    let git_probe = fs::symlink_metadata(&git).and_then(|metadata| {
+        if metadata.is_dir() {
+            fs::read_dir(&git).map(drop)
+        } else {
+            File::open(&git).map(drop)
+        }
+    });
+    match git_probe {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return CheckoutState::Readable { identity: None };
+        }
+        Err(error) => return classify(&git, error),
+        Ok(()) if !identify => return CheckoutState::Readable { identity: None },
+        Ok(()) => {}
+    }
+    let identity_root = primary_worktree_root(path)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| path.to_path_buf());
+    // Unparseable metadata pins nothing here; registration reports it.
+    let pinned_project_id = read_project_metadata(&identity_root)
+        .ok()
+        .flatten()
+        .map(|metadata| metadata.project_id);
+    let top = git_optional_text(path, &["rev-parse", "--show-toplevel"])
+        .ok()
+        .flatten();
+    let (canonical_remote, root_commit) = top
+        .and_then(|top| repository_identity(Path::new(&top)).ok())
+        .unwrap_or((None, None));
+    CheckoutState::Readable {
+        identity: Some(LiveIdentity {
+            pinned_project_id,
+            canonical_remote,
+            root_commit,
+        }),
     }
 }
 
@@ -840,7 +1126,7 @@ fn read_project_metadata(root: &Path) -> Result<Option<ProjectMetadataFile>> {
     if !path.exists() {
         return Ok(None);
     }
-    let contents = fs::read_to_string(&path).map_err(|source| io_error(&path, source))?;
+    let contents = fs::read_to_string(&path).map_err(|source| checkout_io_error(&path, source))?;
     toml::from_str(&contents)
         .map(Some)
         .map_err(|error| Error::InvalidProjectMetadata {
@@ -855,7 +1141,7 @@ fn persist_project_metadata(root: &Path, project: &ProjectRecord) -> Result<()> 
     if path.exists() {
         return Ok(());
     }
-    fs::create_dir_all(&directory).map_err(|source| io_error(&directory, source))?;
+    fs::create_dir_all(&directory).map_err(|source| checkout_io_error(&directory, source))?;
     let metadata = ProjectMetadataFile {
         project_id: project.id.clone(),
         name: Some(project.name.clone()),
@@ -864,8 +1150,8 @@ fn persist_project_metadata(root: &Path, project: &ProjectRecord) -> Result<()> 
     };
     let contents = toml::to_string_pretty(&metadata)?;
     let temporary = directory.join(format!(".project.toml.{}.tmp", Uuid::new_v4()));
-    fs::write(&temporary, contents).map_err(|source| io_error(&temporary, source))?;
-    fs::rename(&temporary, &path).map_err(|source| io_error(&path, source))
+    fs::write(&temporary, contents).map_err(|source| checkout_io_error(&temporary, source))?;
+    fs::rename(&temporary, &path).map_err(|source| checkout_io_error(&path, source))
 }
 
 fn discover_component(requested_path: &Path, project_root: &Path) -> Result<Option<ComponentRef>> {
@@ -877,7 +1163,7 @@ fn discover_component(requested_path: &Path, project_root: &Path) -> Result<Opti
         let marker = directory.join(".engram/component.toml");
         if marker.exists() {
             let contents =
-                fs::read_to_string(&marker).map_err(|source| io_error(&marker, source))?;
+                fs::read_to_string(&marker).map_err(|source| checkout_io_error(&marker, source))?;
             let metadata: ComponentMetadataFile =
                 toml::from_str(&contents).map_err(|error| Error::InvalidProjectMetadata {
                     path: marker,
@@ -939,22 +1225,23 @@ fn diff_fingerprint(root: &Path, status: &[u8], has_head: bool) -> Result<String
         );
         hasher.update(raw_path);
         let full_path = root.join(path_from_git_bytes(raw_path));
-        let metadata =
-            fs::symlink_metadata(&full_path).map_err(|source| io_error(&full_path, source))?;
+        let metadata = fs::symlink_metadata(&full_path)
+            .map_err(|source| checkout_io_error(&full_path, source))?;
         if metadata.file_type().is_symlink() {
             hasher.update(b"symlink");
-            let target =
-                fs::read_link(&full_path).map_err(|source| io_error(&full_path, source))?;
+            let target = fs::read_link(&full_path)
+                .map_err(|source| checkout_io_error(&full_path, source))?;
             update_os_path(&mut hasher, &target);
         } else if metadata.is_file() {
             hasher.update(b"file");
             hasher.update(metadata.len().to_le_bytes());
-            let mut file = File::open(&full_path).map_err(|source| io_error(&full_path, source))?;
+            let mut file =
+                File::open(&full_path).map_err(|source| checkout_io_error(&full_path, source))?;
             let mut buffer = [0_u8; 16 * 1024];
             loop {
                 let read = file
                     .read(&mut buffer)
-                    .map_err(|source| io_error(&full_path, source))?;
+                    .map_err(|source| checkout_io_error(&full_path, source))?;
                 if read == 0 {
                     break;
                 }
@@ -1191,7 +1478,32 @@ fn project_name(path: &Path) -> String {
 }
 
 fn canonical_path(path: &Path) -> Result<PathBuf> {
-    fs::canonicalize(path).map_err(|source| io_error(path, source))
+    fs::canonicalize(path).map_err(|source| checkout_io_error(path, source))
+}
+
+/// Fail with [`Error::AccessDenied`] when this process may not list `path`
+/// or read its `.git` entry. Missing paths and non-directories pass: Git's
+/// own answer stands for those.
+fn ensure_checkout_readable(path: &Path) -> Result<()> {
+    if let Err(source) = fs::read_dir(path)
+        && source.kind() == std::io::ErrorKind::PermissionDenied
+    {
+        return Err(checkout_io_error(path, source));
+    }
+    let git = path.join(".git");
+    let probe = fs::symlink_metadata(&git).and_then(|metadata| {
+        if metadata.is_dir() {
+            fs::read_dir(&git).map(drop)
+        } else {
+            File::open(&git).map(drop)
+        }
+    });
+    match probe {
+        Err(source) if source.kind() == std::io::ErrorKind::PermissionDenied => {
+            Err(checkout_io_error(&git, source))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn git_optional_text(path: &Path, arguments: &[&str]) -> Result<Option<String>> {
@@ -1776,6 +2088,235 @@ mod tests {
             seeded.project.id, arm.project.id,
             "metadata-pinned copies must resolve to one project"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_checkout_is_an_access_error_and_registers_nothing() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path().join("locked");
+        init_repo(&repo);
+        let registry = registry(&temp);
+        fs::set_permissions(&repo, fs::Permissions::from_mode(0o000)).expect("lock");
+        let enforced = fs::read_dir(&repo).is_err();
+        let discovered = GitState::discover(&repo);
+        let resolved = registry.resolve_or_register(&repo);
+        let looked_up = registry.lookup(&repo);
+        let probed = probe_checkout(&repo, true);
+        fs::set_permissions(&repo, fs::Permissions::from_mode(0o755)).expect("unlock");
+        if !enforced {
+            return; // running as root: file modes are not enforced
+        }
+        assert!(
+            matches!(discovered, Err(Error::AccessDenied { .. })),
+            "{discovered:?}"
+        );
+        assert!(
+            matches!(resolved, Err(Error::AccessDenied { .. })),
+            "{resolved:?}"
+        );
+        assert!(
+            matches!(looked_up, Err(Error::AccessDenied { .. })),
+            "{looked_up:?}"
+        );
+        assert!(
+            matches!(probed, CheckoutState::Denied { ref path, .. } if path == &repo),
+            "{probed:?}"
+        );
+        assert!(
+            !repo.join(".engram").exists(),
+            "no identity may be minted while the checkout is unreadable"
+        );
+        assert!(
+            registry.lookup(&repo).expect("lookup").is_none(),
+            "nothing was registered"
+        );
+    }
+
+    fn identity_event_count(registry: &ProjectRegistry) -> usize {
+        registry
+            .events
+            .replay()
+            .expect("replay")
+            .iter()
+            .filter(|event| event.event_type == "PROJECT_IDENTITY_OBSERVED")
+            .count()
+    }
+
+    #[test]
+    fn identity_missing_at_registration_is_backfilled_once_git_is_visible() {
+        let temp = TempDir::new().expect("temp dir");
+        let registry = registry(&temp);
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).expect("repo");
+        let first = registry
+            .resolve_or_register(&repo)
+            .expect("register without git");
+        assert_eq!(first.project.canonical_remote, None);
+        assert_eq!(first.project.root_commit, None);
+
+        init_repo(&repo);
+        run_git(
+            &repo,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@example.com:org/backfill.git",
+            ],
+        );
+        let second = registry.resolve_or_register(&repo).expect("resolve");
+        assert_eq!(second.project.id, first.project.id, "the id never changes");
+        assert_eq!(
+            second.project.canonical_remote.as_deref(),
+            Some("example.com/org/backfill")
+        );
+        assert_eq!(
+            second.project.root_commit,
+            second.git.as_ref().and_then(|git| git.root_commit.clone())
+        );
+        let replayed = registry
+            .events
+            .replay_project_projection()
+            .expect("replay projection");
+        let entry = &replayed.projects[&first.project.id];
+        assert_eq!(entry.canonical_remote, second.project.canonical_remote);
+        assert_eq!(entry.root_commit, second.project.root_commit);
+
+        let recorded = identity_event_count(&registry);
+        registry.resolve_or_register(&repo).expect("resolve again");
+        assert_eq!(
+            identity_event_count(&registry),
+            recorded,
+            "backfill is once"
+        );
+    }
+
+    /// Two checkouts of one repository, each pinned to its own project while
+    /// Git was invisible: the duplicate registration seen live on 2026-10-04.
+    fn pinned_duplicate_checkouts(temp: &TempDir, registry: &ProjectRegistry) -> Vec<ProjectId> {
+        let upstream = temp.path().join("upstream");
+        init_repo(&upstream);
+        let mut ids = Vec::new();
+        for name in ["first", "second"] {
+            let checkout = temp.path().join(name);
+            fs::create_dir_all(&checkout).expect("checkout");
+            ids.push(
+                registry
+                    .resolve_or_register(&checkout)
+                    .expect("register without git")
+                    .project
+                    .id,
+            );
+            run_git(&checkout, &["init", "-q"]);
+            run_git(
+                &checkout,
+                &["fetch", "-q", upstream.to_str().unwrap(), "HEAD"],
+            );
+            run_git(&checkout, &["reset", "-q", "--hard", "FETCH_HEAD"]);
+            run_git(
+                &checkout,
+                &["remote", "add", "origin", "git@example.com:org/shared.git"],
+            );
+        }
+        ids
+    }
+
+    #[test]
+    fn duplicate_registrations_record_root_commit_but_never_claim_the_remote() {
+        let temp = TempDir::new().expect("temp dir");
+        let registry = registry(&temp);
+        let ids = pinned_duplicate_checkouts(&temp, &registry);
+        for _ in 0..2 {
+            for name in ["second", "first"] {
+                registry
+                    .resolve_or_register(&temp.path().join(name))
+                    .expect("resolve");
+            }
+        }
+        for id in &ids {
+            let record = registry.find_by_id(id).expect("find").expect("active");
+            assert!(record.root_commit.is_some(), "{record:?}");
+            assert_eq!(
+                record.canonical_remote, None,
+                "neither duplicate may silently win the remote"
+            );
+        }
+    }
+
+    #[test]
+    fn backfill_never_takes_a_remote_another_project_holds() {
+        let temp = TempDir::new().expect("temp dir");
+        let registry = registry(&temp);
+        let holder = temp.path().join("holder");
+        init_repo(&holder);
+        run_git(
+            &holder,
+            &["remote", "add", "origin", "git@example.com:org/held.git"],
+        );
+        let held = registry.resolve_or_register(&holder).expect("holder");
+        assert_eq!(
+            held.project.canonical_remote.as_deref(),
+            Some("example.com/org/held")
+        );
+
+        let pinned = temp.path().join("pinned");
+        fs::create_dir_all(&pinned).expect("pinned");
+        let first = registry
+            .resolve_or_register(&pinned)
+            .expect("register without git");
+        init_repo(&pinned);
+        run_git(
+            &pinned,
+            &["remote", "add", "origin", "git@example.com:org/held.git"],
+        );
+        let second = registry.resolve_or_register(&pinned).expect("resolve");
+        assert_eq!(second.project.id, first.project.id);
+        assert!(second.project.root_commit.is_some());
+        assert_eq!(second.project.canonical_remote, None);
+    }
+
+    #[test]
+    fn survey_reports_missing_readable_and_identified_checkouts() {
+        let temp = TempDir::new().expect("temp dir");
+        let registry = registry(&temp);
+        let ids = pinned_duplicate_checkouts(&temp, &registry);
+        let gone = temp.path().join("gone");
+        fs::create_dir_all(&gone).expect("gone");
+        registry.resolve_or_register(&gone).expect("register");
+        let gone = fs::canonicalize(&gone).expect("canonical");
+        fs::remove_dir_all(&gone).expect("remove");
+
+        let survey = registry.survey_checkouts(64).expect("survey");
+        assert!(!survey.truncated);
+        let state = |path: &Path| {
+            survey
+                .probes
+                .iter()
+                .find(|probe| probe.path == path)
+                .map(|probe| probe.state.clone())
+        };
+        assert_eq!(state(&gone), Some(CheckoutState::Missing));
+        for (name, id) in ["first", "second"].into_iter().zip(&ids) {
+            let checkout = fs::canonicalize(temp.path().join(name)).expect("canonical");
+            let Some(CheckoutState::Readable {
+                identity: Some(identity),
+            }) = state(&checkout)
+            else {
+                panic!("{name} must be readable with identity: {survey:?}");
+            };
+            assert_eq!(identity.pinned_project_id.as_ref(), Some(id));
+            assert_eq!(
+                identity.canonical_remote.as_deref(),
+                Some("example.com/org/shared")
+            );
+            assert!(identity.root_commit.is_some());
+        }
+        let bounded = registry.survey_checkouts(1).expect("bounded survey");
+        assert_eq!(bounded.probes.len(), 1);
+        assert!(bounded.truncated);
     }
 
     #[test]

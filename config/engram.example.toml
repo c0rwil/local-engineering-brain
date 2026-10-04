@@ -23,9 +23,9 @@ enabled = false
 [context]
 max_injected_tokens = 6000
 stable_prefix_tokens = 1800
-# Deterministic local semantic retrieval (hashed n-gram embeddings over the
-# SQLite vector sidecar). Off by default: enable only after a measured paired
-# benchmark win (spec Appendix E/G); disabled keeps the ablation control exact.
+# Semantic retrieval over the SQLite vector sidecar; the embedder is chosen in
+# [semantic]. Off by default: enable only after a measured paired benchmark
+# win (spec Appendix E/G); disabled keeps the ablation control exact.
 semantic_retrieval = false
 # 0 = budget-limited only; N caps injected memories per compile.
 max_injected_memories = 0
@@ -64,14 +64,51 @@ poll_interval_ms = 5000
 # Allowed range: 1..=20.
 max_attempts = 5
 # context_runs/context_items older than this are deleted by the daily
-# consolidation_gc job in bounded batches. Allowed range: 1..=3650 days.
+# consolidation_gc job in bounded batches. Hook tool observations (paths,
+# Read flags and sizes; never content) follow the same window. Contexts
+# referenced by usage events, such as acknowledged deliveries, are kept.
+# Allowed range: 1..=3650 days.
 context_run_retention_days = 90
 
 [semantic]
-# Bounds for the derived vector sidecar; the embedding dimension is a
-# compile-time constant. The sidecar is rebuildable: `engram semantic rebuild .`
+# Used only when [context] semantic_retrieval = true. The vector sidecar is
+# rebuildable derived state: `engram semantic rebuild .`
 max_candidates = 50
 max_scanned = 50000
+# "hashed" (default): the built-in hashed n-gram embedder, a lexical
+# approximation with no model. "local": an OpenAI-compatible embeddings
+# endpoint on a loopback address, for example Ollama. Neither has a measured
+# benefit on task outcomes; measure with scripts/eval_semantic_retrieval.py
+# before enabling. The settings below are machine-level: a repository's
+# .engram/config.toml may set only max_candidates and max_scanned.
+provider = "hashed"
+# Loopback only (localhost, 127.0.0.0/8, [::1]), even with
+# network.local_only = false. Redirects and proxies are refused.
+endpoint = "http://127.0.0.1:11434/v1/embeddings"
+# Required for "local": an embedding model the endpoint serves, such as
+# nomic-embed-text or embeddinggemma. Chat models are not embedding models.
+model = ""
+# 0 accepts the model's dimension; N refuses any other (1..=8192).
+dimension = 0
+# Texts per embeddings request during a rebuild (1..=64) and the bound on each
+# rebuild request. Each text is cut at 8 KiB.
+batch_size = 16
+timeout_ms = 30000
+# Bound on the single query embedding per context compile (50..=30000 ms).
+# When it fails, that request uses the hashed vectors and the endpoint is
+# skipped for 30 s; each injected memory's why note names the embedder used.
+query_timeout_ms = 2000
+# Cosine similarity at or below this floor adds no semantic score; higher
+# similarity is rescaled to (0, 1]. Learned models often score unrelated text
+# above 0, so a local model may need a floor: choose it from the evaluation
+# output (median semantic score of relevant vs other memories).
+min_similarity = 0.0
+# Model-specific instruction prefixes. nomic-embed-text: "search_query: " and
+# "search_document: ". embeddinggemma: "task: search result | query: " and
+# "title: none | text: ". The document prefix is part of the stored vectors'
+# identity, so changing it requires a rebuild.
+query_prefix = ""
+document_prefix = ""
 
 [storage]
 db_path = "~/.engram/brain.sqlite"
@@ -95,6 +132,8 @@ max_prepared_bytes = 268435456
 max_graphify_export_bytes = 134217728
 
 [embeddings]
+# Reserved V1 section that must stay disabled. The optional local embedding
+# provider is configured under [semantic].
 provider = "disabled"
 model = ""
 allow_remote = false

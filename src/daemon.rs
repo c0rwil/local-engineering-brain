@@ -52,7 +52,7 @@ use crate::metrics::{EndpointGroup, MetricsRegistry, MetricsSnapshot};
 use crate::projects::{LinkedProject, ProjectRecord, ProjectRegistry, ResolvedProject};
 use crate::scheduler::{MutationPriority, MutationScheduler, SchedulerStats};
 use crate::security::Redactor;
-use crate::semantic::{SemanticOptions, SqliteVectorIndex, VectorIndex as _};
+use crate::semantic::{LocalEmbedderSettings, ModelRebuildReport, SemanticOptions};
 use crate::storage::{Database, IntegrityReport, ReadPoolStats};
 use crate::synthesis::{SynthesisOptions, SynthesisReport, SynthesisStore};
 use crate::world::{
@@ -111,6 +111,7 @@ const API_ORIGIN_REFRESH: &str = "/api/v1/projects/origin-refresh";
 const API_MEMORY_PROVENANCE: &str = "/api/v1/memories/provenance";
 const API_EFFECTIVENESS: &str = "/api/v1/effectiveness";
 const API_USAGE_RECORD: &str = "/api/v1/effectiveness/usage";
+const API_TOOL_OBSERVATION: &str = "/api/v1/effectiveness/tool";
 const API_JUDGE_STATUS: &str = "/api/v1/judge";
 const API_JUDGE_RUN: &str = "/api/v1/judge/run";
 
@@ -320,6 +321,13 @@ pub struct HealthResponse {
     /// Absent when derived caching is disabled or the daemon predates it.
     #[serde(default)]
     pub cache: Option<WorldCacheHealth>,
+    /// Daemon process id; absent from daemons that predate it.
+    #[serde(default)]
+    pub pid: Option<u32>,
+    /// The process chain that auto-started this daemon, when known. On macOS
+    /// the daemon inherits privacy access from it.
+    #[serde(default)]
+    pub launcher: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -774,6 +782,9 @@ pub struct SemanticRebuildResponse {
     pub project_id: ProjectId,
     /// Number of derived vectors rewritten from canonical memories.
     pub vectors: u64,
+    /// Model vectors, when `semantic.provider = "local"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelRebuildReport>,
 }
 
 /// Process-lifetime observability snapshot served by `GET /api/v1/metrics`.
@@ -850,6 +861,11 @@ impl ApiError {
                 "scheduler_unavailable",
                 true,
             ),
+            Error::AccessDenied { .. } => (
+                StatusCode::FORBIDDEN,
+                crate::error::ACCESS_DENIED_CODE,
+                false,
+            ),
             Error::InvalidProjectId(_)
             | Error::InvalidDomainId { .. }
             | Error::InvalidProjectMetadata { .. }
@@ -914,6 +930,17 @@ impl DaemonClient {
         request: &crate::effectiveness::UsageRecordRequest,
     ) -> Result<crate::effectiveness::UsageRecordResult> {
         self.request(hyper::Method::POST, API_USAGE_RECORD, Some(request))
+            .await
+    }
+
+    /// Record or merge one hook observation of an agent tool call.
+    /// # Errors
+    /// Returns validation, scope or transport errors.
+    pub async fn record_tool_observation(
+        &self,
+        request: &crate::effectiveness::ToolObservationRequest,
+    ) -> Result<crate::effectiveness::ToolObservationResult> {
+        self.request(hyper::Method::POST, API_TOOL_OBSERVATION, Some(request))
             .await
     }
 
@@ -1938,6 +1965,7 @@ where
     let router = Router::new()
         .route(API_EFFECTIVENESS, post(effectiveness_report))
         .route(API_USAGE_RECORD, post(record_usage))
+        .route(API_TOOL_OBSERVATION, post(record_tool_observation))
         .route(API_JUDGE_STATUS, get(judge_status))
         .route(API_JUDGE_RUN, post(judge_run))
         .route("/api/v1/product/lessons", post(lesson_mutate))
@@ -2146,10 +2174,10 @@ async fn start_job_system(
             state.scheduler.clone(),
             state.redactor.clone(),
             config.jobs.clone(),
-            usize::try_from(config.semantic.max_scanned).unwrap_or(usize::MAX),
             Some(Arc::clone(&state.metrics)),
         )
-        .with_vault_root(config.vault.enabled.then(|| config.vault.root.clone()));
+        .with_vault_root(config.vault.enabled.then(|| config.vault.root.clone()))
+        .with_semantic_provider(LocalEmbedderSettings::from_config(&config.semantic));
         let runner = JobRunner::new(
             executor,
             state.scheduler.clone(),
@@ -2238,6 +2266,8 @@ async fn health(State(state): State<DaemonState>) -> Json<HealthResponse> {
         rss_hard_limit_bytes: hard,
         memory_pressure: classify_memory_pressure(rss_bytes, soft, hard),
         cache: state.world_cache.as_ref().map(|cache| cache.health()),
+        pid: Some(std::process::id()),
+        launcher: std::env::var(crate::autostart::LAUNCHER_ENV).ok(),
     })
 }
 
@@ -2938,7 +2968,7 @@ async fn compile_context(
             state.database.clone(),
             max_tokens,
             stable_tokens,
-            semantic_options(semantic),
+            semantic_options(semantic, &state.config.semantic),
         )
     } else {
         ContextCompiler::new(state.database.clone(), max_tokens, stable_tokens)
@@ -3004,11 +3034,13 @@ async fn context_delivered(
     Ok(Json(wait_for_mutation(&state, handle).await?))
 }
 
-fn semantic_options(config: &crate::config::SemanticConfig) -> SemanticOptions {
-    SemanticOptions {
-        max_candidates: usize::try_from(config.max_candidates).unwrap_or(usize::MAX),
-        max_scanned: usize::try_from(config.max_scanned).unwrap_or(usize::MAX),
-    }
+/// Bounds may be project-scoped; the embedding provider is always the
+/// daemon's machine-level configuration.
+fn semantic_options(
+    bounds: &crate::config::SemanticConfig,
+    machine: &crate::config::SemanticConfig,
+) -> SemanticOptions {
+    SemanticOptions::from_config(bounds, machine)
 }
 
 async fn rebuild_semantic_index(
@@ -3017,20 +3049,27 @@ async fn rebuild_semantic_index(
 ) -> std::result::Result<Json<SemanticRebuildResponse>, ApiError> {
     admit_work(&state, MutationPriority::BackgroundLearning)?;
     let project_id = request.project_id.clone();
-    let index = SqliteVectorIndex::new(
-        state.database.clone(),
-        usize::try_from(state.config.semantic.max_scanned).unwrap_or(usize::MAX),
-    );
-    let handle = state
-        .scheduler
-        .submit(MutationPriority::BackgroundLearning, move || {
-            index.rebuild(Some(&request.project_id))
-        })
-        .map_err(|error| ApiError::from_core(&error))?;
-    let vectors = wait_for_mutation(&state, handle).await?;
+    let (database, scheduler) = (state.database.clone(), state.scheduler.clone());
+    let local = LocalEmbedderSettings::from_config(&state.config.semantic);
+    // A local model embeds outside the writer, page by page, and can outlive
+    // the default deadline; it stops starting pages shortly before ours.
+    let deadline =
+        Duration::from_millis(state.config.daemon.request_timeout_ms).max(Duration::from_secs(600));
+    let stop_at = Instant::now() + deadline.saturating_sub(Duration::from_secs(30));
+    let report = run_blocking_with_timeout(&state, deadline, move || {
+        crate::semantic::rebuild_project(
+            &database,
+            &scheduler,
+            local.as_ref(),
+            &request.project_id,
+            Some(stop_at),
+        )
+    })
+    .await?;
     Ok(Json(SemanticRebuildResponse {
         project_id,
-        vectors,
+        vectors: report.vectors,
+        model: report.model,
     }))
 }
 
@@ -4938,6 +4977,30 @@ async fn record_usage(
     Ok(Json(wait_for_mutation(&state, handle).await?))
 }
 
+async fn record_tool_observation(
+    State(state): State<DaemonState>,
+    Json(mut request): Json<crate::effectiveness::ToolObservationRequest>,
+) -> std::result::Result<Json<crate::effectiveness::ToolObservationResult>, ApiError> {
+    admit_work(&state, MutationPriority::Analytics)?;
+    // Labels and paths come from external adapters; never persist credentials.
+    request.source = state.redactor.redact_text(&request.source);
+    request.tool_name = state.redactor.redact_text(&request.tool_name);
+    for path in &mut request.paths {
+        *path = state.redactor.redact_text(path);
+    }
+    // Time the observation on receipt, not when the low-priority write runs:
+    // a pre-tool touch must stay ordered before the context compiled after it.
+    let observed_at_ms = job_time_ms();
+    let store = crate::effectiveness::EffectivenessStore::new(state.database.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::Analytics, move || {
+            store.record_tool_observation_at(&request, observed_at_ms)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
 async fn product_mutate(
     State(state): State<DaemonState>,
     Json(request): Json<crate::product::Mutation>,
@@ -5455,6 +5518,107 @@ mod tests {
         assert!(
             compiled.items[0].why.semantic > 0.0,
             "project-scoped semantic retrieval must populate the semantic score"
+        );
+
+        client.shutdown().await.expect("shutdown request");
+        drop(shutdown_sender);
+        server.await.expect("server task").expect("server result");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn local_embedding_provider_rebuilds_over_the_api_and_serves_context() {
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        let endpoint = crate::semantic::fake_endpoint::concept_model(4);
+        let mut config = test_config(&temp);
+        config.context.semantic_retrieval = true;
+        config.semantic.provider = crate::semantic::EmbeddingProviderKind::Local;
+        config.semantic.endpoint.clone_from(&endpoint.url);
+        config.semantic.model = "embed-a".to_owned();
+        let socket_path = config.daemon.socket_path.clone();
+        let client = DaemonClient::new(&socket_path, Duration::from_secs(5));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+
+        let status = client.resolve_project(&project).await.expect("resolve");
+        let project_id = status.resolved.project.id.clone();
+        let memory = client
+            .create_memory(&MemoryCreateRequest {
+                project_id: project_id.clone(),
+                memory: MemoryDraft {
+                    scope_type: "project".to_owned(),
+                    scope_id: project_id.to_string(),
+                    kind: "lesson".to_owned(),
+                    claim: "Release reservations when abort cleanup runs".to_owned(),
+                    rationale: "Explicitly approved local rule".to_owned(),
+                    confidence: 0.5,
+                    importance: 0.5,
+                    tags: Vec::new(),
+                    valid_from_commit: None,
+                    valid_to_commit: None,
+                    trust_source: "human_instruction".to_owned(),
+                    evidence_ids: Vec::new(),
+                    source_task_ids: Vec::new(),
+                    node_ids: Vec::new(),
+                },
+            })
+            .await
+            .expect("create memory");
+        client
+            .promote_memory(
+                &memory.id,
+                &MemoryPromoteRequest {
+                    target: EpistemicState::Validated,
+                    human_override: true,
+                },
+            )
+            .await
+            .expect("human validation");
+
+        let rebuilt = client
+            .rebuild_semantic_index(&SemanticRebuildRequest {
+                project_id: project_id.clone(),
+            })
+            .await
+            .expect("semantic rebuild");
+        assert_eq!(rebuilt.vectors, 1);
+        let model = rebuilt.model.expect("model rebuild report");
+        assert_eq!(
+            (model.embedder.as_str(), model.embedded, model.dimension),
+            ("local:embed-a", 1, 4)
+        );
+
+        let compiled = client
+            .compile_context(&ContextCompileRequest {
+                request_id: "daemon-local-embedding-context".to_owned(),
+                project_id,
+                task_text: "stop the job and free its holds".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 400,
+                mode: crate::context::ContextMode::Brain,
+                repository_root: None,
+                head: None,
+                task_id: None,
+                framing: None,
+            })
+            .await
+            .expect("local embedding context compile");
+        assert_eq!(
+            compiled.items.len(),
+            1,
+            "the model space finds the paraphrase"
+        );
+        assert!(compiled.items[0].why.lexical.abs() < f64::EPSILON);
+        assert!(compiled.items[0].why.semantic > 0.0);
+        assert!(
+            compiled.items[0]
+                .why
+                .note
+                .ends_with("; semantic: local:embed-a")
         );
 
         client.shutdown().await.expect("shutdown request");

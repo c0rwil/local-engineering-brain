@@ -1,0 +1,289 @@
+{
+  "schema_version": 2,
+  "suite_id": "real-repo-heldout-v1",
+  "created_on": "2026-10-04",
+  "purpose": "Held-out historical replay tasks for testing the line-ranged source pointer and related-use coverage changes on work that did not inform Engram development",
+  "status": "draft_requires_operator_review",
+  "execution_status": "draft_requires_operator_review",
+  "executable_runner_config": false,
+  "runner": null,
+  "runner_note": "No collection adapter targets this suite yet. scripts/run_real_repo_followup.py is bound to real-repo-v2; adapt or generalize it, then freeze a manifest, before any collection.",
+  "protocol": "README.md",
+  "result_claims": "None. No coding-agent attempt has been run against this suite; grader calibration is not an agent outcome.",
+  "selection": {
+    "method": "Historical fix commits on the operator repositories' main branches (agi-backend-rust origin/main, agents origin/main) with a behavioral contract testable offline, roughly one to five source files, no later revert found on main as of 2026-10-04, and no overlap with real-repo-v1 or real-repo-v2 tasks.",
+    "excluded": [
+      "Every real-repo-v1 and real-repo-v2 task and its related variant.",
+      "Platform and mobile candidates: the prepared platform dependency tree under /tmp was found partially purged on 2026-10-04 and mobile needs Android/Gradle tooling, so neither could be calibrated locally."
+    ],
+    "operator_confirmation_required": "Confirm that none of these fixes, their sessions or their code areas informed Engram development or tuning. The drafting agent read the reference diffs to build graders; the coding agents under test never see them."
+  },
+  "roadmap_features": {
+    "line_ranged_pointers": "Relevant code sits inside a source file larger than the 256 KB Read limit observed in the 2026-09-25 follow-up.",
+    "related_use_cue": "A correct fix must reach several call sites or consumers of one definition or contract."
+  },
+  "tasks": [
+    {
+      "id": "h01_effect_check_enforce_only",
+      "title": "Deliver the effect-check note only when LoopGuard enforces",
+      "repository": "agi-backend-rust",
+      "selection": "heldout",
+      "difficulty": "small",
+      "kind": "historical_replay",
+      "status": "preflight_passed_pending_operator_review",
+      "exercises": ["line_ranged_pointers"],
+      "prompt_file": "prompts/h01_effect_check_enforce_only.md",
+      "base_commit": "f566a1c24ddfc600fb21c0304680068158d50f35",
+      "reference_fix_commit": "c24e931dc23321ec5612679c8a7e38490b7e0e47",
+      "evaluator_source_paths": [
+        "src/services/action_engine.rs",
+        "tests/http_contract.rs"
+      ],
+      "large_file_facts": "At base, src/services/action_engine.rs is 800,915 bytes (19,181 lines) and the fix site is near line 1,787; tests/http_contract.rs is 545,468 bytes and an existing test there encodes the old every-mode delivery.",
+      "acceptance": [
+        "LOOPGUARD_MODE=shadow and off send no [effect-check] note to the model for a dead tap.",
+        "Shadow and off record no note in stored step prompts.",
+        "Enforce still delivers the note with its wording, and stays silent when the screen moved.",
+        "Shadow LoopGuard still scores a repeated tap on an unchanged screen as a screen-confirmed inject, and recorded steps keep screen fingerprints."
+      ],
+      "candidate_validation_commands": [
+        "cargo test --offline --locked --no-run"
+      ],
+      "environment": [
+        "Calibrated with Homebrew Rust 1.96.0, offline and locked, against loopback mock model servers. No database, Redis or live model."
+      ],
+      "engram_hypothesis": "A line-ranged pointer to the note's delivery span and to the existing contract test lets the agent read two spans instead of two files above the Read limit.",
+      "provenance": "Historical squash merge on main (cut 0.59.4). Shares its base commit with h05.",
+      "grader": {
+        "entrypoint": "grading/h01_effect_check_enforce_only/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 6,
+        "preflight_evidence": "grading/h01_effect_check_enforce_only/preflight.json",
+        "calibration_controls": [
+          "base",
+          "reference",
+          "gate-evidence-on-enforce",
+          "blind-loopguard-outside-enforce",
+          "silence-shadow-only",
+          "drop-note-everywhere",
+          "mode-flag-before-note"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      },
+      "review_notes": [
+        "The shadow-scoring check observes LoopGuard through its INFO log line loopguard_shadow (rung inject) and the per-step screen_fingerprint field. Both are existing internal observables, not part of a public API."
+      ]
+    },
+    {
+      "id": "h02_failure_feedback_origin",
+      "title": "Tag model-failure and reaction analytics with the frozen origin",
+      "repository": "agi-backend-rust",
+      "selection": "heldout",
+      "difficulty": "medium",
+      "kind": "historical_replay",
+      "status": "preflight_passed_pending_operator_review",
+      "exercises": ["related_use_cue", "line_ranged_pointers"],
+      "prompt_file": "prompts/h02_failure_feedback_origin.md",
+      "base_commit": "2b690115d49f9e7cf0610ef601c92baf6323edba",
+      "reference_fix_commit": "c67bbf4d3e4d7815f82b5fedb4a5cdf0beef219f",
+      "evaluator_source_paths": [
+        "src/services/action_engine.rs",
+        "src/routes/reactions.rs",
+        "tests/http_contract.rs"
+      ],
+      "large_file_facts": "At base, src/services/action_engine.rs is 666,541 bytes (16,234 lines); the failure emit is near line 1,270 and its event builder near line 8,542.",
+      "acceptance": [
+        "A first-step model failure carries the request origin, normalized as session creation would; values creation drops stay absent.",
+        "A failure on an existing session carries its frozen stamp, including no origin, regardless of the request.",
+        "Reaction user_feedback event, user_feedback signal and task_completed/task_failed signal carry the session origin; origin-less sessions omit the key.",
+        "Existing step and session_end origin stamping is unchanged."
+      ],
+      "candidate_validation_commands": [
+        "cargo test --offline --locked --no-run"
+      ],
+      "environment": [
+        "Calibrated with Homebrew Rust 1.96.0, offline and locked; loopback mock model and Raindrop bridge. No database, Redis or live model."
+      ],
+      "engram_hypothesis": "A related-use cue from the existing origin stamping to the other analytics emitters (failure events in the engine, feedback in the reactions route) prevents a one-emitter fix.",
+      "provenance": "Historical commit on a feature branch later merged to main; a follow-up to the 0.46.0 entry-door tagging.",
+      "grader": {
+        "entrypoint": "grading/h02_failure_feedback_origin/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 8,
+        "preflight_evidence": "grading/h02_failure_feedback_origin/preflight.json",
+        "calibration_controls": [
+          "base",
+          "reference",
+          "request-origin-wins",
+          "raw-request-origin",
+          "failure-events-only",
+          "feedback-only",
+          "equivalent-expression"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      },
+      "review_notes": [
+        "The prompt names the two record families that lack origin; it does not name files or functions.",
+        "Model-failure task_failed and error signals are not graded for origin (the historical fix tags only the failure event)."
+      ]
+    },
+    {
+      "id": "h03_schemeless_navigation",
+      "title": "Default scheme-less navigation targets to https on every agent path",
+      "repository": "agents",
+      "selection": "heldout",
+      "difficulty": "medium",
+      "kind": "historical_replay",
+      "status": "preflight_passed_pending_operator_review",
+      "exercises": ["related_use_cue"],
+      "prompt_file": "prompts/h03_schemeless_navigation.md",
+      "base_commit": "9adccea20038f89381f0c49efa25909dc4d76f57",
+      "reference_fix_commit": "d3ab3e0222244dc133b508153a65f8bbbfa24d8b",
+      "evaluator_source_paths": [
+        "src/agi_agents/framework/agent_server_state.py",
+        "src/agi_agents/framework/base/cdp_agent.py",
+        "src/agi_agents/agi_0_claude/tools.py",
+        "src/agi_agents/agi_0_qwen/tools.py",
+        "src/agi_agents/agi_1_qwen/tools.py",
+        "src/agi_agents/agi_0_cua/parser.py",
+        "src/agi_agents/shared/url_utils.py"
+      ],
+      "acceptance": [
+        "Every navigation path (server first navigation, CDP base goto action, and the claude, qwen, qwen-1 and cua goto handlers) defaults scheme-less targets to https after trimming whitespace.",
+        "Host:port and host/path forms count as scheme-less.",
+        "Already-schemed targets (http, https, file, chrome, about:blank, data:) are unchanged."
+      ],
+      "candidate_validation_commands": [
+        "python3 -m py_compile src/agi_agents/framework/agent_server_state.py src/agi_agents/framework/base/cdp_agent.py src/agi_agents/agi_0_claude/tools.py src/agi_agents/agi_0_qwen/tools.py src/agi_agents/agi_1_qwen/tools.py src/agi_agents/agi_0_cua/parser.py"
+      ],
+      "environment": [
+        "Python standard-library grader (calibrated with Python 3.14.7) that imports the candidate's real modules with third-party packages stubbed. No dependency installation, browser, network or subprocess."
+      ],
+      "engram_hypothesis": "A related-use cue across the sibling goto handlers and shared navigation paths turns a one-agent fix into a six-path fix.",
+      "provenance": "Historical squash merge on main (#581). The historical change touched nine files (six one-line call-site edits, a new helper, its export and a test), above the suite's usual five-file guideline because the task is about breadth of call sites.",
+      "grader": {
+        "entrypoint": "grading/h03_schemeless_navigation/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 6,
+        "preflight_evidence": "grading/h03_schemeless_navigation/preflight.json",
+        "calibration_controls": [
+          "base",
+          "reference",
+          "tool-handlers-only",
+          "skip-cua-parser",
+          "separator-heuristic",
+          "no-trim",
+          "urlsplit-allowlist",
+          "normalize-at-route"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      },
+      "review_notes": [
+        "The prompt names the categories of navigation path so the contract is gradable; this makes the sites easier to enumerate than a vaguer prompt would.",
+        "A candidate importing a third-party package absent from the grader stubs fails to load and is scored as a failure; review such a result by hand."
+      ]
+    },
+    {
+      "id": "h04_play_base_plan_lookup",
+      "title": "Resolve Play subscription base-plan product ids at every plan lookup",
+      "repository": "agents",
+      "selection": "heldout",
+      "difficulty": "small",
+      "kind": "historical_replay",
+      "status": "preflight_passed_pending_operator_review",
+      "exercises": ["related_use_cue"],
+      "prompt_file": "prompts/h04_play_base_plan_lookup.md",
+      "base_commit": "ae4dd1d1dee3d449a30b9f91aee713ef3e012a9f",
+      "reference_fix_commit": "123a6ee6ed9c969591d8f21181b404a8458cc7ce",
+      "evaluator_source_paths": [
+        "src/agency/api/services/revenuecat_service.py",
+        "src/agency/api/repositories/subscription_repository.py"
+      ],
+      "acceptance": [
+        "Purchase, renewal and uncancellation events with <subscription>:<base_plan> ids update and grant the mapped plan.",
+        "Product changes switch to the plan of the suffixed new_product_id.",
+        "Unrecorded-row expiration, cancellation and billing-issue events keep retrying for mapped products; unmapped products are still acknowledged.",
+        "Plain subscription ids, credit packs and unmapped subscriptions behave as before."
+      ],
+      "candidate_validation_commands": [
+        "python3 -m py_compile src/agency/api/services/revenuecat_service.py src/agency/api/repositories/subscription_repository.py"
+      ],
+      "environment": [
+        "Python standard-library grader (calibrated with Python 3.14.7). Real service and repository code; recording fakes for state; bounded in-memory query emulation for plan lookups. No DATABASE_URL, database, network or subprocess."
+      ],
+      "engram_hypothesis": "A related-use cue from the plan lookup to its three callers (lifecycle grant, product change, permanent-missing-row decision) prevents a fix that only repairs purchases.",
+      "provenance": "Historical commit on main (API-265 review finding).",
+      "grader": {
+        "entrypoint": "grading/h04_play_base_plan_lookup/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 8,
+        "preflight_evidence": "grading/h04_play_base_plan_lookup/preflight.json",
+        "calibration_controls": [
+          "base",
+          "reference",
+          "lifecycle-only",
+          "missing-row-check-forgotten",
+          "keeps-base-plan-part",
+          "repository-normalizes",
+          "sql-split-part",
+          "normalize-at-entry"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      },
+      "review_notes": [
+        "The prompt lists the three event families as acceptance criteria, which maps closely to the three lookups. Removing the list would strengthen the related-use test but leave the missing-row retry rule underspecified; decide before freezing.",
+        "Repository fixes that use SQL functions outside the emulation (lower, upper, trim, coalesce, split_part) fail and need manual review."
+      ]
+    },
+    {
+      "id": "h05_multibyte_truncation",
+      "title": "Truncate human-response prompt fields on character boundaries",
+      "repository": "agi-backend-rust",
+      "selection": "heldout_control",
+      "difficulty": "small",
+      "kind": "historical_replay",
+      "status": "preflight_passed_pending_operator_review",
+      "exercises": ["control"],
+      "prompt_file": "prompts/h05_multibyte_truncation.md",
+      "base_commit": "f566a1c24ddfc600fb21c0304680068158d50f35",
+      "reference_fix_commit": "dee1f322658ee319fbe0e3c64d67b89781cd46db",
+      "evaluator_source_paths": [
+        "src/services/human_response.rs"
+      ],
+      "acceptance": [
+        "No panic for multi-byte text in any prompt field or transcript entry.",
+        "Limits count characters; text within a limit is whole; longer text keeps the longest leading prefix before the existing suffix.",
+        "ASCII output is byte-for-byte unchanged."
+      ],
+      "candidate_validation_commands": [
+        "cargo test --offline --locked --no-run"
+      ],
+      "environment": [
+        "Calibrated with Homebrew Rust 1.96.0, offline and locked. Pure function tests through the public prompt builder; no services."
+      ],
+      "engram_hypothesis": "Small control in a 19 KB file (18,835 bytes at base): context should add little, and overhead is visible.",
+      "provenance": "Historical squash merge on main (GOD-2608). Shares its base commit with h01.",
+      "grader": {
+        "entrypoint": "grading/h05_multibyte_truncation/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 5,
+        "preflight_evidence": "grading/h05_multibyte_truncation/preflight.json",
+        "calibration_controls": [
+          "base",
+          "reference",
+          "char-count-only",
+          "byte-budget-at-char-boundary",
+          "prompt-fields-only",
+          "char-indices-cut"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      },
+      "review_notes": [
+        "The truncation helper has nine call sites in the file; the transcript case catches a fix limited to the four top-level fields."
+      ]
+    }
+  ],
+  "runtime": null,
+  "runtime_note": "Pin the model route, effort, tools, limits and Engram build in a frozen manifest when the collection adapter exists. Reuse the v2 isolation rules: synthetic one-commit fixtures, fresh source-only snapshots, no Engram access in Off.",
+  "attempt_retention": "When collected, retain every attempt, including failures, timeouts and infrastructure errors; never replace an attempt."
+}
