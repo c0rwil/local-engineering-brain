@@ -945,46 +945,97 @@ pub fn render_session_brief(
     Some(brief)
 }
 
-/// Render a pre-tool file-shape brief. `None` when the graph knows nothing
-/// about the file (inject silence, not filler).
+/// Kind, label and, when checked against the checkout like task source map
+/// ranges, the lines of one definition in a file brief.
+pub type BriefSymbol = (String, String, Option<crate::world::LineRange>);
+
+/// What the graph knows about a file a tool is about to touch.
+#[derive(Clone, Copy, Debug)]
+pub struct FileBrief<'a> {
+    pub file_path: &'a str,
+    /// Definitions in file order.
+    pub symbols: &'a [BriefSymbol],
+    /// Label and file of each definition elsewhere that calls into the file.
+    pub callers: &'a [(String, String)],
+    pub imports: &'a [String],
+    /// Size of the checkout's copy of the file, when known.
+    pub size_bytes: Option<u64>,
+}
+
+/// Definitions listed in one file brief.
+const BRIEF_SYMBOLS: usize = 20;
+
+/// Render a pre-tool file-shape brief of at most `byte_cap` bytes: with the
+/// checked line spans when that form fits, otherwise without them. A file of
+/// at least `large_file_bytes` (when nonzero) gets one line stating its size.
+/// `None` when the graph knows nothing about the file (inject silence, not
+/// filler) or when no form fits.
 #[must_use]
 pub fn render_file_shape(
-    file_path: &str,
-    symbols: &[(String, String)],
-    callers: &[(String, String)],
-    imports: &[String],
+    brief: &FileBrief<'_>,
+    large_file_bytes: u64,
+    byte_cap: usize,
 ) -> Option<String> {
-    if symbols.is_empty() && callers.is_empty() {
+    if brief.symbols.is_empty() && brief.callers.is_empty() {
         return None;
     }
+    [true, false]
+        .into_iter()
+        .map(|spans| file_brief_text(brief, spans, large_file_bytes))
+        .find(|text| text.len() <= byte_cap)
+}
+
+fn file_brief_text(brief: &FileBrief<'_>, spans: bool, large_file_bytes: u64) -> String {
     // Labels and imports come from repository files: keep each on one line
     // with hidden characters and framing markup escaped.
     let inline = crate::security::neutralize_inline;
-    let mut brief = format!(
+    let symbols = &brief.symbols[..brief.symbols.len().min(BRIEF_SYMBOLS)];
+    let spans = spans && symbols.iter().any(|(_, _, lines)| lines.is_some());
+    let mut text = format!(
         "# Indexed reference data: {}\nVerify current source before relying on these symbols and relationships.\n",
-        inline(file_path)
+        inline(brief.file_path)
     );
     if !symbols.is_empty() {
         let listed: Vec<String> = symbols
             .iter()
-            .take(20)
-            .map(|(kind, label)| format!("{} ({})", inline(label), inline(kind)))
+            .map(|(kind, label, lines)| match lines.filter(|_| spans) {
+                Some(lines) => format!("{} ({}) {lines}", inline(label), inline(kind)),
+                None => format!("{} ({})", inline(label), inline(kind)),
+            })
             .collect();
-        let _ = writeln!(brief, "Defines: {}", listed.join(", "));
+        let heading = if spans {
+            "Defines (line spans)"
+        } else {
+            "Defines"
+        };
+        let _ = writeln!(text, "{heading}: {}", listed.join(", "));
     }
-    if !callers.is_empty() {
-        let listed: Vec<String> = callers
+    if let Some(size) = brief
+        .size_bytes
+        .filter(|size| large_file_bytes > 0 && *size >= large_file_bytes)
+    {
+        let located = if spans {
+            " The line spans locate the listed definitions."
+        } else {
+            ""
+        };
+        let _ = writeln!(text, "File size: {} KB.{located}", size.div_ceil(1024));
+    }
+    if !brief.callers.is_empty() {
+        let listed: Vec<String> = brief
+            .callers
             .iter()
             .take(12)
             .map(|(label, file)| format!("{} [{}]", inline(label), inline(file)))
             .collect();
-        let _ = writeln!(brief, "Called from elsewhere by: {}", listed.join(", "));
+        let _ = writeln!(text, "Called from elsewhere by: {}", listed.join(", "));
     }
-    if !imports.is_empty() {
+    if !brief.imports.is_empty() {
         let _ = writeln!(
-            brief,
+            text,
             "Imports: {}",
-            imports
+            brief
+                .imports
                 .iter()
                 .take(12)
                 .map(|import| inline(import))
@@ -992,7 +1043,7 @@ pub fn render_file_shape(
                 .join(", ")
         );
     }
-    Some(brief)
+    text
 }
 
 /// Where a session's state lives (under the brain's state dir).
@@ -3260,17 +3311,156 @@ mod tests {
 
     #[test]
     fn file_shape_renders_bounded_and_skips_unknown_files() {
-        assert_eq!(render_file_shape("x.rs", &[], &[], &[]), None);
+        let empty = file_brief(&[], &[], &[], None);
+        assert_eq!(render_file_shape(&empty, LARGE, usize::MAX), None);
+        let symbols = [("Function".to_owned(), "validate".to_owned(), None)];
+        let callers = [("login".to_owned(), "src/routes.rs".to_owned())];
+        let imports = ["crate::db".to_owned()];
         let shape = render_file_shape(
-            "src/auth.rs",
-            &[("Function".to_owned(), "validate".to_owned())],
-            &[("login".to_owned(), "src/routes.rs".to_owned())],
-            &["crate::db".to_owned()],
+            &file_brief(&symbols, &callers, &imports, Some(900)),
+            LARGE,
+            usize::MAX,
         )
         .expect("shape");
-        assert!(shape.contains("validate (Function)"));
+        assert!(shape.contains("Defines: validate (Function)\n"), "{shape}");
         assert!(shape.contains("login [src/routes.rs]"));
         assert!(shape.contains("crate::db"));
+        assert!(!shape.contains("File size"), "small files get no size line");
+    }
+
+    const LARGE: u64 = 64 * 1024;
+
+    fn file_brief<'a>(
+        symbols: &'a [BriefSymbol],
+        callers: &'a [(String, String)],
+        imports: &'a [String],
+        size_bytes: Option<u64>,
+    ) -> FileBrief<'a> {
+        FileBrief {
+            file_path: "src/auth.rs",
+            symbols,
+            callers,
+            imports,
+            size_bytes,
+        }
+    }
+
+    fn def(kind: &str, label: &str, lines: Option<(u32, u32)>) -> BriefSymbol {
+        (
+            kind.to_owned(),
+            label.to_owned(),
+            lines.map(|(start, end)| crate::world::LineRange { start, end }),
+        )
+    }
+
+    #[test]
+    fn file_briefs_list_checked_line_spans_and_fall_back_without_them() {
+        let current = vec![
+            def("Type", "Engine", Some((3, 7))),
+            def("Function", "Engine::run", Some((10, 13))),
+            def("Section", "Notes", None),
+        ];
+        let text = render_file_shape(&file_brief(&current, &[], &[], None), LARGE, usize::MAX)
+            .expect("ranged");
+        assert!(
+            text.contains(
+                "Defines (line spans): Engine (Type) 3-7, Engine::run (Function) 10-13, Notes (Section)\n"
+            ),
+            "{text}"
+        );
+        // A checkout file that changed since indexing reports no spans.
+        let stale = vec![
+            def("Type", "Engine", None),
+            def("Function", "Engine::run", None),
+            def("Section", "Notes", None),
+        ];
+        let text = render_file_shape(&file_brief(&stale, &[], &[], None), LARGE, usize::MAX)
+            .expect("plain");
+        assert!(
+            text.contains("Defines: Engine (Type), Engine::run (Function), Notes (Section)\n"),
+            "{text}"
+        );
+        assert!(!text.contains("line spans"), "{text}");
+    }
+
+    #[test]
+    fn large_files_get_one_size_line_that_names_spans_only_when_present() {
+        let current = vec![def("Function", "compress", Some((1_200, 1_350)))];
+        let stale = vec![def("Function", "compress", None)];
+        let size = Some(812 * 1024 - 100);
+        let ranged = render_file_shape(&file_brief(&current, &[], &[], size), LARGE, usize::MAX)
+            .expect("ranged");
+        assert!(
+            ranged.contains(
+                "Defines (line spans): compress (Function) 1200-1350\nFile size: 812 KB. The line spans locate the listed definitions.\n"
+            ),
+            "{ranged}"
+        );
+        assert_eq!(ranged.matches("File size").count(), 1);
+        let plain = render_file_shape(&file_brief(&stale, &[], &[], size), LARGE, usize::MAX)
+            .expect("plain");
+        assert!(plain.ends_with("File size: 812 KB.\n"), "{plain}");
+        for (size, threshold) in [(Some(LARGE - 1), LARGE), (None, LARGE), (Some(LARGE), 0)] {
+            let text =
+                render_file_shape(&file_brief(&current, &[], &[], size), threshold, usize::MAX)
+                    .expect("brief");
+            assert!(!text.contains("File size"), "{size:?} {threshold}: {text}");
+        }
+        assert!(
+            render_file_shape(
+                &file_brief(&current, &[], &[], Some(LARGE)),
+                LARGE,
+                usize::MAX
+            )
+            .expect("at the threshold")
+            .contains("File size: 64 KB.")
+        );
+    }
+
+    #[test]
+    fn file_briefs_fit_each_clients_message_cap() {
+        let definitions: Vec<_> = (0_u32..25)
+            .map(|n| {
+                (
+                    "Function".to_owned(),
+                    format!("handle_request_with_a_long_name_{n}"),
+                    Some(crate::world::LineRange {
+                        start: n * 100 + 1,
+                        end: n * 100 + 90,
+                    }),
+                )
+            })
+            .collect();
+        let callers: Vec<_> = (0..12)
+            .map(|n| {
+                (
+                    format!("caller_number_{n}"),
+                    format!("src/callers/module_{n}.rs"),
+                )
+            })
+            .collect();
+        let imports: Vec<_> = (0..12)
+            .map(|n| format!("use crate::services::module_{n}::{{Engine, Settings}};"))
+            .collect();
+        let brief = file_brief(&definitions, &callers, &imports, Some(900 * 1024));
+        let full = render_file_shape(&brief, LARGE, usize::MAX).expect("unbounded");
+        assert_eq!(full.matches("handle_request_with_a_long_name_").count(), 20);
+        assert!(full.contains("line spans"));
+        // Below the ranged form's size, the same brief comes without spans.
+        let plain = render_file_shape(&brief, LARGE, full.len() - 1).expect("plain");
+        assert!(!plain.contains("line spans") && plain.len() < full.len());
+        assert!(plain.contains("File size: 900 KB.\n"), "{plain}");
+        assert_eq!(render_file_shape(&brief, LARGE, plain.len() - 1), None);
+        // Every client's whole-message cap holds the ranged form.
+        for client in [
+            HookClient::ClaudeCode,
+            HookClient::Codex,
+            HookClient::Cursor,
+        ] {
+            let text = render_file_shape(&brief, LARGE, client.context_byte_cap()).expect("fits");
+            assert!(text.len() <= client.context_byte_cap(), "{client:?}");
+            assert_eq!(text, full, "{client:?}");
+        }
     }
 
     #[test]

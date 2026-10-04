@@ -39,11 +39,16 @@ compact_injection = false
 # Task source pointers name `path:start-end` (1-based, inclusive) when the
 # request's checkout file still has the indexed digest; a changed or unreadable
 # file keeps a file-level pointer. Ranges never change which sources are chosen.
+# The same check adds line spans to the definitions in pre-tool file briefs.
 source_line_ranges = true
 # After all direct source pointers, list up to six resolved callers and
 # same-file shared-call users of definitions the task names, within the
 # remaining source budget. Retrieval-level diagnostics only; set false to ablate.
 related_use_cues = true
+# A pre-tool file brief for a file of at least this many bytes states its size
+# on one line; a whole-file read of such a file can exceed a client's read
+# limit. 0 disables the line.
+large_file_bytes = 65536
 
 [daemon]
 socket_path = "~/.engram/engramd.sock"

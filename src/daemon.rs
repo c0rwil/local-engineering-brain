@@ -372,12 +372,20 @@ pub struct ProjectLookupResponse {
 pub struct FileShapeRequest {
     pub project_id: ProjectId,
     pub file_path: String,
+    /// Checkout holding the file. Symbol line spans are reported only when
+    /// its copy of the file still has the indexed digest; without a root,
+    /// none are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct FileShapeSymbol {
     pub kind: String,
     pub label: String,
+    /// 1-based inclusive lines, checked like task source map ranges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<crate::world::LineRange>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -394,6 +402,10 @@ pub struct FileShape {
     pub symbols: Vec<FileShapeSymbol>,
     pub callers: Vec<FileShapeCaller>,
     pub imports: Vec<String>,
+    /// Size of the checkout's copy of the file, or the indexed size when the
+    /// checkout cannot be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
 }
 
 /// Request for a project's session brief of episodic state.
@@ -2929,118 +2941,176 @@ async fn file_shape(
             "file path too long".to_owned(),
         )));
     }
+    // Spans follow the same per-project switch as task source map ranges.
+    let line_ranges = request.repository_root.as_deref().is_some_and(|root| {
+        scoped_config(&state, root).map_or(state.config.context.source_line_ranges, |config| {
+            config.context.source_line_ranges
+        })
+    });
     let database = state.database.clone();
     let shape = run_blocking(&state, move || {
-        database.with_reader(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT kind, label FROM nodes
+        let (mut shape, ids, indexed_size) = file_shape_rows(&database, &request)?;
+        let mut spans = crate::world::LiveSpans::new(
+            &database,
+            request.project_id.as_str(),
+            request.repository_root.as_deref(),
+        );
+        if line_ranges {
+            for (symbol, id) in shape.symbols.iter_mut().zip(&ids) {
+                if let crate::world::SpanCheck::Current(lines) = spans.check(id)? {
+                    symbol.lines = Some(lines);
+                }
+            }
+        }
+        shape.size_bytes = spans.checkout_size(&request.file_path).or(indexed_size);
+        Ok(shape)
+    })
+    .await?;
+    Ok(Json(shape))
+}
+
+/// The indexed part of a file shape: symbols with their node ids (in the
+/// same order), callers, imports and the indexed file size.
+fn file_shape_rows(
+    database: &Database,
+    request: &FileShapeRequest,
+) -> Result<(FileShape, Vec<String>, Option<u64>)> {
+    use rusqlite::OptionalExtension as _;
+    database.with_reader(|connection| {
+        let mut statement = connection.prepare(
+            "SELECT id, kind, label FROM nodes
                  WHERE project_id = ?1 AND file_path = ?2 AND tombstoned_at_ms IS NULL
                    AND kind IN ('Function', 'Type', 'Interface', 'Method', 'Module', 'Section')
                  ORDER BY start_byte LIMIT 40",
-            )?;
-            let symbols = statement
-                .query_map(
-                    rusqlite::params![request.project_id.as_str(), request.file_path],
-                    |row| {
-                        Ok(FileShapeSymbol {
-                            kind: row.get(0)?,
-                            label: row.get(1)?,
-                        })
-                    },
-                )?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            // Tree-sitter records a CALLS target as an ExternalReference in
-            // the REFERENCING file; recover this file's callers by matching
-            // reference labels to the definitions here (same resolution the
-            // vault uses). A name that another file also defines is skipped:
-            // the label alone cannot say which definition a call means, and
-            // duplicate private helpers or per-script `main`s made most such
-            // matches coincidental. Drive the join FROM this file's few definitions —
-            // label-first — so every step is index-covered; joining from the
-            // edge side scans the whole project's CALLS set and times out on
-            // large graphs (observed on a 41k-node monorepo).
-            // CROSS JOIN pins the join order (SQLite honors it strictly):
-            // without pinning — and without ANALYZE stats, which a fresh
-            // brain never has — the planner drives from the project's whole
-            // CALLS edge set instead of this file's handful of labels, and
-            // a 40k-node monorepo blows the request deadline (observed:
-            // 113 s → sub-second pinned). The index pins matter as well:
-            // otherwise `target` is read through `nodes_project_active`
-            // (every reference of the kind, per definition), which reached
-            // seconds per call once Python call sites were indexed.
-            let mut statement = connection.prepare(&format!(
-                "SELECT caller_label, caller_path FROM (
-                     SELECT DISTINCT caller.label AS caller_label,
-                            caller.file_path AS caller_path
-                     FROM nodes defined INDEXED BY nodes_project_file
-                     CROSS JOIN nodes target INDEXED BY nodes_project_label
-                     CROSS JOIN edges e
-                     CROSS JOIN nodes caller
-                     WHERE defined.project_id = ?1 AND defined.file_path = ?2
-                       AND defined.kind IN ('Function', 'Type', 'Interface', 'Method')
-                       AND defined.tombstoned_at_ms IS NULL
-                       AND {only}
-                       AND target.project_id = defined.project_id
-                       AND target.kind = 'ExternalReference'
-                       AND target.label = defined.label
-                       AND target.tombstoned_at_ms IS NULL
-                       AND e.project_id = defined.project_id
-                       AND e.target_id = target.id AND e.relation = 'CALLS'
-                       AND e.tombstoned_at_ms IS NULL
-                       AND caller.id = e.source_id
-                       AND caller.tombstoned_at_ms IS NULL
-                       AND caller.file_path IS NOT NULL AND caller.file_path != ?2
-                     UNION
-                     SELECT DISTINCT caller.label, caller.file_path
-                     FROM nodes callee
-                     CROSS JOIN edges e
-                     CROSS JOIN nodes caller
-                     WHERE callee.project_id = ?1 AND callee.file_path = ?2
-                       AND callee.kind <> 'ExternalReference'
-                       AND callee.tombstoned_at_ms IS NULL
-                       AND e.project_id = callee.project_id
-                       AND e.target_id = callee.id AND e.relation = 'CALLS'
-                       AND e.tombstoned_at_ms IS NULL
-                       AND caller.id = e.source_id
-                       AND caller.tombstoned_at_ms IS NULL
-                       AND caller.file_path IS NOT NULL AND caller.file_path != ?2
-                 ) ORDER BY caller_path, caller_label LIMIT 25",
-                only = crate::vault::defined_in_one_file("defined"),
-            ))?;
-            let callers = statement
-                .query_map(
-                    rusqlite::params![request.project_id.as_str(), request.file_path],
-                    |row| {
-                        Ok(FileShapeCaller {
-                            label: row.get(0)?,
-                            file_path: row.get(1)?,
-                        })
-                    },
-                )?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            let mut statement = connection.prepare(
-                "SELECT DISTINCT target.label FROM edges e
+        )?;
+        let (ids, symbols): (Vec<String>, Vec<FileShapeSymbol>) = statement
+            .query_map(
+                rusqlite::params![request.project_id.as_str(), request.file_path],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        FileShapeSymbol {
+                            kind: row.get(1)?,
+                            label: row.get(2)?,
+                            lines: None,
+                        },
+                    ))
+                },
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .into_iter()
+            .unzip();
+        let callers = file_shape_callers(connection, request)?;
+        let mut statement = connection.prepare(
+            "SELECT DISTINCT target.label FROM edges e
                  JOIN nodes source ON e.source_id = source.id
                  JOIN nodes target ON e.target_id = target.id
                  WHERE e.project_id = ?1 AND e.relation = 'IMPORTS'
                    AND source.file_path = ?2 AND target.tombstoned_at_ms IS NULL
                  ORDER BY target.label LIMIT 20",
-            )?;
-            let imports = statement
-                .query_map(
-                    rusqlite::params![request.project_id.as_str(), request.file_path],
-                    |row| row.get::<_, String>(0),
-                )?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            Ok(FileShape {
+        )?;
+        let imports = statement
+            .query_map(
+                rusqlite::params![request.project_id.as_str(), request.file_path],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let indexed_size = connection
+            .query_row(
+                "SELECT size_bytes FROM indexed_files WHERE project_id = ?1 AND path = ?2",
+                rusqlite::params![request.project_id.as_str(), request.file_path],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .and_then(|size| u64::try_from(size).ok());
+        Ok((
+            FileShape {
                 symbols,
                 callers,
                 imports,
-            })
-        })
+                size_bytes: None,
+            },
+            ids,
+            indexed_size,
+        ))
     })
-    .await?;
-    Ok(Json(shape))
+}
+
+/// Definitions in other files that call into `request.file_path`.
+fn file_shape_callers(
+    connection: &rusqlite::Connection,
+    request: &FileShapeRequest,
+) -> Result<Vec<FileShapeCaller>> {
+    // Tree-sitter records a CALLS target as an ExternalReference in
+    // the REFERENCING file; recover this file's callers by matching
+    // reference labels to the definitions here (same resolution the
+    // vault uses). A name that another file also defines is skipped:
+    // the label alone cannot say which definition a call means, and
+    // duplicate private helpers or per-script `main`s made most such
+    // matches coincidental. Drive the join FROM this file's few definitions —
+    // label-first — so every step is index-covered; joining from the
+    // edge side scans the whole project's CALLS set and times out on
+    // large graphs (observed on a 41k-node monorepo).
+    // CROSS JOIN pins the join order (SQLite honors it strictly):
+    // without pinning — and without ANALYZE stats, which a fresh
+    // brain never has — the planner drives from the project's whole
+    // CALLS edge set instead of this file's handful of labels, and
+    // a 40k-node monorepo blows the request deadline (observed:
+    // 113 s → sub-second pinned). The index pins matter as well:
+    // otherwise `target` is read through `nodes_project_active`
+    // (every reference of the kind, per definition), which reached
+    // seconds per call once Python call sites were indexed.
+    let mut statement = connection.prepare(&format!(
+        "SELECT caller_label, caller_path FROM (
+                 SELECT DISTINCT caller.label AS caller_label,
+                        caller.file_path AS caller_path
+                 FROM nodes defined INDEXED BY nodes_project_file
+                 CROSS JOIN nodes target INDEXED BY nodes_project_label
+                 CROSS JOIN edges e
+                 CROSS JOIN nodes caller
+                 WHERE defined.project_id = ?1 AND defined.file_path = ?2
+                   AND defined.kind IN ('Function', 'Type', 'Interface', 'Method')
+                   AND defined.tombstoned_at_ms IS NULL
+                   AND {only}
+                   AND target.project_id = defined.project_id
+                   AND target.kind = 'ExternalReference'
+                   AND target.label = defined.label
+                   AND target.tombstoned_at_ms IS NULL
+                   AND e.project_id = defined.project_id
+                   AND e.target_id = target.id AND e.relation = 'CALLS'
+                   AND e.tombstoned_at_ms IS NULL
+                   AND caller.id = e.source_id
+                   AND caller.tombstoned_at_ms IS NULL
+                   AND caller.file_path IS NOT NULL AND caller.file_path != ?2
+                 UNION
+                 SELECT DISTINCT caller.label, caller.file_path
+                 FROM nodes callee
+                 CROSS JOIN edges e
+                 CROSS JOIN nodes caller
+                 WHERE callee.project_id = ?1 AND callee.file_path = ?2
+                   AND callee.kind <> 'ExternalReference'
+                   AND callee.tombstoned_at_ms IS NULL
+                   AND e.project_id = callee.project_id
+                   AND e.target_id = callee.id AND e.relation = 'CALLS'
+                   AND e.tombstoned_at_ms IS NULL
+                   AND caller.id = e.source_id
+                   AND caller.tombstoned_at_ms IS NULL
+                   AND caller.file_path IS NOT NULL AND caller.file_path != ?2
+             ) ORDER BY caller_path, caller_label LIMIT 25",
+        only = crate::vault::defined_in_one_file("defined"),
+    ))?;
+    let callers = statement
+        .query_map(
+            rusqlite::params![request.project_id.as_str(), request.file_path],
+            |row| {
+                Ok(FileShapeCaller {
+                    label: row.get(0)?,
+                    file_path: row.get(1)?,
+                })
+            },
+        )?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(callers)
 }
 
 async fn tasks_brief(
@@ -5780,6 +5850,84 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn daemon_file_shape_checks_spans_against_the_checkout() {
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        std::fs::write(
+            project.join("engine.rs"),
+            "pub fn run() {}\npub struct Engine;\npub fn helper() {}\n",
+        )
+        .expect("engine");
+        let config = test_config(&temp);
+        let client = DaemonClient::new(&config.daemon.socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+        let status = client.resolve_project(&project).await.expect("resolve");
+        let project_id = status.resolved.project.id.clone();
+        client.index_project(&project, None).await.expect("index");
+        let plain = client
+            .file_shape(&FileShapeRequest {
+                project_id: project_id.clone(),
+                file_path: "engine.rs".to_owned(),
+                repository_root: None,
+            })
+            .await
+            .expect("plain shape");
+        assert!(
+            plain.symbols.iter().all(|s| s.lines.is_none()),
+            "no checkout, no spans"
+        );
+        assert_eq!(plain.size_bytes, Some(54), "the indexed size");
+        let unknown = client
+            .file_shape(&FileShapeRequest {
+                project_id: project_id.clone(),
+                file_path: "missing.rs".to_owned(),
+                repository_root: Some(project.clone()),
+            })
+            .await
+            .expect("unknown file");
+        assert_eq!(unknown.size_bytes, None);
+        // With the checkout, spans are checked like task source map ranges.
+        let spans = |shape: &FileShape| {
+            shape
+                .symbols
+                .iter()
+                .map(|symbol| (symbol.label.clone(), symbol.lines.map(|l| (l.start, l.end))))
+                .collect::<Vec<_>>()
+        };
+        let checked = FileShapeRequest {
+            project_id: project_id.clone(),
+            file_path: "engine.rs".to_owned(),
+            repository_root: Some(project.clone()),
+        };
+        let shape = client.file_shape(&checked).await.expect("checked shape");
+        assert_eq!(
+            spans(&shape),
+            [
+                ("run".to_owned(), Some((1, 1))),
+                ("Engine".to_owned(), Some((2, 2))),
+                ("helper".to_owned(), Some((3, 3))),
+            ]
+        );
+        assert_eq!(shape.size_bytes, Some(54));
+        // A file edited since indexing gets no spans, and its current size.
+        std::fs::write(
+            project.join("engine.rs"),
+            "// moved\npub fn run() {}\npub struct Engine;\npub fn helper() {}\n",
+        )
+        .expect("edit");
+        let stale = client.file_shape(&checked).await.expect("stale shape");
+        assert!(stale.symbols.iter().all(|s| s.lines.is_none()), "{stale:?}");
+        assert_eq!(stale.size_bytes, Some(63));
+        let _ = shutdown_sender.send(());
+        let _ = server.await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn daemon_serves_file_shape_and_tasks_brief() {
         let temp = TempDir::new().expect("temp dir");
         let project = temp.path().join("project");
@@ -5810,6 +5958,7 @@ mod tests {
             .file_shape(&FileShapeRequest {
                 project_id: project_id.clone(),
                 file_path: "engine.rs".to_owned(),
+                repository_root: None,
             })
             .await
             .expect("file shape");
@@ -5846,6 +5995,7 @@ mod tests {
             .file_shape(&FileShapeRequest {
                 project_id: project_id.clone(),
                 file_path: "missing.rs".to_owned(),
+                repository_root: None,
             })
             .await
             .expect("unknown file");

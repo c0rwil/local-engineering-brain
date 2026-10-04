@@ -1608,3 +1608,81 @@ fn unobserved_verification_after_a_pass_never_closes_the_episode_as_success() {
     assert_eq!(recorded_passes, 4, "each observed pass is still recorded");
     cli(root, &["daemon", "stop"], None);
 }
+
+/// The `additionalContext` of a Claude Code tool hook's output, or "" when the
+/// hook printed nothing.
+fn hook_context(output: &str) -> String {
+    if output.trim().is_empty() {
+        return String::new();
+    }
+    let result: Value = serde_json::from_str(output).unwrap();
+    result["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn pretool_file_briefs_carry_checked_spans_once_per_file() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let config_dir = root.join(".config/engram");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.toml"),
+        "[context]\nlarge_file_bytes = 1024\n",
+    )
+    .unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let source = (0..60).fold(String::new(), |mut source, n| {
+        writeln!(source, "pub fn step_{n}() -> u32 {{\n    {n}\n}}\n").unwrap();
+        source
+    });
+    std::fs::write(repo.join("engine.rs"), &source).unwrap();
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let read = |session: &str| {
+        json!({"session_id":session,"cwd":repo,"tool_name":"Read",
+            "tool_input":{"file_path":repo.join("engine.rs")}})
+    };
+    // A tool call opens an episode only after the session's prompt.
+    let pretool = |session: &str| {
+        cli(
+            root,
+            &["hook", "prompt"],
+            Some(json!({"session_id":session,"cwd":repo,"prompt":"Inspect the engine steps"})),
+        );
+        hook_context(&cli(root, &["hook", "pretool"], Some(read(session))))
+    };
+
+    let first = pretool("spans");
+    assert!(
+        first.contains("Defines (line spans): step_0 (Function) 1-3, step_1 (Function) 5-7, "),
+        "{first}"
+    );
+    let size_line = format!(
+        "File size: {} KB. The line spans locate the listed definitions.\n",
+        source.len().div_ceil(1024)
+    );
+    assert!(first.contains(&size_line), "{first}");
+    // Suppression is unchanged: one brief per file per conversation.
+    assert!(
+        !pretool("spans").contains("Indexed reference data: engine.rs"),
+        "a briefed file is not briefed again"
+    );
+
+    // An edit after indexing leaves the plain list and the current size.
+    let edited = format!("// edited\n{source}");
+    std::fs::write(repo.join("engine.rs"), &edited).unwrap();
+    let stale = pretool("stale");
+    assert!(
+        stale.contains("Defines: step_0 (Function), step_1 (Function), "),
+        "{stale}"
+    );
+    assert!(
+        stale.contains(&format!("File size: {} KB.\n", edited.len().div_ceil(1024))),
+        "{stale}"
+    );
+    assert!(!stale.contains("line spans"), "{stale}");
+    cli(root, &["daemon", "stop"], None);
+}

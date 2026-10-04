@@ -382,3 +382,39 @@ different order in 2 of the 18 cases.
 - The capacity review used read-only copies of the backup, a disposable clone
   and local scripts that print aggregates. Raw reports with private paths and
   labels stay in the local working evidence directory.
+
+## Addendum: ranged file briefs
+
+The pre-tool file brief now gives each listed definition its lines when the
+checkout's copy of the file still has the indexed digest, the same check as
+task source map ranges. A file of at least `context.large_file_bytes`
+(64 KiB by default) gets one line with its size. Measured later on 2026-10-04
+on branch `roadmap/ranged-briefs`, against the installed release `71df87f2…`,
+on a synthetic fixture.
+
+The fixture has three Rust files of 960 KiB (1,700 functions), 101 KiB (180
+functions) and 3.4 KiB (6 functions), plus one caller file. Each binary
+indexed it into its own home, database and socket. For Claude Code, Codex and
+Cursor, a prompt hook was followed by a Read hook on each file, repeated once
+in the same conversation. The large file was then edited by one prepended line
+and read again in new conversations.
+
+| File | Installed release | Branch, unchanged file | Branch, file edited after indexing |
+| --- | ---: | ---: | ---: |
+| 960 KiB, 20 of 1,700 definitions listed | 809 B | 1,031 B: spans and size line | 828 B: size line, no spans |
+| 101 KiB | 765 B | 987 B: spans and size line | — |
+| 3.4 KiB | 352 B | 400 B: spans, no size line | — |
+
+- The brief was the same size for all three clients, and each fit its limit.
+- The repeated call in the same conversation added no brief in either build.
+- The spans locate only the first 20 definitions in file order. A definition
+  that the task names keeps its range in the task source map.
+
+The installed index was copied this morning and frozen. In it, 15 of the 131
+files of the Rust backend repository are 64 KiB or larger. Four are over
+256 KiB, and the largest is 806 KiB. In the Python repository, 4 of 1,037 files
+are 64 KiB or larger, none is over 256 KiB, and the largest is 96 KiB.
+
+No coding agent was run, so the effect on whole-file reads is not measured.
+The installed daemon SHA-256 is `cac553904322a1c8…`, and the branch daemon is
+`f456a6846366e14b…`.
