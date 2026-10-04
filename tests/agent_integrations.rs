@@ -72,8 +72,21 @@ fn indexed_repo(root: &Path) -> std::path::PathBuf {
     let repo = root.join("repo");
     std::fs::create_dir(&repo).unwrap();
     std::fs::write(repo.join("lib.rs"), "pub fn compute() -> u32 { 42 }\n").unwrap();
-    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
-    repo
+    // Setup only: on a heavily loaded machine the first daemon launch after a
+    // rebuild can outlast the CLI's 5 s auto-start wait. A later command
+    // reuses the daemon once it is ready; any other failure fails the test.
+    for attempt in 1..=3 {
+        let output = run(root, &["index", repo.to_str().unwrap(), "--json"], None);
+        if output.status.success() {
+            return repo;
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            attempt < 3 && stderr.contains("did not become ready"),
+            "index: {stderr}"
+        );
+    }
+    unreachable!("index either succeeds or fails the test")
 }
 
 #[test]
@@ -103,6 +116,21 @@ fn cursor_installer_merges_previews_and_removes_only_engram_entries() {
         run(root, &args, None)
     };
     let read = |path: &Path| std::fs::read_to_string(path).unwrap();
+
+    // An installed engram without the adapter would exit 2 on `--cursor`,
+    // which Cursor treats as a block; the installer refuses to point at it.
+    let stale = root.join(".local/bin/engram");
+    std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    std::fs::write(&stale, "#!/bin/sh\nexit 2\n").unwrap();
+    std::fs::set_permissions(&stale, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let refused = setup(&["--install"]);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("does not support Cursor hooks"));
+    assert_eq!(
+        serde_json::from_str::<Value>(&read(&hooks_path)).unwrap(),
+        original_hooks
+    );
+    std::fs::remove_file(&stale).unwrap();
 
     let preview = setup(&["--print", "--mcp"]);
     assert!(preview.status.success());

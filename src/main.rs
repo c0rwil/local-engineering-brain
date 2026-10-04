@@ -3584,15 +3584,40 @@ fn run_skills_action(action: &SkillsAction) -> Result<bool> {
     Ok(true)
 }
 
-fn native_hook_command() -> Result<String> {
+fn native_hook_executable() -> Result<PathBuf> {
     let stable = dirs_home().join(".local/bin/engram");
-    let executable = if stable.is_file() {
-        stable
+    if stable.is_file() {
+        Ok(stable)
     } else {
-        std::env::current_exe().map_err(|e| engram::Error::Config(e.to_string()))?
-    };
+        std::env::current_exe().map_err(|e| engram::Error::Config(e.to_string()))
+    }
+}
+
+fn native_hook_command() -> Result<String> {
+    let executable = native_hook_executable()?;
     let binary = format!("'{}'", executable.to_string_lossy().replace('\'', "'\\''"));
     Ok(binary)
+}
+
+/// Refuse to point Cursor at a binary without the Cursor adapter. An older
+/// engram rejects `--cursor` with exit code 2, which Cursor treats as a block.
+/// With empty input the adapter only prints its default prompt response.
+fn verify_cursor_adapter(executable: &Path) -> Result<()> {
+    let output = std::process::Command::new(executable)
+        .args(["hook", "prompt", "--cursor"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|error| engram::Error::Config(format!("run {}: {error}", executable.display())))?;
+    let response = serde_json::from_slice::<serde_json::Value>(&output.stdout).ok();
+    if output.status.success() && response == Some(serde_json::json!({"continue": true})) {
+        return Ok(());
+    }
+    Err(engram::Error::Config(format!(
+        "{} does not support Cursor hooks; install this Engram build first, then rerun \
+         `engram hooks cursor --install`",
+        executable.display()
+    )))
 }
 
 fn install_codex_hooks() -> Result<()> {
@@ -3746,6 +3771,7 @@ fn run_cursor_setup(args: &CursorSetupArgs) -> Result<()> {
         return Ok(());
     }
     if install {
+        verify_cursor_adapter(&native_hook_executable()?)?;
         let document = cursor::read_document(&hooks_path, serde_json::json!({}))?;
         let document = cursor::merge_cursor_hooks(document, &native_hook_command()?)?;
         cursor::write_document(&hooks_path, &document)?;

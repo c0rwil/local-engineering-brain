@@ -115,7 +115,12 @@ already launches `engram-mcp` or `leb-mcp` and refuses to replace a foreign
 `engram` entry. `--print` shows the entries without writing anything.
 `--uninstall` removes only Engram's hook entries; add `--mcp` to also remove
 Engram's server entry. Cursor reloads `hooks.json` on save; the Hooks tab under
-Customize and the Hooks output channel show what ran.
+Customize and the Hooks output channel show what ran. The entries point at
+`~/.local/bin/engram` when it exists. An `engram` without the Cursor adapter
+rejects `--cursor` with exit code 2, which Cursor treats as a block, so
+`--install` first runs the target binary's adapter and refuses to write when
+it fails. Install the Engram build before `--install`, and run `--uninstall`
+before downgrading to a build without Cursor support.
 
 | Client | Native connection |
 |---|---|
