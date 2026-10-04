@@ -178,7 +178,7 @@ function contextUseRows(projects) {
     return `<tr><th scope="row"><a class="p-link" href="${href("repo:"+project.project_id)}">${h(project.project_name)}</a><small>${h(counted(u.observed_tool_calls,"observed call"))} · ${h(counted(u.observed_sessions,"agent session"))}</small></th><td>${pointers}</td><td>${coverage}<small>${h(counted(u.touched_files,"file"))} first touched · ${h(amount(u.touched_files_before_context))} before any delivered context</small></td><td>${readCells}</td></tr>`;
   }).join("")}</tbody></table></div>`;
 }
-const hiddenCause = reason => ({pipe:"Pipe without pipefail",sequence:"Command after it (; or newline)",or:"Joined by ||",background:"Background run",directory:"Directory change that may not apply",syntax:"Shell syntax Engram does not read"}[reason] || reason.replaceAll("_"," "));
+const hiddenCause = reason => ({pipe:"Pipe without pipefail",sequence:"Command after it (; or newline)",or:"Joined by ||",background:"Background run",directory:"Directory change that may not apply",syntax:"Shell syntax Engram does not read",unreported:"No exit status from the client"}[reason] || reason.replaceAll("_"," "));
 const statusShare = (label,share) => `<div>${h(label)}: <strong>${h(percent(share?.share))}</strong><small>${h(amount(share?.status_bearing))} of ${h(counted(share?.runs,"run"))} recordable</small></div>`;
 function verificationCells(v) {
   const hidden=Object.entries(v.hidden_by_reason||{}).sort(([a,x],[b,y])=>y-x||hiddenCause(a).localeCompare(hiddenCause(b)));

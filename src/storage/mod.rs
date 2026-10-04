@@ -113,9 +113,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "project_merge",
         include_str!("migrations/0021_project_merge.sql"),
     ),
+    (
+        22,
+        "unreported_verification_status",
+        include_str!("migrations/0022_unreported_verification_status.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 21;
+pub const LATEST_MIGRATION_VERSION: i64 = 22;
 
 /// Reopenable handle to the canonical database.
 ///
@@ -903,6 +908,88 @@ mod tests {
             .execute("DELETE FROM nodes WHERE id='owner'", [])
             .unwrap();
         assert_eq!(count("label:Options"), 0);
+    }
+
+    #[test]
+    fn migration_22_keeps_verification_observations_and_accepts_unreported() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON")
+            .unwrap();
+        for (version, _, sql) in MIGRATIONS {
+            if *version < 22 {
+                connection.execute_batch(sql).unwrap();
+            }
+        }
+        let insert = |id: &str, reason: Option<&str>, noted: i64| {
+            connection.execute(
+                "INSERT INTO verification_observations(id,project_id,call_id,session_id,
+                     conversation_id,task_id,source,kind,hidden_reason,note_delivered,
+                     observed_at_ms,recorded_at_ms)
+                 VALUES (?1,'prj_one',?1,'s1','s1','tsk_one','codex','test_result',?2,?3,5,6)",
+                params![id, reason, noted],
+            )
+        };
+        connection
+            .execute_batch(
+                "INSERT INTO projects(id,name,created_at_ms) VALUES ('prj_one','one',0);
+                 INSERT INTO tasks(id,project_id,prompt,prompt_digest,status,started_at_ms)
+                 VALUES ('tsk_one','prj_one','p','d','open',0);",
+            )
+            .unwrap();
+        insert("vob_pipe", Some("pipe"), 1).unwrap();
+        insert("vob_recorded", None, 0).unwrap();
+        assert!(insert("vob_early", Some("unreported"), 0).is_err());
+        let rows = |connection: &Connection| -> Vec<(String, Option<String>, i64, Option<String>)> {
+            connection
+                .prepare(
+                    "SELECT id,hidden_reason,note_delivered,task_id
+                     FROM verification_observations ORDER BY id",
+                )
+                .unwrap()
+                .query_map([], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap()
+        };
+        let before = rows(&connection);
+        connection.execute_batch(MIGRATIONS[21].2).unwrap();
+        assert_eq!(rows(&connection), before);
+        insert("vob_unreported", Some("unreported"), 0).unwrap();
+        assert!(insert("vob_unknown", Some("other"), 0).is_err());
+        assert!(
+            insert("vob_noted", None, 1).is_err(),
+            "a note still needs a cause"
+        );
+        let indexes: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='index'
+                 AND tbl_name='verification_observations' AND name LIKE 'verification_observations_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexes, 4);
+        connection
+            .execute("DELETE FROM tasks WHERE id='tsk_one'", [])
+            .unwrap();
+        let unlinked: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM verification_observations WHERE task_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unlinked, 3, "task links still clear on delete");
+        connection
+            .execute("DELETE FROM projects WHERE id='prj_one'", [])
+            .unwrap();
+        assert!(
+            rows(&connection).is_empty(),
+            "rows still follow their project"
+        );
     }
 
     #[test]
