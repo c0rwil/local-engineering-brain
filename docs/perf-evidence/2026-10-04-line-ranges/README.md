@@ -171,8 +171,9 @@ test covers moved ranges, fallbacks and newly added uses.
 - Two navigation cases now expect `Intervention::cancelled`. The current native
   extractor qualifies impl methods, so the old label `cancelled` is absent from
   today's index. Both binaries used the updated case file.
-- Linked-repository pointers stay file-level. Python call sites and calls inside
-  Rust macro arguments are not indexed, so they cannot become related uses.
+- Linked-repository pointers stay file-level. The build measured above did not
+  index Python call sites or calls inside Rust macro arguments; the
+  [addendum](#addendum-python-call-sites) measures the extractor that does.
 
 ## Reproduction and provenance
 
@@ -197,3 +198,187 @@ caffeinate -dims python3 -B scripts/eval_task_context.py \
   --daemon /path/to/engramd --fixtures /private/pilot/fixtures \
   --reindex --live-checkout --repeats 3 --output /tmp/tasks.json
 ```
+
+## Addendum: Python call sites
+
+Measured later on 2026-10-04 on branch `roadmap/python-calls`. The native
+extractor, now `tree-sitter-v3`, records Python call sites, Python import
+bindings and calls inside Rust macro arguments. On the pilot tasks, the
+Python status-polling task gained three related-use lines per pack, but none
+names a required component. Required components anywhere in the pack stayed
+at 19/35, and direct selections were identical in 36/36 trials. A capacity
+review on a copy of the live index found two problems in three existing
+queries that match calls to definitions by name. They became several times
+slower, up to 85 s for one query, and most of their new Python matches were
+coincidental. The queries were rewritten, and a name-only match now needs a
+name that exactly one file defines. **Agent-level effects remain
+unmeasured.**
+
+### Changes evaluated
+
+- **Extraction.** A Python call is recorded the way a Rust call is: one
+  reference per calling file and callee text, with a `CALLS` edge from the
+  enclosing definition. Each name a Python import binds gets a binding node:
+  bound name to absolute dotted target, with relative imports resolved
+  against the file's directory. The extractor keeps at most 512 bindings per
+  file, and they carry no edges. Rust macro arguments are re-parsed as call
+  arguments, up to 4,096 argument lists, 1 MiB and three nesting levels per
+  file. A reference that already exists keeps its first span outside a macro.
+- **One-time re-extraction.** The extractor version bump makes the next index
+  re-parse every natively indexed file once. A hermetic test simulates the
+  upgrade. It checks that node ids are unchanged, that no lesson anchor is
+  invalidated and that the following index parses nothing.
+- **Related uses.** A Python caller in another file resolves through an
+  import of the definition's module or name. The import's dotted target must
+  end with the defining file's module path: at least two segments of it, or
+  one when both files share a directory. Within the definition's file,
+  `self.m()` and `cls.m()` in Python, `self.m()` and `Self::m()` in Rust, and
+  `this.m()` in TypeScript resolve when they come from another member of the
+  same owner. Python `Owner.m()` also resolves within that file. A Python
+  method call counts as a shared call only on `self`, `cls`, a capitalized
+  name or an import-bound name, and a recursive call is never a shared use.
+  Identifier and path matches now rank across anchors before anchor order.
+- **Name-matching queries.** File shapes (the pretool brief), module symbols
+  and the vault's module map match a call reference to a definition by label.
+  The file-shape and module-symbol queries now start from the file's or
+  module's own labels, and all three pin their indexes. A match counts only
+  when exactly one file defines the name, the rule that related uses already
+  apply across files.
+
+### Capacity review
+
+Each daemon re-indexed a disposable clone of the status-polling repository's
+local checkout into its own copy of `pre-roadmap-20261004.sqlite`. The
+installed release (`82b5df1d…`) and the branch build both re-extracted all
+1,033 files; the release was forced to by clearing its file digests. Three
+runs used three branch builds: one before the query rewrite, `c83adde` and
+the final `c080e05`. Index counts and sizes were identical across the runs.
+
+| Measurement | Installed release, `tree-sitter-v2` | Branch, `tree-sitter-v3` |
+| --- | ---: | ---: |
+| Index time, full re-extraction (three runs) | 2.7–3.0 s | 5.3–6.1 s |
+| Active nodes | 16,234 ¹ | 44,046 |
+| Active edges | 15,383 ¹ | 49,614 |
+| `CALLS` edges | 509 | 34,786 |
+| Call references (Python) | 479 (0) | 21,170 (20,691) |
+| Import bindings | — | 7,171 |
+| Database size after `VACUUM` | 967.8 MB | 1,016.5 MB (+48.7 MB, +5.0%) |
+| Definitions with unchanged id and digest | — | 10,355/10,355 |
+| Lesson anchors: total, on removed nodes, digest changed | 128, 0, 2 | 128, 0, 2 |
+
+¹ Includes 50 definitions from four files deleted since the backup. Clearing
+the digests kept the release from tombstoning them.
+
+For the related-use queries, the capacity script compiled one task per
+worst-case anchor: the five Python functions with the most calling files,
+plus the two functions the status-polling fix needed. Each task ran five
+times on the final build. Related uses stayed within their limits, at 0–6
+lines per pack. Median compile time rose by 1–7 ms; the slowest single
+compiles took 63 ms and 173 ms.
+
+| Anchor | Median compile, v2 → v3 | Related-use lines, v3 |
+| --- | ---: | ---: |
+| Most-called function 1 | 6 → 12 ms | 0 |
+| Most-called function 2 | 33 → 38 ms | 1 |
+| Most-called function 3 | 19 → 23 ms | 6 |
+| Most-called function 4 | 3 → 4 ms | 3 |
+| Most-called function 5 | 6 → 7 ms | 4 |
+| Status-polling session lookup | 37 → 44 ms | 6 |
+| Status-polling handler | 7 → 9 ms | 4 |
+
+The name-matching endpoints were timed through each daemon: file shapes for
+880 Python files, module symbols for the eight largest groups, and the module
+map once. The middle column replays the unchanged queries on the v3 index
+with Python's SQLite 3.53.4; the daemon bundles 3.53.2.
+
+| Endpoint | Installed release, v2 index | Unchanged queries, v3 index | Final build, v3 index |
+| --- | ---: | ---: | ---: |
+| File shape p50 / p90 / max | 12.9 / 33.3 / 364.7 ms | 28 / 133 / 2,100 ms, query only | 8.4 / 8.9 / 39.4 ms |
+| Module symbols median / max | 10.2 / 12.3 s | 4.1–84.7 s per direction query | 137 / 186 ms |
+| Module map | 11.5 s | 78–93 s, coupling query | 0.78 s |
+
+Before the name rule, the new query forms returned the old rows. Module-symbol
+directions were compared without limits on three groups of the v3 index and
+on 26 groups across four other repositories on the v2 index. File shapes
+matched on all 880 files of the v3 index. The pinned coupling query returned
+the original rows on the v3 index, and the regrouped form returned the pinned
+rows and weights on both indexes.
+
+The name rule's effect, from replays of the same queries:
+
+| Measurement | Before the rule | After the rule |
+| --- | ---: | ---: |
+| File-shape caller rows, Python repository, v3, before the 25-row cap | 41,026 | 2,308 |
+| Files with any file-shape caller, same | 543/1,033 | 253/1,033 |
+| Name-matched coupling weight, same | 41,532 | 2,492 |
+| File-shape caller rows, four other repositories, v2 | 562–6,817 | 386–4,368 (−31% to −56%) |
+| Name-matched coupling weight, same four | 606–6,976 | 418–4,956 (−29% to −52%) |
+
+Names defined in several files include a `main` per script and private
+helpers duplicated across modules. Through the endpoint, the final build's
+file shapes listed 1,395 callers across the 880 files, against 7,588 for
+`c83adde` and 15 for the installed release.
+
+### Pilot tasks
+
+The task harness and fixtures were the same as above. Before is the
+installed release `82b5df1d…`; after is the build of `c83adde`. The final
+build `c080e05` produced identical selections and token counts in all 72
+task trials and all 108 navigation trials.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Required components anywhere in the pack | 19/35 | 19/35 |
+| … of which from related-use lines | 6 | 6 |
+| Required components in first five pointers | 7/35 | 7/35 |
+| Required files anywhere / in first five | 17/25; 7/25 | 17/25; 7/25 |
+| Direct pointer selections | — | identical in 36/36 trials |
+| Pointers with a line range | 106/106 | 113/113 |
+| Related-use lines (estimated tokens), 36 compilations | 21 (777) | 42 (1,716) |
+| Estimated pack tokens, 36 compilations | 11,610 | 12,543 (+8.0%) |
+| Median task latency | 12.4 ms | 13.9 ms |
+
+| Case (one repeat) | Before | After |
+| --- | --- | --- |
+| Lean status polling, full and reordered | 0/3 components, no related use, 430 tokens | 0/3 components, 3 related uses, 559 tokens |
+| Environment isolation, qualified method | 1/1, 1 related use, 148 tokens | 1/1, 2 related uses, 201 tokens |
+| All other cases | unchanged | unchanged |
+
+In the status-polling task, the anchors are two step-count helpers that match
+identifiers in the task text. The after pack lists three callers, each
+another method of the anchor's class in the same file. None is a required
+component. The status handler, session lookup and polling helper that the fix
+needed are still missing, and only one of their three files is in the pack;
+that gap is in direct selection. In the environment probe, the added line is
+a test that makes the anchor's specific helper call inside `assert_eq!`.
+
+On the frozen navigation snapshot, which is not re-extracted, only the
+resolution and ranking changes apply. Direct selections were identical in
+54/54 trials. The same 48 related-use lines and 13,047 tokens appeared, in a
+different order in 2 of the 18 cases.
+
+### Limitations
+
+- The pilot tasks shaped the original cue, and r02 prompted this change, so
+  they are not held-out evidence.
+- Python resolution does not follow re-exports through a package
+  `__init__`, attribute chains such as `self.repo.get()`, instance variables,
+  dynamic imports or star imports. Module-level lowercase globals do not
+  count as shared targets.
+- The name rule also drops real matches when several files define a name.
+  Related uses can still resolve such calls through imports.
+- Capacity figures come from one repository on a machine shared with other
+  jobs. Treat latency as indicative.
+- No coding agent was run.
+
+### Reproduction and provenance
+
+- Before daemon SHA-256 `cfd24bf78f4d0cf9…` (release `82b5df1d…`). After
+  daemon `9e98e467cc7dfa53…`, built from `c83adde`. Final daemon
+  `5182e0c891d61dec…`, built from `c080e05`. A rebuild of either commit
+  reproduced its hash.
+- Harness and case hashes match the first measurement. The navigation
+  snapshot SHA-256 `9501c83e33d3dafa…` was unchanged after every run.
+- The capacity review used read-only copies of the backup, a disposable clone
+  and local scripts that print aggregates. Raw reports with private paths and
+  labels stay in the local working evidence directory.
