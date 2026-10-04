@@ -1,0 +1,13 @@
+{
+  "dashboard": {
+    "status": 200,
+    "bytes": 53702
+  },
+  "local_judge_models": {
+    "status": 200,
+    "bytes": 197,
+    "models": [
+      "engram-judge"
+    ]
+  }
+}

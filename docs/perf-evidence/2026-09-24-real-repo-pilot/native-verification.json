@@ -1,0 +1,1261 @@
+{
+  "schema_version": 1,
+  "verified_at": "2026-09-25T07:25:12.682484+00:00",
+  "installed_source_hash": "a63f33b28c942fdf6771c240eb7945a33862c0ef0e3de09700d15805e707ab9f",
+  "collection_fingerprint": "176927c5dfd8afc0d4d199c24a38a780fd28606de00f5786de70c16bd49a559e",
+  "verification": {
+    "checks_per_run": 416,
+    "verified_after_first_import": true,
+    "verified_after_identical_retry": true,
+    "verified_after_final_build_restart": true,
+    "records": 24,
+    "tasks": 4,
+    "pairs": 12,
+    "both_clean_pass_pairs": 1,
+    "first_import_acknowledged": 24,
+    "retry_acknowledged": 24
+  },
+  "verifier_sha256": "5f29f028955a29fc2e12c55abaa2feecd8ed7d4dae577ec8d5a53483b5d1fc94",
+  "comparisons": [
+    {
+      "benchmark_id": "real-repo-pilot-20260924/r01_guide_hot_path",
+      "model_hash": "3f7900136ad31038d6859a834520af198844368a39dfa3cadc9d0f3bb215343d",
+      "config_hash": "e0d2f8e3d1f6d67686cca9854c40e4d6d3fefaba70a97cfe7f4a092e18a787bd",
+      "brain_snapshot_hash": "64ba0216df69ffc720e64ec7014a8abb9b0f73eddc507505a097be63f42b5bf8",
+      "paired_runs": 3,
+      "excluded_runs": 0,
+      "off_successes": 2,
+      "brain_successes": 2,
+      "metrics": {
+        "agent_wall_seconds": {
+          "measured_pairs": 3,
+          "off_total": 1529.552,
+          "brain_total": 1975.901,
+          "brain_minus_off_pct": 29.181681956546733
+        },
+        "cache_read_tokens": {
+          "measured_pairs": 2,
+          "off_total": 11763358.0,
+          "brain_total": 6967961.0,
+          "brain_minus_off_pct": -40.76554500849162
+        },
+        "cache_write_tokens": {
+          "measured_pairs": 2,
+          "off_total": 243426.0,
+          "brain_total": 180362.0,
+          "brain_minus_off_pct": -25.906846433823834
+        },
+        "cost_usd": {
+          "measured_pairs": 2,
+          "off_total": 10.162524,
+          "brain_total": 6.7121805000000005,
+          "brain_minus_off_pct": -33.951639376202216
+        },
+        "input_tokens": {
+          "measured_pairs": 2,
+          "off_total": 312.0,
+          "brain_total": 236.0,
+          "brain_minus_off_pct": -24.35897435897436
+        },
+        "output_tokens": {
+          "measured_pairs": 2,
+          "off_total": 73801.0,
+          "brain_total": 56936.0,
+          "brain_minus_off_pct": -22.85199387542174
+        },
+        "processed_input_tokens": {
+          "measured_pairs": 2,
+          "off_total": 12007096.0,
+          "brain_total": 7148559.0,
+          "brain_minus_off_pct": -40.4638806918842
+        },
+        "tool_calls": {
+          "measured_pairs": 3,
+          "off_total": 183.0,
+          "brain_total": 194.0,
+          "brain_minus_off_pct": 6.0109289617486334
+        },
+        "total_tokens": {
+          "measured_pairs": 2,
+          "off_total": 12080897.0,
+          "brain_total": 7205495.0,
+          "brain_minus_off_pct": -40.35629142438678
+        },
+        "turns": {
+          "measured_pairs": 3,
+          "off_total": 186.0,
+          "brain_total": 197.0,
+          "brain_minus_off_pct": 5.913978494623656
+        }
+      },
+      "all_attempts": {
+        "off": {
+          "attempts": 3,
+          "outcome_counts": {
+            "pass": 2,
+            "fail": 0,
+            "infrastructure_error": 1,
+            "unknown": 0
+          },
+          "totals_observed": {
+            "agent_wall_seconds": 1529.552,
+            "cache_read_tokens": 12658851.0,
+            "cache_write_tokens": 293370.0,
+            "cost_usd": 11.4009175,
+            "input_tokens": 366.0,
+            "output_tokens": 83925.0,
+            "processed_input_tokens": 12952587.0,
+            "tool_calls": 183.0,
+            "total_tokens": 13036512.0,
+            "turns": 186.0
+          },
+          "measurement_coverage": {
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 1
+            },
+            "cache_write_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 1
+            },
+            "cost_usd": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 1
+            },
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 1
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 1
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 1
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 1
+            },
+            "turns": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 3,
+          "outcome_counts": {
+            "pass": 2,
+            "fail": 0,
+            "infrastructure_error": 1,
+            "unknown": 0
+          },
+          "totals_observed": {
+            "agent_wall_seconds": 1975.901,
+            "cache_read_tokens": 12455937.0,
+            "cache_write_tokens": 297323.0,
+            "cost_usd": 11.674173500000002,
+            "input_tokens": 380.0,
+            "output_tokens": 98843.0,
+            "processed_input_tokens": 12753640.0,
+            "tool_calls": 194.0,
+            "total_tokens": 12852483.0,
+            "turns": 197.0
+          },
+          "measurement_coverage": {
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_write_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "turns": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "pair_outcomes": {
+        "both_pass": 1,
+        "off_only_pass": 0,
+        "brain_only_pass": 0,
+        "both_fail": 0,
+        "infrastructure_or_unknown": 2
+      },
+      "both_clean_pass_pairs": 1,
+      "both_clean_pass_metrics": {
+        "agent_wall_seconds": {
+          "measured_pairs": 1,
+          "off_total": 566.385,
+          "brain_total": 573.584,
+          "brain_minus_off_pct": 1.271043548116556
+        },
+        "cache_read_tokens": {
+          "measured_pairs": 1,
+          "off_total": 5055297.0,
+          "brain_total": 3303527.0,
+          "brain_minus_off_pct": -34.65216781526387
+        },
+        "cache_write_tokens": {
+          "measured_pairs": 1,
+          "off_total": 106607.0,
+          "brain_total": 90417.0,
+          "brain_minus_off_pct": -15.18662001557121
+        },
+        "cost_usd": {
+          "measured_pairs": 1,
+          "off_total": 4.481168500000001,
+          "brain_total": 3.2862785000000003,
+          "brain_minus_off_pct": -26.664696942326543
+        },
+        "input_tokens": {
+          "measured_pairs": 1,
+          "off_total": 150.0,
+          "brain_total": 114.0,
+          "brain_minus_off_pct": -24.0
+        },
+        "output_tokens": {
+          "measured_pairs": 1,
+          "off_total": 35468.0,
+          "brain_total": 29191.0,
+          "brain_minus_off_pct": -17.69764294575392
+        },
+        "processed_input_tokens": {
+          "measured_pairs": 1,
+          "off_total": 5162054.0,
+          "brain_total": 3394058.0,
+          "brain_minus_off_pct": -34.249854805858284
+        },
+        "tool_calls": {
+          "measured_pairs": 1,
+          "off_total": 75.0,
+          "brain_total": 58.0,
+          "brain_minus_off_pct": -22.666666666666664
+        },
+        "total_tokens": {
+          "measured_pairs": 1,
+          "off_total": 5197522.0,
+          "brain_total": 3423249.0,
+          "brain_minus_off_pct": -34.13690216222269
+        },
+        "turns": {
+          "measured_pairs": 1,
+          "off_total": 76.0,
+          "brain_total": 59.0,
+          "brain_minus_off_pct": -22.36842105263158
+        }
+      }
+    },
+    {
+      "benchmark_id": "real-repo-pilot-20260924/r02_lean_task_status",
+      "model_hash": "3f7900136ad31038d6859a834520af198844368a39dfa3cadc9d0f3bb215343d",
+      "config_hash": "fe6fef3a7cef542970d66c84d531658e1fe790ff078d7a1b2fda3fd6180c727f",
+      "brain_snapshot_hash": "b6799a55a00f7250149a1c3c311f8ab128806ff3df68e4dc0b8e559f8e7f2e81",
+      "paired_runs": 3,
+      "excluded_runs": 0,
+      "off_successes": 1,
+      "brain_successes": 1,
+      "metrics": {
+        "agent_wall_seconds": {
+          "measured_pairs": 3,
+          "off_total": 1755.434,
+          "brain_total": 1503.348,
+          "brain_minus_off_pct": -14.360323429989394
+        },
+        "cache_read_tokens": {
+          "measured_pairs": 3,
+          "off_total": 10416429.0,
+          "brain_total": 9978448.0,
+          "brain_minus_off_pct": -4.204713534744009
+        },
+        "cache_write_tokens": {
+          "measured_pairs": 3,
+          "off_total": 233546.0,
+          "brain_total": 302825.0,
+          "brain_minus_off_pct": 29.663963416200662
+        },
+        "cost_usd": {
+          "measured_pairs": 3,
+          "off_total": 10.5756245,
+          "brain_total": 10.545824,
+          "brain_minus_off_pct": -0.28178477781619743
+        },
+        "input_tokens": {
+          "measured_pairs": 3,
+          "off_total": 430.0,
+          "brain_total": 290.0,
+          "brain_minus_off_pct": -32.55813953488372
+        },
+        "output_tokens": {
+          "measured_pairs": 3,
+          "off_total": 121192.0,
+          "brain_total": 101076.0,
+          "brain_minus_off_pct": -16.598455343587034
+        },
+        "processed_input_tokens": {
+          "measured_pairs": 3,
+          "off_total": 10650405.0,
+          "brain_total": 10281563.0,
+          "brain_minus_off_pct": -3.463173466173352
+        },
+        "tool_calls": {
+          "measured_pairs": 3,
+          "off_total": 215.0,
+          "brain_total": 152.0,
+          "brain_minus_off_pct": -29.30232558139535
+        },
+        "total_tokens": {
+          "measured_pairs": 3,
+          "off_total": 10771597.0,
+          "brain_total": 10382639.0,
+          "brain_minus_off_pct": -3.610959451973556
+        },
+        "turns": {
+          "measured_pairs": 3,
+          "off_total": 218.0,
+          "brain_total": 155.0,
+          "brain_minus_off_pct": -28.899082568807337
+        }
+      },
+      "all_attempts": {
+        "off": {
+          "attempts": 3,
+          "outcome_counts": {
+            "pass": 1,
+            "fail": 1,
+            "infrastructure_error": 1,
+            "unknown": 0
+          },
+          "totals_observed": {
+            "agent_wall_seconds": 1755.434,
+            "cache_read_tokens": 10416429.0,
+            "cache_write_tokens": 233546.0,
+            "cost_usd": 10.5756245,
+            "input_tokens": 430.0,
+            "output_tokens": 121192.0,
+            "processed_input_tokens": 10650405.0,
+            "tool_calls": 215.0,
+            "total_tokens": 10771597.0,
+            "turns": 218.0
+          },
+          "measurement_coverage": {
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_write_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "turns": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 3,
+          "outcome_counts": {
+            "pass": 1,
+            "fail": 2,
+            "infrastructure_error": 0,
+            "unknown": 0
+          },
+          "totals_observed": {
+            "agent_wall_seconds": 1503.348,
+            "cache_read_tokens": 9978448.0,
+            "cache_write_tokens": 302825.0,
+            "cost_usd": 10.545824,
+            "input_tokens": 290.0,
+            "output_tokens": 101076.0,
+            "processed_input_tokens": 10281563.0,
+            "tool_calls": 152.0,
+            "total_tokens": 10382639.0,
+            "turns": 155.0
+          },
+          "measurement_coverage": {
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_write_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "turns": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "pair_outcomes": {
+        "both_pass": 0,
+        "off_only_pass": 1,
+        "brain_only_pass": 1,
+        "both_fail": 0,
+        "infrastructure_or_unknown": 1
+      },
+      "both_clean_pass_pairs": 0,
+      "both_clean_pass_metrics": {
+        "agent_wall_seconds": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "cache_read_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "cache_write_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "cost_usd": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "input_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "output_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "processed_input_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "tool_calls": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "total_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "turns": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        }
+      }
+    },
+    {
+      "benchmark_id": "real-repo-pilot-20260924/r05_test_env_isolation",
+      "model_hash": "3f7900136ad31038d6859a834520af198844368a39dfa3cadc9d0f3bb215343d",
+      "config_hash": "75fbaa2085377ee5929a97625c3e5f1e00579e4407b9174e869c6b7d7d6f12dc",
+      "brain_snapshot_hash": "b8f03ee01a77bc4fb99ea5b3eeab12b3ee38dfa5ceaf56e049744f0d11981b08",
+      "paired_runs": 3,
+      "excluded_runs": 0,
+      "off_successes": 0,
+      "brain_successes": 3,
+      "metrics": {
+        "agent_wall_seconds": {
+          "measured_pairs": 3,
+          "off_total": 1082.01,
+          "brain_total": 1061.343,
+          "brain_minus_off_pct": -1.9100562841378468
+        },
+        "cache_read_tokens": {
+          "measured_pairs": 3,
+          "off_total": 3600046.0,
+          "brain_total": 2921087.0,
+          "brain_minus_off_pct": -18.85973123676753
+        },
+        "cache_write_tokens": {
+          "measured_pairs": 3,
+          "off_total": 201591.0,
+          "brain_total": 145059.0,
+          "brain_minus_off_pct": -28.04291858267482
+        },
+        "cost_usd": {
+          "measured_pairs": 3,
+          "off_total": 5.323593,
+          "brain_total": 4.379278500000001,
+          "brain_minus_off_pct": -17.738292540395165
+        },
+        "input_tokens": {
+          "measured_pairs": 3,
+          "off_total": 152.0,
+          "brain_total": 164.0,
+          "brain_minus_off_pct": 7.894736842105263
+        },
+        "output_tokens": {
+          "measured_pairs": 3,
+          "off_total": 60276.0,
+          "brain_total": 58693.0,
+          "brain_minus_off_pct": -2.626252571504413
+        },
+        "processed_input_tokens": {
+          "measured_pairs": 3,
+          "off_total": 3801789.0,
+          "brain_total": 3066310.0,
+          "brain_minus_off_pct": -19.345602820145988
+        },
+        "tool_calls": {
+          "measured_pairs": 3,
+          "off_total": 78.0,
+          "brain_total": 84.0,
+          "brain_minus_off_pct": 7.6923076923076925
+        },
+        "total_tokens": {
+          "measured_pairs": 3,
+          "off_total": 3862065.0,
+          "brain_total": 3125003.0,
+          "brain_minus_off_pct": -19.084660667285508
+        },
+        "turns": {
+          "measured_pairs": 3,
+          "off_total": 81.0,
+          "brain_total": 87.0,
+          "brain_minus_off_pct": 7.4074074074074066
+        }
+      },
+      "all_attempts": {
+        "off": {
+          "attempts": 3,
+          "outcome_counts": {
+            "pass": 0,
+            "fail": 3,
+            "infrastructure_error": 0,
+            "unknown": 0
+          },
+          "totals_observed": {
+            "agent_wall_seconds": 1082.01,
+            "cache_read_tokens": 3600046.0,
+            "cache_write_tokens": 201591.0,
+            "cost_usd": 5.323593,
+            "input_tokens": 152.0,
+            "output_tokens": 60276.0,
+            "processed_input_tokens": 3801789.0,
+            "tool_calls": 78.0,
+            "total_tokens": 3862065.0,
+            "turns": 81.0
+          },
+          "measurement_coverage": {
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_write_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "turns": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 3,
+          "outcome_counts": {
+            "pass": 3,
+            "fail": 0,
+            "infrastructure_error": 0,
+            "unknown": 0
+          },
+          "totals_observed": {
+            "agent_wall_seconds": 1061.343,
+            "cache_read_tokens": 2921087.0,
+            "cache_write_tokens": 145059.0,
+            "cost_usd": 4.379278500000001,
+            "input_tokens": 164.0,
+            "output_tokens": 58693.0,
+            "processed_input_tokens": 3066310.0,
+            "tool_calls": 84.0,
+            "total_tokens": 3125003.0,
+            "turns": 87.0
+          },
+          "measurement_coverage": {
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_write_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "turns": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "pair_outcomes": {
+        "both_pass": 0,
+        "off_only_pass": 0,
+        "brain_only_pass": 3,
+        "both_fail": 0,
+        "infrastructure_or_unknown": 0
+      },
+      "both_clean_pass_pairs": 0,
+      "both_clean_pass_metrics": {
+        "agent_wall_seconds": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "cache_read_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "cache_write_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "cost_usd": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "input_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "output_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "processed_input_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "tool_calls": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "total_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "turns": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        }
+      }
+    },
+    {
+      "benchmark_id": "real-repo-pilot-20260924/r06_onboarding_outage",
+      "model_hash": "3f7900136ad31038d6859a834520af198844368a39dfa3cadc9d0f3bb215343d",
+      "config_hash": "87d8d81b69a5ea7554d0b2d741e845a5f94ce56c711bddf2119575ebe1a050f3",
+      "brain_snapshot_hash": "1d645dee4ce43703014fe590f443952e69fa5afc70ac11a3725e3af800c67e78",
+      "paired_runs": 3,
+      "excluded_runs": 0,
+      "off_successes": 2,
+      "brain_successes": 1,
+      "metrics": {
+        "agent_wall_seconds": {
+          "measured_pairs": 3,
+          "off_total": 771.789,
+          "brain_total": 1138.837,
+          "brain_minus_off_pct": 47.5580761062933
+        },
+        "cache_read_tokens": {
+          "measured_pairs": 3,
+          "off_total": 2410673.0,
+          "brain_total": 3438476.0,
+          "brain_minus_off_pct": 42.635521283890434
+        },
+        "cache_write_tokens": {
+          "measured_pairs": 3,
+          "off_total": 107850.0,
+          "brain_total": 183594.0,
+          "brain_minus_off_pct": 70.23087621696801
+        },
+        "cost_usd": {
+          "measured_pairs": 3,
+          "off_total": 3.5851915,
+          "brain_total": 5.495997999999999,
+          "brain_minus_off_pct": 53.297194863928446
+        },
+        "input_tokens": {
+          "measured_pairs": 3,
+          "off_total": 176.0,
+          "brain_total": 154.0,
+          "brain_minus_off_pct": -12.5
+        },
+        "output_tokens": {
+          "measured_pairs": 3,
+          "off_total": 52019.0,
+          "brain_total": 77602.0,
+          "brain_minus_off_pct": 49.18010726849805
+        },
+        "processed_input_tokens": {
+          "measured_pairs": 3,
+          "off_total": 2518699.0,
+          "brain_total": 3622224.0,
+          "brain_minus_off_pct": 43.813294085557665
+        },
+        "tool_calls": {
+          "measured_pairs": 3,
+          "off_total": 85.0,
+          "brain_total": 112.0,
+          "brain_minus_off_pct": 31.76470588235294
+        },
+        "total_tokens": {
+          "measured_pairs": 3,
+          "off_total": 2570718.0,
+          "brain_total": 3699826.0,
+          "brain_minus_off_pct": 43.921892638554674
+        },
+        "turns": {
+          "measured_pairs": 3,
+          "off_total": 88.0,
+          "brain_total": 115.0,
+          "brain_minus_off_pct": 30.681818181818183
+        }
+      },
+      "all_attempts": {
+        "off": {
+          "attempts": 3,
+          "outcome_counts": {
+            "pass": 2,
+            "fail": 0,
+            "infrastructure_error": 1,
+            "unknown": 0
+          },
+          "totals_observed": {
+            "agent_wall_seconds": 771.789,
+            "cache_read_tokens": 2410673.0,
+            "cache_write_tokens": 107850.0,
+            "cost_usd": 3.5851915,
+            "input_tokens": 176.0,
+            "output_tokens": 52019.0,
+            "processed_input_tokens": 2518699.0,
+            "tool_calls": 85.0,
+            "total_tokens": 2570718.0,
+            "turns": 88.0
+          },
+          "measurement_coverage": {
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_write_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "turns": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 3,
+          "outcome_counts": {
+            "pass": 1,
+            "fail": 0,
+            "infrastructure_error": 2,
+            "unknown": 0
+          },
+          "totals_observed": {
+            "agent_wall_seconds": 1138.837,
+            "cache_read_tokens": 3438476.0,
+            "cache_write_tokens": 183594.0,
+            "cost_usd": 5.495997999999999,
+            "input_tokens": 154.0,
+            "output_tokens": 77602.0,
+            "processed_input_tokens": 3622224.0,
+            "tool_calls": 112.0,
+            "total_tokens": 3699826.0,
+            "turns": 115.0
+          },
+          "measurement_coverage": {
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_write_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "turns": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "pair_outcomes": {
+        "both_pass": 0,
+        "off_only_pass": 0,
+        "brain_only_pass": 0,
+        "both_fail": 0,
+        "infrastructure_or_unknown": 3
+      },
+      "both_clean_pass_pairs": 0,
+      "both_clean_pass_metrics": {
+        "agent_wall_seconds": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "cache_read_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "cache_write_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "cost_usd": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "input_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "output_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "processed_input_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "tool_calls": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "total_tokens": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        },
+        "turns": {
+          "measured_pairs": 0,
+          "off_total": null,
+          "brain_total": null,
+          "brain_minus_off_pct": null
+        }
+      }
+    }
+  ]
+}

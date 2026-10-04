@@ -1,0 +1,26 @@
+{
+  "observed_at": "2026-09-24T23:32:39.193421+00:00",
+  "model": "engram-judge",
+  "artifact": "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed",
+  "runtime_version": "2.9.2",
+  "llguidance_version": "1.8.0",
+  "enable_thinking": false,
+  "rss_kib": 2951648,
+  "rss_note": "Single process RSS observation, not peak or total allocation ceiling",
+  "session_bank": {
+    "max_entries": 2,
+    "max_bytes": 536870912,
+    "per_session_max_bytes": 268435456
+  },
+  "ssd_session_cache": {
+    "enabled": false
+  },
+  "judge_enabled": true,
+  "endpoint": "http://127.0.0.1:8011/v1/chat/completions",
+  "launch_agent": "local.engram.judge",
+  "initial_live_reviews": {
+    "deferred_missing_independent_evidence": 2,
+    "provider_calls": 0
+  },
+  "offline_result_revalidation": "All persisted verdict validation results match final harness"
+}

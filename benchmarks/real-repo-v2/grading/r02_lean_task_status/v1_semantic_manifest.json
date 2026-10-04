@@ -1,0 +1,350 @@
+{
+  "schema_version": 1,
+  "base_commit": "1b5c21e44eda8e68dbbe457f7e98e7a607ff3b1a",
+  "baseline_file_sha256": {
+    "fcm_remote_cancel.json": "c84ac6a674c87832b3a78d14fffb849d34391151426613600265983e2408bcc6",
+    "fcm_remote_followup.json": "ef4030b684276234f6f718b2e197918ab8f0d0fb94506dee235b42bec63dabc0",
+    "fcm_remote_task.json": "41040d1ac9c7943e35dfb675e6e29e3908a15911bc518c521353c77773b4adeb",
+    "result_ok.json": "25f58d80e279821dacf5d0bb731bb36732975df44e6099fb024a873efcecde14",
+    "result_timeout.json": "5646eb3063a11827af6e8c006b0a8d4d39ff5c7ada25fed3683d017b82bb07b2",
+    "status_completed.json": "16706f254994e1a4e9aea997e9402560a756459db609964d3ecfa60b94f43d86",
+    "status_running.json": "de606352c20627e4b7954c9d31255704e953db87f1a76a1ee58e607db7a51a48",
+    "step_basic.json": "18bc5661041a6fcd31c9b4cf9701e59a6eeeb0a7304629d17a05a7e2ba77b1f5",
+    "step_user_message.json": "b91b4d49fa62a9087a2f730a2284fd0487dcf013a49e6682fb4328fb5db03460"
+  },
+  "contracts": {
+    "fcm_remote_cancel.json": {
+      "type": "object",
+      "fields": {
+        "session_id": {
+          "type": "string",
+          "value_sha256": "16c357a942e4c79aa0fbc0cdf103f6ff4f052e0260b5d9726ae35275542c3308"
+        },
+        "task_id": {
+          "type": "string",
+          "value_sha256": "2d8c8c1a26a05731bb889f51a511457574a5500d75f1ba07fbd485bf6a8ac34c"
+        },
+        "type": {
+          "type": "string",
+          "value_sha256": "4ca953a3612313e14bdf493f7ccba9de611a5c33b2d98c6ee2eb2e6c65b6f705"
+        }
+      }
+    },
+    "fcm_remote_followup.json": {
+      "type": "object",
+      "fields": {
+        "session_id": {
+          "type": "string",
+          "value_sha256": "16c357a942e4c79aa0fbc0cdf103f6ff4f052e0260b5d9726ae35275542c3308"
+        },
+        "task_id": {
+          "type": "string",
+          "value_sha256": "2d8c8c1a26a05731bb889f51a511457574a5500d75f1ba07fbd485bf6a8ac34c"
+        },
+        "text": {
+          "type": "string",
+          "value_sha256": "287524011c8c0055e22cae48311cf56c6cb06c684b4e25ae171295d2200a150f"
+        },
+        "type": {
+          "type": "string",
+          "value_sha256": "a438079569d4f92da57418856664475eda56638a1251620673baa23326fd4306"
+        }
+      }
+    },
+    "fcm_remote_task.json": {
+      "type": "object",
+      "fields": {
+        "deadline": {
+          "type": "string",
+          "value_sha256": "bc5ea0af2ceb43a03fb1d927a14c331d78a51d34860b586d8a75f0ddbdd85489"
+        },
+        "prompt": {
+          "type": "string",
+          "value_sha256": "27826761a867de6ccf95182c293c5b30cc93d137f8885053f13627b57553608a"
+        },
+        "session_id": {
+          "type": "string",
+          "value_sha256": "16c357a942e4c79aa0fbc0cdf103f6ff4f052e0260b5d9726ae35275542c3308"
+        },
+        "task_id": {
+          "type": "string",
+          "value_sha256": "2d8c8c1a26a05731bb889f51a511457574a5500d75f1ba07fbd485bf6a8ac34c"
+        },
+        "type": {
+          "type": "string",
+          "value_sha256": "d81e6ed536a15da0e5e4feb1dce5169ffbdd1a8bf0c56cfe881a71e68c46958d"
+        }
+      }
+    },
+    "result_ok.json": {
+      "type": "object",
+      "fields": {
+        "error": {
+          "type": "null",
+          "value_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "result": {
+          "type": "object",
+          "fields": {
+            "last_screenshot": {
+              "type": "string",
+              "value_sha256": "f7dc51902f8e9ec38df736108e29444af74edf5485e8eac79ef5775e3d96c533"
+            },
+            "steps_count": {
+              "type": "integer",
+              "value_sha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451"
+            },
+            "summary": {
+              "type": "string",
+              "value_sha256": "335fd4dd0aada063f6b08853967be3fa8d3e0b7fd863b47d080fb54f1a77469d"
+            },
+            "terminal_state": {
+              "type": "string",
+              "value_sha256": "c48b5b1a9776c84602de2306d7903a7241158a5077e7a8519af75c33441b8334"
+            }
+          }
+        },
+        "terminal": {
+          "type": "string",
+          "value_sha256": "c48b5b1a9776c84602de2306d7903a7241158a5077e7a8519af75c33441b8334"
+        }
+      }
+    },
+    "result_timeout.json": {
+      "type": "object",
+      "fields": {
+        "error": {
+          "type": "object",
+          "fields": {
+            "code": {
+              "type": "string",
+              "value_sha256": "492bd0204b74443b7d8d36be9d38f139bd23776b1b1762051c15b89705768595"
+            },
+            "message": {
+              "type": "string",
+              "value_sha256": "f8ab320d8606f8012c6e9cd88bc4967cbdc6de4a9e1b6ca9447f1d824c9a614b"
+            }
+          }
+        },
+        "result": {
+          "type": "null",
+          "value_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "terminal": {
+          "type": "string",
+          "value_sha256": "492bd0204b74443b7d8d36be9d38f139bd23776b1b1762051c15b89705768595"
+        }
+      }
+    },
+    "status_completed.json": {
+      "type": "object",
+      "fields": {
+        "error": {
+          "type": "null",
+          "value_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "result": {
+          "type": "object",
+          "fields": {
+            "steps_count": {
+              "type": "integer",
+              "value_sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+            },
+            "summary": {
+              "type": "string",
+              "value_sha256": "e3676f8c7179920f31755f659e9c747ec5e2c33b427e6e0bd3c59b77c35519bb"
+            },
+            "terminal_state": {
+              "type": "string",
+              "value_sha256": "c48b5b1a9776c84602de2306d7903a7241158a5077e7a8519af75c33441b8334"
+            }
+          }
+        },
+        "status": {
+          "type": "string",
+          "value_sha256": "7093fda846e50b267da144f7b3683ee1dd8838506939f6052b7370dd01fa2ad0"
+        },
+        "steps": {
+          "type": "array",
+          "items": [
+            {
+              "type": "object",
+              "fields": {
+                "action_type": {
+                  "type": "string",
+                  "value_sha256": "3d8a46fcec7f90402349e2693afa2ae46c160b0c005fd4aa8cf521c662c63dcd"
+                },
+                "created_at": {
+                  "type": "string",
+                  "value_sha256": "6911055e35af6814a0c2405174fd00fa0d42737e7411d4293052947fde088c6b"
+                },
+                "description": {
+                  "type": "string",
+                  "value_sha256": "e0c088d53b1d8cff3d23220b42e7e1a95cbfbc834f1b26f68b61267bbbd9c6e3"
+                },
+                "screenshot_thumbnail": {
+                  "type": "string",
+                  "value_sha256": "f7dc51902f8e9ec38df736108e29444af74edf5485e8eac79ef5775e3d96c533"
+                },
+                "step_number": {
+                  "type": "integer",
+                  "value_sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+                },
+                "thinking": {
+                  "type": "string",
+                  "value_sha256": "d97c5591483f2bd2f494ee1afaa1246f93b0a184498be01f5720f610def866c5"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "fields": {
+                "action_type": {
+                  "type": "string",
+                  "value_sha256": "d0070d5c40cd1aedd1b8d81061cd99af330999196a4200af47d89c42b4f81274"
+                },
+                "created_at": {
+                  "type": "string",
+                  "value_sha256": "cfcb06aa05dc4d338f373192898b781268667e82969e5a16712212be7d9ec49c"
+                },
+                "description": {
+                  "type": "string",
+                  "value_sha256": "d72849ea3cf28526a415765c278f1e3a9a72b5e6e6666aa1ae28cf7075887ec5"
+                },
+                "screenshot_thumbnail": {
+                  "type": "string",
+                  "value_sha256": "f7dc51902f8e9ec38df736108e29444af74edf5485e8eac79ef5775e3d96c533"
+                },
+                "step_number": {
+                  "type": "integer",
+                  "value_sha256": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+                },
+                "thinking": {
+                  "type": "null",
+                  "value_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+                }
+              }
+            }
+          ]
+        },
+        "terminal": {
+          "type": "string",
+          "value_sha256": "c48b5b1a9776c84602de2306d7903a7241158a5077e7a8519af75c33441b8334"
+        }
+      }
+    },
+    "status_running.json": {
+      "type": "object",
+      "fields": {
+        "error": {
+          "type": "null",
+          "value_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "result": {
+          "type": "null",
+          "value_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "status": {
+          "type": "string",
+          "value_sha256": "79d116a0c160c52732ff18be65ce4681d3bdf027cafd522cd1e076e816304379"
+        },
+        "steps": {
+          "type": "array",
+          "items": [
+            {
+              "type": "object",
+              "fields": {
+                "action_type": {
+                  "type": "string",
+                  "value_sha256": "3d8a46fcec7f90402349e2693afa2ae46c160b0c005fd4aa8cf521c662c63dcd"
+                },
+                "created_at": {
+                  "type": "string",
+                  "value_sha256": "6911055e35af6814a0c2405174fd00fa0d42737e7411d4293052947fde088c6b"
+                },
+                "description": {
+                  "type": "string",
+                  "value_sha256": "e0c088d53b1d8cff3d23220b42e7e1a95cbfbc834f1b26f68b61267bbbd9c6e3"
+                },
+                "screenshot_thumbnail": {
+                  "type": "string",
+                  "value_sha256": "f7dc51902f8e9ec38df736108e29444af74edf5485e8eac79ef5775e3d96c533"
+                },
+                "step_number": {
+                  "type": "integer",
+                  "value_sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+                },
+                "thinking": {
+                  "type": "string",
+                  "value_sha256": "d97c5591483f2bd2f494ee1afaa1246f93b0a184498be01f5720f610def866c5"
+                }
+              }
+            }
+          ]
+        },
+        "terminal": {
+          "type": "null",
+          "value_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        }
+      }
+    },
+    "step_basic.json": {
+      "type": "object",
+      "fields": {
+        "action_type": {
+          "type": "string",
+          "value_sha256": "3d8a46fcec7f90402349e2693afa2ae46c160b0c005fd4aa8cf521c662c63dcd"
+        },
+        "created_at": {
+          "type": "string",
+          "value_sha256": "6911055e35af6814a0c2405174fd00fa0d42737e7411d4293052947fde088c6b"
+        },
+        "description": {
+          "type": "string",
+          "value_sha256": "e0c088d53b1d8cff3d23220b42e7e1a95cbfbc834f1b26f68b61267bbbd9c6e3"
+        },
+        "screenshot_thumbnail": {
+          "type": "string",
+          "value_sha256": "a6636e3635549277c1efc2e9a32d9f435df423a6650b1f217ddeaead898d1075"
+        },
+        "step_number": {
+          "type": "integer",
+          "value_sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+        },
+        "thinking": {
+          "type": "string",
+          "value_sha256": "c770b64d7cb9b27183edbe92cc3887f4eba6dfa9228adf9390244be6c42ef1bc"
+        }
+      }
+    },
+    "step_user_message.json": {
+      "type": "object",
+      "fields": {
+        "action_type": {
+          "type": "string",
+          "value_sha256": "b537b9b2bb50324556c531ca034cebfce641312ed31c596604c50193c6b2fd2f"
+        },
+        "created_at": {
+          "type": "string",
+          "value_sha256": "6456880692b6f45e6cdbb30a0db98cbe0ba7c0e69bfa215382b8cc9aa7eb880e"
+        },
+        "description": {
+          "type": "string",
+          "value_sha256": "287524011c8c0055e22cae48311cf56c6cb06c684b4e25ae171295d2200a150f"
+        },
+        "screenshot_thumbnail": {
+          "type": "null",
+          "value_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "step_number": {
+          "type": "integer",
+          "value_sha256": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a"
+        },
+        "thinking": {
+          "type": "null",
+          "value_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        }
+      }
+    }
+  }
+}

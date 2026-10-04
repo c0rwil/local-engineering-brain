@@ -5,6 +5,7 @@ const root = document.getElementById("product-surface");
 const repoSurface = document.getElementById("repository-surface");
 const catalog = { records: [], repositories: [] };
 let loaded = false, environment = "", capability = "", query = "";
+let effectivenessDays = 7, effectivenessGeneration = 0, effectivenessTimer = null;
 const h = esc;
 const get = id => catalog.records.find(r => r.id === id);
 const entity = id => get(id)?.item.value || catalog.repositories.find(r => r.id === id);
@@ -120,7 +121,11 @@ function changesPage() {
   });
 }
 async function knowledgePage() {
-  root.innerHTML=`<div class="eyebrow">Evidence into memory</div><h1>Keep the lessons worth carrying forward.</h1><p class="lede">Review the claim and its actual verification. Accepting a lesson validates that memory; it does not record user acceptance of the task.</p><div id="p-inbox"><p class="empty">Loading review inbox…</p></div>`;
+  root.innerHTML=`<div class="eyebrow">Evidence into memory</div><h1>Keep the lessons worth carrying forward.</h1><p class="lede">Automatic review can validate supported lessons from their evidence. Human review remains available for pending proposals. Accepting a lesson does not record user acceptance of the task.</p><p id="p-knowledge-judge" class="p-notice" role="status">Checking automatic review…</p><div id="p-inbox"><p class="empty">Loading review inbox…</p></div>`;
+  api("/api/judge").then(judge=>{
+    const notice=document.getElementById("p-knowledge-judge");if(!notice)return;
+    notice.innerHTML=`${judge.enabled?`Automatic review is enabled${judge.running?" and running":""}. Supported proposals can be accepted automatically; uncertain claims stay pending.`:"Automatic review is not enabled in this workspace. You can review proposals here or configure a local judge."} <a class="p-link" href="#effectiveness">View review status and decision history</a>.`;
+  }).catch(()=>{const notice=document.getElementById("p-knowledge-judge");if(notice)notice.textContent="Automatic review status is unavailable. Manual review remains available.";});
   try {
     const reviews=await queryApi({operation:"reviews"});
     if(!document.getElementById("p-inbox"))return;
@@ -136,6 +141,110 @@ async function knowledgePage() {
       await submitting(form,async()=>{const f=new FormData(form);await api("/api/product/lessons",{operation:"review",id:r.id,expected_updated_at_ms:r.updated_at_ms,decision,claim:f.get("claim"),rationale:f.get("rationale"),contradicts:f.getAll("contradicts"),reviewed_related:f.has("reviewed_related")});await knowledgePage();});
     }));
   }catch(error){const inbox=document.getElementById("p-inbox");if(inbox)inbox.innerHTML=`<p class="p-error">${h(error.message)}</p>`;}
+}
+
+const measured = value => typeof value === "number" && Number.isFinite(value);
+const amount = value => measured(value) ? value.toLocaleString(undefined,{maximumFractionDigits:0}) : "Unknown";
+const dollars = value => measured(value) ? value.toLocaleString(undefined,{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:value>0&&value<0.01?6:4}) : "Unknown";
+const usageValue = (usage,field) => field==="cost_usd" ? dollars(usage?.totals?.[field]) : amount(usage?.totals?.[field]);
+const coverage = (usage,field) => `${amount(usage?.reported_samples?.[field]??0)} / ${amount(usage?.samples??0)} samples reporting`;
+const sourceName = name => ({memory:"Lessons",linked_memory:"Linked lessons",repository_symbol:"Repo symbols",repository_fact:"Repo facts",repository_doc:"Repo documents",symbol:"Symbols",fact:"Facts",document:"Documents"}[name] || name.replaceAll("_"," "));
+
+function usageCard(label,field,usage) {
+  return `<article class="p-card p-measure"><h3>${h(label)}</h3><strong>${h(usageValue(usage,field))}</strong><span class="p-muted">${h(coverage(usage,field))}</span></article>`;
+}
+function contextRows(projects) {
+  if(!projects.length)return `<p class="p-empty">No repositories are indexed in this workspace yet. Index a repository to start collecting context and learning coverage.</p>`;
+  return `<div class="p-table-wrap" tabindex="0" role="region" aria-label="Repository context and learning coverage"><table class="p-contracts p-effect-table"><thead><tr><th scope="col">Repository</th><th scope="col">Context compilation</th><th scope="col">Selected sources</th><th scope="col">Learning state now</th></tr></thead><tbody>${projects.map(project=>{
+    const c=project.contexts, m=project.memories;
+    const sources=Object.entries(c.selected_by_source||{});
+    return `<tr><th scope="row"><a class="p-link" href="${href("repo:"+project.project_id)}">${h(project.project_name)}</a><small>${h(amount(project.usage?.tasks_with_samples))} tasks with usage</small></th><td><strong>${h(amount(c.runs))} compilations</strong><small>${h(amount(c.runs_with_memories))} included lessons · ${h(amount(c.usage_linked_runs))} linked to usage</small><small>~${h(amount(c.estimated_selected_tokens))} selected tokens · ${h(amount(c.candidate_count))} candidates</small></td><td>${sources.length?sources.map(([name,value])=>`<div>${h(sourceName(name))}: ${h(amount(value.items))}<small>~${h(amount(value.estimated_tokens))} tokens · ${h(amount(value.runs))} compilations</small></div>`).join(""):"No selected items recorded"}</td><td><strong>${h(amount(m.active_validated))} active validated lessons</strong><small>${h(amount(m.pending_reviews))} awaiting review · ${h(amount(m.total))} total memories</small><details><summary>Memory states</summary><ul class="p-compact-list">${Object.entries(m.by_state||{}).map(([state,count])=>`<li>${h(sourceName(state))}: ${h(amount(count))}</li>`).join("")||"<li>No memories recorded</li>"}</ul></details></td></tr>`;
+  }).join("")}</tbody></table></div>`;
+}
+function overheadTable(projects) {
+  const rows=projects.flatMap(project=>(project.usage_by_source||[]).filter(group=>group.source==="internal_judge").map(group=>({project:project.project_name,...group})));
+  if(!rows.length)return `<p class="p-empty">No judge usage measurements recorded in this period. A local model’s cost stays unknown unless its provider reports it.</p>`;
+  return `<div class="p-table-wrap" tabindex="0" role="region" aria-label="Automatic review resource usage"><table class="p-contracts p-effect-table"><thead><tr><th scope="col">Repository / model</th><th scope="col">Input tokens</th><th scope="col">Output tokens</th><th scope="col">Reported cost</th></tr></thead><tbody>${rows.map(row=>`<tr><th scope="row">${h(row.project)}<small>${h(row.model||"Model unknown")} · ${h(row.provider||"Provider unknown")}</small></th>${["input_tokens","output_tokens","cost_usd"].map(field=>`<td>${h(usageValue(row.usage,field))}<small>${h(coverage(row.usage,field))}</small></td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+const comparisonNames={total_tokens:"Provider total tokens",tool_calls:"Tool calls",agent_wall_seconds:"Agent seconds",cost_usd:"Reported USD estimate",turns:"Agent turns",input_tokens:"Reported input tokens",output_tokens:"Output tokens",cache_read_tokens:"Cache read tokens",cache_write_tokens:"Cache write tokens",processed_input_tokens:"Processed input tokens"};
+const comparisonFormat = name => name==="cost_usd"?dollars:name==="agent_wall_seconds"?value=>measured(value)?value.toLocaleString(undefined,{maximumFractionDigits:3}):"Unknown":amount;
+function comparisonTable(metrics,pairs,label,primaryOnly=false) {
+  const names=Object.entries(comparisonNames).filter(([name],index)=>!primaryOnly||index<4);
+  return `<div class="p-table-wrap" tabindex="0" role="region" aria-label="${h(label)}"><table class="p-contracts p-effect-table"><thead><tr><th scope="col">Measurement</th><th scope="col">Off</th><th scope="col">Brain</th><th scope="col">Brain vs off</th><th scope="col">Measured pairs</th></tr></thead><tbody>${names.map(([name,title])=>{
+    const metric=metrics?.[name]||{}, format=comparisonFormat(name);
+    const change=measured(metric.brain_minus_off_pct)?`${metric.brain_minus_off_pct>0?"+":""}${metric.brain_minus_off_pct.toLocaleString(undefined,{maximumFractionDigits:1})}%`:"Unknown";
+    return `<tr><th scope="row">${h(title)}</th><td>${h(format(metric.off_total))}</td><td>${h(format(metric.brain_total))}</td><td>${h(change)}</td><td>${h(amount(metric.measured_pairs))} / ${h(amount(pairs))}</td></tr>`;
+  }).join("")}</tbody></table></div>`;
+}
+function allAttemptTables(attempts,label) {
+  if(!attempts)return "";
+  const arms=[["off","Off"],["brain","Brain"]];
+  const outcomes=`<div class="p-table-wrap" tabindex="0" role="region" aria-label="${h(label)} outcomes"><table class="p-contracts p-effect-table"><thead><tr><th scope="col">Arm</th><th scope="col">Passed</th><th scope="col">Failed</th><th scope="col">Infrastructure / unscorable</th><th scope="col">Unknown</th><th scope="col">Attempts</th></tr></thead><tbody>${arms.map(([arm,title])=>{const data=attempts[arm]||{},counts=data.outcome_counts||{};return `<tr><th scope="row">${title}</th>${["pass","fail","infrastructure_error","unknown"].map(name=>`<td>${h(amount(counts[name]))}</td>`).join("")}<td>${h(amount(data.attempts))}</td></tr>`;}).join("")}</tbody></table></div>`;
+  const resources=`<div class="p-table-wrap" tabindex="0" role="region" aria-label="${h(label)} all-attempt resources"><table class="p-contracts p-effect-table"><thead><tr><th scope="col">Observed resource</th><th scope="col">Off</th><th scope="col">Brain</th></tr></thead><tbody>${Object.entries(comparisonNames).slice(0,4).map(([name,title])=>`<tr><th scope="row">${h(title)}</th>${arms.map(([arm])=>{const data=attempts[arm]||{},coverage=data.measurement_coverage?.[name]||{},format=comparisonFormat(name);return `<td>${h(format(data.totals_observed?.[name]))}<small>${h(amount(coverage.available))} / ${h(amount(coverage.total))} attempts reporting${coverage.partial?` · ${h(amount(coverage.partial))} partial`:""}</small></td>`;}).join("")}</tr>`).join("")}</tbody></table></div>`;
+  return `<h4>All attempts</h4>${outcomes}${resources}<p class="p-muted">Includes failed, interrupted and unmatched attempts. Reported usage from an interrupted run may be incomplete.</p>`;
+}
+function comparisonCards(comparisons) {
+  if(!comparisons?.length)return `<p class="p-empty">No off/brain trials were recorded in this period. Daily totals alone do not establish token or cost savings.</p>`;
+  return comparisons.map(report=>{
+    const outcomes=report.pair_outcomes,clean=report.both_clean_pass_pairs;
+    const cleanSection=measured(clean)?`<h4>Both runs completed and passed</h4>${clean?`${comparisonTable(report.both_clean_pass_metrics,clean,report.benchmark_id+" clean passing pairs",true)}<details><summary>All measurements for passing pairs</summary>${comparisonTable(report.both_clean_pass_metrics,clean,report.benchmark_id+" passing-pair detail")}</details>`:`<p class="p-empty">No eligible pairs yet. There is no successful-pair resource comparison.</p>`}<p class="p-muted">${h(amount(clean))} eligible pairs. Negative change means lower observed use with Engram. This compares matched successful work; it does not include the cost of failed attempts above.</p>`:"";
+    return `<article class="p-card p-comparison"><h3>${h(report.benchmark_id)}</h3><p class="p-muted">${h(amount(report.paired_runs))} matched task/repetition pairs · passed matched trials: off ${h(amount(report.off_successes))} / ${h(amount(report.paired_runs))}, brain ${h(amount(report.brain_successes))} / ${h(amount(report.paired_runs))}${report.excluded_runs?` · ${h(amount(report.excluded_runs))} unmatched or duplicate runs excluded from paired comparisons`:""}</p>${outcomes?`<p class="p-muted">Both pass ${h(amount(outcomes.both_pass))} · only Off passes ${h(amount(outcomes.off_only_pass))} · only Brain passes ${h(amount(outcomes.brain_only_pass))} · both fail ${h(amount(outcomes.both_fail))} · infrastructure or unknown ${h(amount(outcomes.infrastructure_or_unknown))}</p>`:""}${allAttemptTables(report.all_attempts,report.benchmark_id)}${cleanSection}<details ${measured(clean)?"":"open"}><summary>All matched pairs · includes failures and interruptions</summary><p class="p-muted">These deltas describe observed resources, regardless of correctness. A cheaper failed run is not a saving on completed work.</p>${comparisonTable(report.metrics,report.paired_runs,report.benchmark_id+" all matched pairs")}</details><details><summary>Matched controls</summary><dl class="p-controls"><dt>Model</dt><dd>${h(report.model_hash)}</dd><dt>Configuration</dt><dd>${h(report.config_hash)}</dd><dt>Brain snapshot</dt><dd>${h(report.brain_snapshot_hash)}</dd></dl></details></article>`;
+  }).join("");
+}
+function judgmentAudits(judge) {
+  if(!judge.audits?.length)return `<p class="p-empty">No automatic decisions recorded yet. When enabled, the judge reviews evidence and records accepted, rejected or deferred decisions here.</p>`;
+  return `<ul class="p-list p-audits">${judge.audits.map(audit=>{
+    const evaluation=audit.evaluation||{}, verdict=evaluation.verdict;
+    return `<li><div class="p-flex"><strong>${h(sourceName(audit.outcome))}</strong><span class="p-muted">${h(time(audit.recorded_at_ms))} · attempt ${h(amount(audit.attempt))}</span></div>${verdict?.claim?`<p>${h(verdict.claim)}</p>`:""}<p class="p-muted">${h(audit.reason)}</p><details><summary>Decision evidence and usage</summary><p class="p-muted">Model ${h(audit.model)} · review ${h(audit.review_id)}${measured(evaluation.duration_ms)?` · ${h(amount(evaluation.duration_ms))} ms`:""}</p><p class="p-muted">Input ${h(amount(evaluation.usage?.input_tokens))} · output ${h(amount(evaluation.usage?.output_tokens))} · reported cost ${h(dollars(evaluation.usage?.reported_cost_usd))}</p>${(verdict?.citations||[]).map(citation=>`<blockquote><p>${h(citation.quote)}</p><cite>Evidence ${h(citation.evidence_id)}</cite></blockquote>`).join("")||`<p class="p-muted">No acceptance citations recorded.</p>`}${evaluation.error?`<p class="p-error">${h(evaluation.error)}</p>`:""}${audit.retry_after_ms?`<p class="p-muted">Eligible for retry after ${h(time(audit.retry_after_ms))}</p>`:""}</details></li>`;
+  }).join("")}</ul>`;
+}
+function judgePanel(judge,error) {
+  if(error)return `<h2>Automatic review</h2><p class="p-error" role="alert">Review status unavailable: ${h(error.message)}</p>`;
+  return `<section aria-labelledby="p-judge-heading"><div class="p-flex"><h2 id="p-judge-heading">Automatic review</h2><span class="p-badge ${judge.enabled?"verified":""}">${judge.enabled?judge.running?"Running":"Enabled":"Disabled"}</span></div><div class="p-card"><div class="p-flex"><div><h3>${judge.enabled?"Evidence reviewed by the configured judge":"Automatic review is not enabled"}</h3><p class="p-muted">${judge.enabled?`Model: ${h(judge.model)}${judge.provider?` · ${h(judge.provider)}`:""}. Supported claims can become validated lessons; insufficient evidence stays pending.`:"Configure a local model or opt into TypeSafe under [judge] in this workspace’s config. Manual review remains available."}</p></div><button id="p-judge-run" type="button" ${!judge.enabled||judge.running?"disabled":""}>${judge.running?"Review running…":"Run review now"}</button></div><p id="p-judge-result" class="p-muted" role="status"></p><a class="p-link" href="#knowledge">Open lesson review inbox</a></div><h2>Recent decisions</h2><p class="p-muted">Latest ${h(amount(judge.audits?.length??0))} recorded decisions, across all dates. Claims, citations and retry reasons remain inspectable.</p>${judgmentAudits(judge)}</section>`;
+}
+function effectivenessData(report) {
+  const usage=report.usage;
+  return `<section aria-labelledby="p-usage-heading"><h2 id="p-usage-heading">Observed resource use</h2><p class="p-muted">${h(time(report.since_ms))} – ${h(time(report.until_ms))} · ${h(amount(usage.samples))} recorded samples · ${h(amount(usage.tasks_with_samples))} tasks with usage</p><div class="p-grid p-measures">${usageCard("Input tokens","input_tokens",usage)}${usageCard("Output tokens","output_tokens",usage)}${usageCard("Tool calls","tool_calls",usage)}${usageCard("Reported cost · USD","cost_usd",usage)}</div><p class="p-notice">Totals include only reported measurements, including automatic review overhead. Each field may cover different samples. Unknown means unreported; it does not mean zero.</p><div class="p-grid p-secondary-measures">${usageCard("Cache read tokens","cache_read_tokens",usage)}${usageCard("Cache write tokens","cache_write_tokens",usage)}</div><p class="p-muted">Cache categories follow the provider’s accounting and are kept separate from input tokens.</p>${usage.samples?"":`<p class="p-empty">No resource measurements yet. Updated coding-agent hooks capture tool events and available usage. Context can still be compiled before its token or cost usage is reported.</p>`}</section><section aria-labelledby="p-context-heading"><h2 id="p-context-heading">Repository context and learning</h2><p class="p-muted">Context figures are estimates from stored compilations. Compilation does not prove the context was delivered or used. Memory state reflects the current database.</p>${contextRows(report.projects)}</section><section aria-labelledby="p-overhead-heading"><h2 id="p-overhead-heading">Automatic review overhead</h2><p class="p-muted">These measurements are included in the totals above.</p>${overheadTable(report.projects)}</section><section aria-labelledby="p-comparisons-heading"><h2 id="p-comparisons-heading">Controlled off / brain comparisons</h2><p class="p-muted">Outcomes and resources are grouped by recorded model, configuration and brain snapshot. Paired comparisons require a unique Off/Brain task and repetition. Successful-pair comparisons and all-attempt resource use are shown separately.</p>${comparisonCards(report.controlled_comparisons)}</section><details class="p-report-notes"><summary>Measurement scope and limitations</summary><ul>${(report.limitations||[]).map(note=>`<li>${h(note)}</li>`).join("")}</ul></details>`;
+}
+async function effectivenessPage(message="") {
+  const generation=++effectivenessGeneration;
+  clearTimeout(effectivenessTimer);
+  const restoreFocus=document.activeElement?.id;
+  root.setAttribute("aria-label","Engram effectiveness");
+  root.innerHTML=`<div class="eyebrow" id="p-effect-workspace">Workspace · checking…</div><div class="p-flex"><h1>Is the brain earning its context?</h1><div class="p-effect-controls"><label class="p-field">Report period<select id="p-effect-period"><option value="7" ${effectivenessDays===7?"selected":""}>Last 7 days</option><option value="30" ${effectivenessDays===30?"selected":""}>Last 30 days</option></select></label><button type="button" class="quiet" id="p-effect-refresh">Refresh</button></div></div><p class="lede">See what Engram selects, what resource use the agent reports, and how evidence becomes reusable knowledge.</p><p id="p-effect-status" class="p-muted" role="status">${h(message||"Loading usage and review status…")}</p><div id="p-effect-content" aria-busy="true"><p class="p-empty">Loading measured usage…</p></div><div id="p-effect-judge" aria-busy="true"></div>`;
+  document.getElementById("p-effect-period").addEventListener("change",event=>{effectivenessDays=Number(event.target.value);effectivenessPage();});
+  document.getElementById("p-effect-refresh").addEventListener("click",()=>effectivenessPage());
+  if(["p-effect-period","p-effect-refresh"].includes(restoreFocus))document.getElementById(restoreFocus)?.focus({preventScroll:true});
+  const until=Date.now(), since=until-effectivenessDays*86400000;
+  const [reportResult,judgeResult]=await Promise.allSettled([api("/api/effectiveness",{since_ms:since,until_ms:until}),api("/api/judge")]);
+  if(generation!==effectivenessGeneration||!document.getElementById("p-effect-content"))return;
+  const content=document.getElementById("p-effect-content"), judgeContent=document.getElementById("p-effect-judge");
+  content.setAttribute("aria-busy","false");judgeContent.setAttribute("aria-busy","false");
+  content.innerHTML=reportResult.status==="fulfilled"?effectivenessData(reportResult.value):`<p class="p-error" role="alert">Usage report unavailable: ${h(reportResult.reason.message)}</p><p class="p-muted">Use Refresh to retry. Previously recorded measurements remain in the database.</p>`;
+  const judge=judgeResult.status==="fulfilled"?judgeResult.value:null;
+  document.getElementById("p-effect-workspace").textContent=`Workspace · ${judge?.workspace||"unknown"}`;
+  judgeContent.innerHTML=judgePanel(judge,judgeResult.status==="rejected"?judgeResult.reason:null);
+  document.getElementById("p-effect-status").textContent=message||(reportResult.status==="fulfilled"?`Updated ${time(Date.now())}`:"Report could not be loaded.");
+  document.getElementById("p-judge-run")?.addEventListener("click",async event=>{
+    const button=event.currentTarget, status=document.getElementById("p-judge-result");button.disabled=true;status.textContent="Starting a review pass…";
+    try{const result=await api("/api/judge/run",{});if(generation!==effectivenessGeneration)return;await effectivenessPage(result.queued?"Review queued. Decisions will appear here as they complete.":"A review is already running.");}
+    catch(error){if(generation===effectivenessGeneration){status.className="p-error";status.textContent=error.message;button.disabled=false;}}
+  });
+  if(judge?.running)pollJudge(generation,6);
+}
+function pollJudge(generation,remaining) {
+  effectivenessTimer=setTimeout(async()=>{
+    if(generation!==effectivenessGeneration||location.hash!=="#effectiveness"||document.visibilityState==="hidden")return;
+    try {
+      const judge=await api("/api/judge");
+      if(generation!==effectivenessGeneration||location.hash!=="#effectiveness")return;
+      if(!judge.running){effectivenessPage("Review pass finished. Usage and decisions refreshed.");return;}
+      if(remaining>1){pollJudge(generation,remaining-1);return;}
+      document.getElementById("p-effect-status").textContent="Review is still running. Use Refresh to check for new decisions.";
+    } catch {
+      if(generation===effectivenessGeneration)document.getElementById("p-effect-status").textContent="Could not refresh review status. Use Refresh to retry.";
+    }
+  },10000);
 }
 function lines(value) { return String(value||"").split("\n").map(v=>v.trim()).filter(Boolean); }
 function repoOptions(selected="",empty=false) {
@@ -220,6 +329,7 @@ async function historyDialog(id) {
 }
 document.addEventListener("click",async e=>{
   const b=e.target.closest("button");if(!b)return;
+  if(!["new","edit","history","source","bundle","signals","repo","refreshSection","archive"].some(key=>b.dataset[key]))return;
   try {
     if(b.dataset.new)editRecord(b.dataset.new,null,b.dataset.kind,b.dataset.owner);
     if(b.dataset.edit){const r=get(b.dataset.edit);if(r)editRecord(r.item.type,r.id);}
@@ -234,12 +344,14 @@ document.addEventListener("click",async e=>{
 });
 function render() {
   const [page,id]=location.hash.slice(1).split("/");
-  const current=["product","repositories","flows","changes","knowledge"].includes(page)?page:"product";
+  const current=["product","repositories","flows","changes","knowledge","effectiveness"].includes(page)?page:"product";
+  if(current!=="effectiveness"){clearTimeout(effectivenessTimer);effectivenessGeneration++;root.setAttribute("aria-label","Living product");}
   document.querySelectorAll(".product-nav a").forEach(a=>{if(a.hash===`#${current}`)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");});
   root.hidden=current==="repositories";repoSurface.hidden=current!=="repositories";
   document.querySelector("header .view-toggle").hidden=current!=="repositories";
   document.querySelector("header .search").hidden=current!=="repositories";
   if(current==="repositories")return;
+  if(current==="effectiveness"){effectivenessPage();return;}
   if(!loaded)return;
   if(id && current==="product"){detailPage(decodeURIComponent(id));return;}
   if(current==="changes"){changesPage();return;}
@@ -248,5 +360,5 @@ function render() {
 }
 async function load() {const data=await queryApi({operation:"snapshot"});Object.assign(catalog,data);loaded=true;}
 window.addEventListener("hashchange",render);
-render();load().then(render).catch(error=>{root.innerHTML=`<h1>Product knowledge is unavailable</h1><p class="p-error">${h(error.message)}</p><p class="p-muted">Start the updated Engram daemon, then reload.</p>`;});
+render();load().then(render).catch(error=>{if(location.hash==="#effectiveness")return;root.innerHTML=`<h1>Product knowledge is unavailable</h1><p class="p-error">${h(error.message)}</p><p class="p-muted">Start the updated Engram daemon, then reload.</p>`;});
 })();

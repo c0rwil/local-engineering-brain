@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "default_token_budget": 1600,
+  "purpose": "Development diagnostics authored from the completed pilot, not held-out tasks or a model-agent savings evaluation. Full-task requirements are unchanged; reordered cases move complete sentences. A pack retains at most one pointer per file, so distinct definitions in the same file cannot all be selected.",
+  "tasks": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "cases": [
+        {
+          "id": "full_task",
+          "query": "Add optional per-request use_task_guides and use_app_guides switches on both action endpoints. With neither supplied, preserve existing behavior. Turning task guides off must skip the retrieval work and later cache/deferred pickup while keeping app guides available. Turning app guides off must leave task guides available. The existing use_guide master switch must still disable both. Preserve session-action request conversion and enforcing partner restrictions; policy must never undo a caller's opt-out. Add regression coverage.",
+          "components": [
+            {
+              "path": "src/models/api.rs",
+              "labels": [
+                "ActionRequest"
+              ]
+            },
+            {
+              "path": "src/models/api.rs",
+              "labels": [
+                "SessionActionRequest"
+              ]
+            },
+            {
+              "path": "src/models/api.rs",
+              "labels": [
+                "into_action_request",
+                "SessionActionRequest::into_action_request"
+              ]
+            },
+            {
+              "path": "src/services/guides.rs",
+              "labels": [
+                "resolve_for_action",
+                "GuideClient::resolve_for_action"
+              ]
+            },
+            {
+              "path": "src/services/partner_runtime.rs",
+              "labels": [
+                "apply_guide_policy_to_request"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "requirements_reordered",
+          "query": "Add regression coverage. Preserve session-action request conversion and enforcing partner restrictions; policy must never undo a caller's opt-out. The existing use_guide master switch must still disable both. Turning app guides off must leave task guides available. Turning task guides off must skip the retrieval work and later cache/deferred pickup while keeping app guides available. With neither supplied, preserve existing behavior. Add optional per-request use_task_guides and use_app_guides switches on both action endpoints.",
+          "components": [
+            {
+              "path": "src/models/api.rs",
+              "labels": [
+                "ActionRequest"
+              ]
+            },
+            {
+              "path": "src/models/api.rs",
+              "labels": [
+                "SessionActionRequest"
+              ]
+            },
+            {
+              "path": "src/models/api.rs",
+              "labels": [
+                "into_action_request",
+                "SessionActionRequest::into_action_request"
+              ]
+            },
+            {
+              "path": "src/services/guides.rs",
+              "labels": [
+                "resolve_for_action",
+                "GuideClient::resolve_for_action"
+              ]
+            },
+            {
+              "path": "src/services/partner_runtime.rs",
+              "labels": [
+                "apply_guide_policy_to_request"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "action_field_owner",
+          "query": "ActionRequest::use_app_guides",
+          "components": [
+            {
+              "path": "src/models/api.rs",
+              "labels": [
+                "ActionRequest"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "session_field_owner",
+          "query": "SessionActionRequest::use_app_guides",
+          "components": [
+            {
+              "path": "src/models/api.rs",
+              "labels": [
+                "SessionActionRequest"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "absent_new_field",
+          "query": "ActionRequest::use_task_guides",
+          "components": [],
+          "expected_no_source": true
+        }
+      ]
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "cases": [
+        {
+          "id": "full_task",
+          "query": "Ordinary phone-task status polls should return status, terminal, step_count, result and error without the steps payload. Add include_steps to opt into history and since_step to request strictly newer step numbers; the cursor implies inclusion, while step_count remains the total. Default polling must not load all step payloads from Redis. Treat a false boolean or string false as disabled and return JSON-RPC invalid-params errors for cursors that cannot be converted to an integer. Preserve contract v1 and the device wire contract, and update consumers that actually need step content.",
+          "components": [
+            {
+              "path": "src/agency/api/services/mcp_tool_handlers.py",
+              "labels": [
+                "handle_phone_task_status"
+              ]
+            },
+            {
+              "path": "src/agency/api/services/mcp_session_service.py",
+              "labels": [
+                "get_task"
+              ]
+            },
+            {
+              "path": "scripts/mcp_user_control_integration_test.py",
+              "labels": [
+                "poll_task"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "requirements_reordered",
+          "query": "Preserve contract v1 and the device wire contract, and update consumers that actually need step content. Treat a false boolean or string false as disabled and return JSON-RPC invalid-params errors for cursors that cannot be converted to an integer. Default polling must not load all step payloads from Redis. Add include_steps to opt into history and since_step to request strictly newer step numbers; the cursor implies inclusion, while step_count remains the total. Ordinary phone-task status polls should return status, terminal, step_count, result and error without the steps payload.",
+          "components": [
+            {
+              "path": "src/agency/api/services/mcp_tool_handlers.py",
+              "labels": [
+                "handle_phone_task_status"
+              ]
+            },
+            {
+              "path": "src/agency/api/services/mcp_session_service.py",
+              "labels": [
+                "get_task"
+              ]
+            },
+            {
+              "path": "scripts/mcp_user_control_integration_test.py",
+              "labels": [
+                "poll_task"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "cases": [
+        {
+          "id": "full_task",
+          "query": "The HTTP contract suite changes behavior when the checkout contains a developer .env file, and one panic can trigger unrelated shared-environment-lock failures. Under ENVIRONMENT=test, prevent Settings::from_env from reloading scrubbed values from .env. Preserve .env loading for normal local startup and let later tests recover the shared lock after poisoning without hiding the original failure. Use harmless synthetic configuration for regression coverage.",
+          "components": [
+            {
+              "path": "src/config.rs",
+              "labels": [
+                "from_env",
+                "Settings::from_env"
+              ]
+            },
+            {
+              "path": "tests/http_contract.rs",
+              "labels": [
+                "settings_for_test"
+              ]
+            },
+            {
+              "path": "tests/http_contract.rs",
+              "labels": [
+                "redis_cluster_mode_does_not_default_to_local_redis_url"
+              ]
+            },
+            {
+              "path": "tests/http_contract.rs",
+              "labels": [
+                "upstash_mode_does_not_default_to_local_redis_url"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "requirements_reordered",
+          "query": "Use harmless synthetic configuration for regression coverage. Preserve .env loading for normal local startup and let later tests recover the shared lock after poisoning without hiding the original failure. Under ENVIRONMENT=test, prevent Settings::from_env from reloading scrubbed values from .env. The HTTP contract suite changes behavior when the checkout contains a developer .env file, and one panic can trigger unrelated shared-environment-lock failures.",
+          "components": [
+            {
+              "path": "src/config.rs",
+              "labels": [
+                "from_env",
+                "Settings::from_env"
+              ]
+            },
+            {
+              "path": "tests/http_contract.rs",
+              "labels": [
+                "settings_for_test"
+              ]
+            },
+            {
+              "path": "tests/http_contract.rs",
+              "labels": [
+                "redis_cluster_mode_does_not_default_to_local_redis_url"
+              ]
+            },
+            {
+              "path": "tests/http_contract.rs",
+              "labels": [
+                "upstash_mode_does_not_default_to_local_redis_url"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "qualified_method",
+          "query": "Settings::from_env",
+          "components": [
+            {
+              "path": "src/config.rs",
+              "labels": [
+                "from_env",
+                "Settings::from_env"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "cases": [
+        {
+          "id": "full_task",
+          "query": "A backend outage or hung users/me request can break every gated page. Make onboarding checks fail closed within five seconds, preserve safe invite and CLI return paths, and keep the welcome page usable without redirect loops. Completed users should still reach their intended safe destination. Malformed JSON, failed and unreachable backend responses must not admit a user to gated pages. Add regression coverage.",
+          "components": [
+            {
+              "path": "features/onboarding/actions/get-current-user.ts",
+              "labels": [
+                "getCurrentUser"
+              ]
+            },
+            {
+              "path": "features/onboarding/actions/enforce-onboarding-gate.ts",
+              "labels": [
+                "enforceOnboardingGate"
+              ]
+            },
+            {
+              "path": "features/onboarding/actions/enforce-onboarding-gate.ts",
+              "labels": [
+                "redirectIfOnboardingComplete"
+              ]
+            },
+            {
+              "path": "app/welcome/page.tsx",
+              "labels": [
+                "WelcomePage"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "requirements_reordered",
+          "query": "Add regression coverage. Malformed JSON, failed and unreachable backend responses must not admit a user to gated pages. Completed users should still reach their intended safe destination. Make onboarding checks fail closed within five seconds, preserve safe invite and CLI return paths, and keep the welcome page usable without redirect loops. A backend outage or hung users/me request can break every gated page.",
+          "components": [
+            {
+              "path": "features/onboarding/actions/get-current-user.ts",
+              "labels": [
+                "getCurrentUser"
+              ]
+            },
+            {
+              "path": "features/onboarding/actions/enforce-onboarding-gate.ts",
+              "labels": [
+                "enforceOnboardingGate"
+              ]
+            },
+            {
+              "path": "features/onboarding/actions/enforce-onboarding-gate.ts",
+              "labels": [
+                "redirectIfOnboardingComplete"
+              ]
+            },
+            {
+              "path": "app/welcome/page.tsx",
+              "labels": [
+                "WelcomePage"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

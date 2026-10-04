@@ -1,0 +1,103 @@
+{
+  "full_task_first_repetition": {
+    "before": {
+      "files": 6,
+      "files5": 3,
+      "required_files": 22,
+      "defs": 0,
+      "defs5": 0,
+      "required_defs": 32,
+      "tokens": 2749
+    },
+    "after": {
+      "files": 12,
+      "files5": 4,
+      "required_files": 22,
+      "defs": 10,
+      "defs5": 4,
+      "required_defs": 32,
+      "tokens": 2808
+    }
+  },
+  "navigation": {
+    "before": {
+      "cases": 18,
+      "brain_trials": 54,
+      "off_trials": 54,
+      "repeat_selection_consistent_cases": 18,
+      "failed_brain_trials": 0,
+      "target_trials": 48,
+      "target_path_hits_at5": 48,
+      "target_path_hit_rate_at5": 1.0,
+      "expected_definition_hits_at5": 42,
+      "negative_trials": 6,
+      "negative_no_source_passes": 6,
+      "unmatched_filler_source_items": 0,
+      "budget_passes": 54,
+      "off_control_passes": 54,
+      "source_pointers": 240,
+      "selected_tokens": 10359,
+      "api_latency_ms_median_successful": 4.9305,
+      "api_latency_ms_max_including_failures": 41.007,
+      "compile_ms_median_successful": 1.0
+    },
+    "after": {
+      "cases": 18,
+      "brain_trials": 54,
+      "off_trials": 54,
+      "repeat_selection_consistent_cases": 18,
+      "failed_brain_trials": 0,
+      "target_trials": 48,
+      "target_path_hits_at5": 48,
+      "target_path_hit_rate_at5": 1.0,
+      "expected_definition_hits_at5": 42,
+      "negative_trials": 6,
+      "negative_no_source_passes": 6,
+      "unmatched_filler_source_items": 0,
+      "budget_passes": 54,
+      "off_control_passes": 54,
+      "source_pointers": 252,
+      "selected_tokens": 10569,
+      "api_latency_ms_median_successful": 6.8795,
+      "api_latency_ms_max_including_failures": 17.482,
+      "compile_ms_median_successful": 3.0
+    }
+  },
+  "historical_suite": {
+    "before": {
+      "brain_trials": 36,
+      "components": 105,
+      "definitions_at5": 0,
+      "definitions_in_pack": 0,
+      "required_files": 75,
+      "files_at5": 9,
+      "files_in_pack": 18,
+      "selected_tokens": 8475,
+      "budget_failures": 0,
+      "negative_trials": 3,
+      "negative_failures": 0,
+      "off_failures": 0,
+      "latency_ms_median": 5.7155,
+      "latency_ms_max": 9.268,
+      "repeat_consistent_cases": 12
+    },
+    "after": {
+      "brain_trials": 36,
+      "components": 105,
+      "definitions_at5": 21,
+      "definitions_in_pack": 39,
+      "required_files": 75,
+      "files_at5": 21,
+      "files_in_pack": 45,
+      "selected_tokens": 9165,
+      "budget_failures": 0,
+      "negative_trials": 3,
+      "negative_failures": 0,
+      "off_failures": 0,
+      "latency_ms_median": 7.4665,
+      "latency_ms_max": 29.244,
+      "repeat_consistent_cases": 12
+    }
+  },
+  "installed_build": "58c2d0182e653f236e7ccd2c99f1dd67e78b2fd3623df66d064a0b2590eec395"
+}

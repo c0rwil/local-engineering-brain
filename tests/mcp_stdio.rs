@@ -72,6 +72,21 @@ fn mcp_binary_autostarts_daemon_and_serves_json_rpc() {
     let status = call("engram_project_status", json!({"path":project}));
     let project_id = status["structuredContent"]["project"]["id"].clone();
     assert!(project_id.is_string(), "{status}");
+    let usage = json!({"sample_id":"fixture-response","project_id":project_id,"source":"test_harness","metrics":{"input_tokens":100,"tool_calls":2}});
+    assert_eq!(
+        call("engram_record_usage", usage.clone())["structuredContent"]["inserted"],
+        true
+    );
+    assert_eq!(
+        call("engram_record_usage", usage)["structuredContent"]["inserted"],
+        false
+    );
+    let effectiveness = call("engram_effectiveness", json!({"project_ids":[project_id]}));
+    assert_eq!(
+        effectiveness["structuredContent"]["usage"]["totals"]["input_tokens"],
+        100
+    );
+    assert!(effectiveness["structuredContent"]["usage"]["totals"]["cost_usd"].is_null());
     let task = call(
         "engram_task_start",
         json!({"project_id":project_id,"prompt":"verify runtime traffic with sk_test_fakeMcp123"}),

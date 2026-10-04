@@ -1,0 +1,4 @@
+    Blocking waiting for file lock on build directory
+   Compiling llmapi-rust v0.1.0 (/private/tmp/engram-rust-preflight-r05-reference/vendor/llmapi-rust)
+   Compiling agi-backend-rust v0.59.2 (/private/tmp/engram-rust-preflight-r05-reference)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 37.79s

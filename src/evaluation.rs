@@ -136,6 +136,422 @@ pub struct ComparisonReport {
     pub generated_at_ms: i64,
 }
 
+/// Observed resource differences on matched off/brain trials. A metric uses
+/// only pairs where both arms reported it; missing values are never zero.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct PairedUsageMetric {
+    pub measured_pairs: u64,
+    pub off_total: Option<f64>,
+    pub brain_total: Option<f64>,
+    /// Positive means brain used more; negative means brain used less.
+    pub brain_minus_off_pct: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluationOutcome {
+    Pass,
+    Fail,
+    InfrastructureError,
+    Unknown,
+}
+
+impl EvaluationRecord {
+    /// Classify completion separately from a saved behavioral verdict. Explicit
+    /// outcomes cannot turn a known runtime or validation failure into a pass.
+    #[must_use]
+    pub fn outcome(&self) -> EvaluationOutcome {
+        let explicit = self
+            .metrics
+            .get("outcome")
+            .map(|outcome| match outcome.as_str() {
+                Some("pass") => EvaluationOutcome::Pass,
+                Some("fail") => EvaluationOutcome::Fail,
+                Some("infrastructure_error") => EvaluationOutcome::InfrastructureError,
+                _ => EvaluationOutcome::Unknown,
+            });
+        if let Some(
+            outcome @ (EvaluationOutcome::InfrastructureError | EvaluationOutcome::Unknown),
+        ) = explicit
+        {
+            return outcome;
+        }
+        let invalid_controls = metric_objects(&self.metrics).any(|metrics| {
+            metrics
+                .get("validity_issues")
+                .and_then(Value::as_array)
+                .is_some_and(|issues| {
+                    issues.iter().any(|issue| {
+                        matches!(issue.as_str(), Some("model_drift" | "no_delivery_receipt"))
+                    })
+                })
+        });
+        if self.setup_exit_code.is_some_and(|code| code != 0) || invalid_controls {
+            return EvaluationOutcome::InfrastructureError;
+        }
+        let budget_exhausted = self.timed_out
+            || metric_objects(&self.metrics).any(|metrics| {
+                metrics.get("agent_timed_out").and_then(Value::as_bool) == Some(true)
+                    || metrics
+                        .get("result_subtype")
+                        .and_then(Value::as_str)
+                        .is_some_and(|subtype| subtype.starts_with("error_max_"))
+            });
+        if budget_exhausted {
+            return EvaluationOutcome::Fail;
+        }
+        let runtime_error = self.agent_exit_code.is_some_and(|code| code != 0)
+            || metric_objects(&self.metrics).any(|metrics| {
+                metrics.get("is_error").and_then(Value::as_bool) == Some(true)
+                    || metrics
+                        .get("result_subtype")
+                        .and_then(Value::as_str)
+                        .is_some_and(|subtype| subtype.starts_with("error_"))
+            });
+        if runtime_error {
+            return EvaluationOutcome::InfrastructureError;
+        }
+        if self.validation_exit_code.is_some_and(|code| code != 0) {
+            return EvaluationOutcome::Fail;
+        }
+        explicit.unwrap_or(if self.success {
+            EvaluationOutcome::Pass
+        } else {
+            EvaluationOutcome::Fail
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct OutcomeCounts {
+    pub pass: u64,
+    pub fail: u64,
+    pub infrastructure_error: u64,
+    pub unknown: u64,
+}
+
+impl OutcomeCounts {
+    fn record(&mut self, outcome: EvaluationOutcome) {
+        match outcome {
+            EvaluationOutcome::Pass => self.pass += 1,
+            EvaluationOutcome::Fail => self.fail += 1,
+            EvaluationOutcome::InfrastructureError => self.infrastructure_error += 1,
+            EvaluationOutcome::Unknown => self.unknown += 1,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct MeasurementCoverage {
+    /// Attempts with an explicitly reported value, including partial values.
+    pub available: u64,
+    pub missing: u64,
+    pub total: u64,
+    /// Reported values known to be incomplete; always a subset of `available`.
+    #[serde(default)]
+    pub partial: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct AttemptUsageSummary {
+    pub attempts: u64,
+    pub outcome_counts: OutcomeCounts,
+    /// Sums of explicitly measured values, including failed, unpaired and
+    /// infrastructure attempts. Null means no observations or an overflowing sum.
+    pub totals_observed: BTreeMap<String, Option<f64>>,
+    pub measurement_coverage: BTreeMap<String, MeasurementCoverage>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct AllAttemptUsage {
+    pub off: AttemptUsageSummary,
+    pub brain: AttemptUsageSummary,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct PairOutcomeCounts {
+    pub both_pass: u64,
+    pub off_only_pass: u64,
+    pub brain_only_pass: u64,
+    pub both_fail: u64,
+    /// Neither arm can earn a correctness win when either outcome is unscorable.
+    pub infrastructure_or_unknown: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ControlledUsageComparison {
+    pub benchmark_id: String,
+    pub model_hash: String,
+    pub config_hash: String,
+    pub brain_snapshot_hash: String,
+    pub paired_runs: u64,
+    pub excluded_runs: u64,
+    pub off_successes: u64,
+    pub brain_successes: u64,
+    /// Legacy all-matched-pair measurements, including failed/infra attempts.
+    pub metrics: BTreeMap<String, PairedUsageMetric>,
+    #[serde(default)]
+    pub all_attempts: AllAttemptUsage,
+    #[serde(default)]
+    pub pair_outcomes: PairOutcomeCounts,
+    #[serde(default)]
+    pub both_clean_pass_pairs: u64,
+    #[serde(default)]
+    pub both_clean_pass_metrics: BTreeMap<String, PairedUsageMetric>,
+}
+
+/// Compare resource measurements only within identical recorded benchmark,
+/// model, configuration and brain snapshot controls, and unique task/seed pairs.
+/// Unpaired or duplicate arms are excluded from paired metrics, but retained in
+/// all-attempt totals. Groups without a complete pair remain visible. Failed
+/// trials remain in outcome counts; infrastructure is not a correctness loss.
+/// This describes benchmarks, not everyday savings.
+#[must_use]
+pub fn compare_usage_records(records: &[EvaluationRecord]) -> Vec<ControlledUsageComparison> {
+    type Controls<'a> = (&'a str, &'a str, &'a str, &'a str);
+    let mut groups = BTreeMap::<Controls<'_>, Vec<&EvaluationRecord>>::new();
+    for record in records {
+        if [
+            &record.benchmark_id,
+            &record.model_hash,
+            &record.config_hash,
+            &record.brain_snapshot_hash,
+        ]
+        .iter()
+        .any(|value| value.trim().is_empty())
+        {
+            continue;
+        }
+        groups
+            .entry((
+                &record.benchmark_id,
+                &record.model_hash,
+                &record.config_hash,
+                &record.brain_snapshot_hash,
+            ))
+            .or_default()
+            .push(record);
+    }
+    let mut reports = Vec::new();
+    for ((benchmark, model, config, snapshot), records) in groups {
+        let mut pairs = BTreeMap::<(&str, u64), Vec<&EvaluationRecord>>::new();
+        for record in &records {
+            if record.task_id.trim().is_empty() {
+                continue;
+            }
+            pairs
+                .entry((&record.task_id, record.seed))
+                .or_default()
+                .push(record);
+        }
+        let mut report = ControlledUsageComparison {
+            benchmark_id: benchmark.to_owned(),
+            model_hash: model.to_owned(),
+            config_hash: config.to_owned(),
+            brain_snapshot_hash: snapshot.to_owned(),
+            paired_runs: 0,
+            excluded_runs: u64::try_from(records.len()).unwrap_or(u64::MAX),
+            off_successes: 0,
+            brain_successes: 0,
+            metrics: empty_paired_metrics(),
+            all_attempts: AllAttemptUsage {
+                off: summarize_attempt_usage(&records, EvaluationMode::Off),
+                brain: summarize_attempt_usage(&records, EvaluationMode::Brain),
+            },
+            pair_outcomes: PairOutcomeCounts::default(),
+            both_clean_pass_pairs: 0,
+            both_clean_pass_metrics: empty_paired_metrics(),
+        };
+        for pair in pairs.values() {
+            if pair.len() != 2 || pair[0].mode == pair[1].mode {
+                continue;
+            }
+            let (off, brain) = if pair[0].mode == EvaluationMode::Off {
+                (pair[0], pair[1])
+            } else {
+                (pair[1], pair[0])
+            };
+            report.paired_runs += 1;
+            report.excluded_runs -= 2;
+            let outcomes = (off.outcome(), brain.outcome());
+            report.off_successes += u64::from(outcomes.0 == EvaluationOutcome::Pass);
+            report.brain_successes += u64::from(outcomes.1 == EvaluationOutcome::Pass);
+            match outcomes {
+                (EvaluationOutcome::Pass, EvaluationOutcome::Pass) => {
+                    report.pair_outcomes.both_pass += 1;
+                    report.both_clean_pass_pairs += 1;
+                    accumulate_pair(&mut report.both_clean_pass_metrics, off, brain);
+                }
+                (EvaluationOutcome::Pass, EvaluationOutcome::Fail) => {
+                    report.pair_outcomes.off_only_pass += 1;
+                }
+                (EvaluationOutcome::Fail, EvaluationOutcome::Pass) => {
+                    report.pair_outcomes.brain_only_pass += 1;
+                }
+                (EvaluationOutcome::Fail, EvaluationOutcome::Fail) => {
+                    report.pair_outcomes.both_fail += 1;
+                }
+                _ => report.pair_outcomes.infrastructure_or_unknown += 1,
+            }
+            accumulate_pair(&mut report.metrics, off, brain);
+        }
+        finish_paired_metrics(&mut report.metrics);
+        finish_paired_metrics(&mut report.both_clean_pass_metrics);
+        reports.push(report);
+    }
+    reports
+}
+
+const USAGE_METRICS: [&str; 10] = [
+    "cost_usd",
+    "turns",
+    "tool_calls",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "total_tokens",
+    "processed_input_tokens",
+    "agent_wall_seconds",
+];
+
+fn metric_objects(metrics: &Value) -> impl Iterator<Item = &Value> {
+    [
+        Some(metrics),
+        metrics.get("reported"),
+        metrics.get("usage"),
+        metrics.pointer("/reported/usage"),
+    ]
+    .into_iter()
+    .flatten()
+}
+
+fn empty_paired_metrics() -> BTreeMap<String, PairedUsageMetric> {
+    USAGE_METRICS
+        .into_iter()
+        .map(|name| (name.to_owned(), PairedUsageMetric::default()))
+        .collect()
+}
+
+fn accumulate_pair(
+    metrics: &mut BTreeMap<String, PairedUsageMetric>,
+    off: &EvaluationRecord,
+    brain: &EvaluationRecord,
+) {
+    for (name, metric) in metrics {
+        // Lower bounds belong in observed attempt totals, not paired reductions.
+        if metric_is_partial(&off.metrics, name) || metric_is_partial(&brain.metrics, name) {
+            continue;
+        }
+        if let (Some(off), Some(brain)) = (
+            reported_metric(&off.metrics, name),
+            reported_metric(&brain.metrics, name),
+        ) {
+            metric.measured_pairs += 1;
+            metric.off_total = Some(metric.off_total.unwrap_or(0.0) + off);
+            metric.brain_total = Some(metric.brain_total.unwrap_or(0.0) + brain);
+        }
+    }
+}
+
+fn finish_paired_metrics(metrics: &mut BTreeMap<String, PairedUsageMetric>) {
+    for metric in metrics.values_mut() {
+        // Keep measurement coverage even when an aggregate cannot be represented.
+        metric.off_total = metric.off_total.filter(|value| value.is_finite());
+        metric.brain_total = metric.brain_total.filter(|value| value.is_finite());
+        metric.brain_minus_off_pct = metric
+            .off_total
+            .zip(metric.brain_total)
+            .filter(|(off, _)| *off > 0.0)
+            .map(|(off, brain)| (brain - off) / off * 100.0)
+            .filter(|value| value.is_finite());
+    }
+}
+
+fn summarize_attempt_usage(
+    records: &[&EvaluationRecord],
+    mode: EvaluationMode,
+) -> AttemptUsageSummary {
+    let mut summary = AttemptUsageSummary {
+        totals_observed: USAGE_METRICS
+            .into_iter()
+            .map(|name| (name.to_owned(), None))
+            .collect(),
+        measurement_coverage: USAGE_METRICS
+            .into_iter()
+            .map(|name| (name.to_owned(), MeasurementCoverage::default()))
+            .collect(),
+        ..AttemptUsageSummary::default()
+    };
+    for record in records.iter().filter(|record| record.mode == mode) {
+        summary.attempts += 1;
+        summary.outcome_counts.record(record.outcome());
+        for (name, total) in &mut summary.totals_observed {
+            let coverage = summary
+                .measurement_coverage
+                .get_mut(name)
+                .expect("known metric");
+            coverage.total += 1;
+            if let Some(value) = reported_metric(&record.metrics, name) {
+                coverage.available += 1;
+                coverage.partial += u64::from(metric_is_partial(&record.metrics, name));
+                *total = Some(total.unwrap_or(0.0) + value);
+            } else {
+                coverage.missing += 1;
+            }
+        }
+    }
+    for total in summary.totals_observed.values_mut() {
+        *total = total.filter(|value| value.is_finite());
+    }
+    summary
+}
+
+fn metric_is_partial(metrics: &Value, name: &str) -> bool {
+    if name == "tool_calls" {
+        return metric_objects(metrics).any(|metrics| {
+            metrics.get("tool_calls_complete").and_then(Value::as_bool) == Some(false)
+        });
+    }
+    matches!(
+        name,
+        "cost_usd"
+            | "input_tokens"
+            | "output_tokens"
+            | "cache_read_tokens"
+            | "cache_write_tokens"
+            | "total_tokens"
+            | "processed_input_tokens"
+    ) && metric_objects(metrics)
+        .any(|metrics| metrics.get("usage_may_be_partial").and_then(Value::as_bool) == Some(true))
+}
+
+fn reported_metric(metrics: &Value, name: &str) -> Option<f64> {
+    // Only explicit provider/harness measurements. In particular, turns are
+    // never substituted for tool calls, nor injected estimates for input tokens.
+    // Observed partial values remain lower bounds in all-attempt totals.
+    let field = match name {
+        "cost_usd" => "total_cost_usd",
+        "turns" => "num_turns",
+        "cache_read_tokens" => "cache_read_input_tokens",
+        "cache_write_tokens" => "cache_creation_input_tokens",
+        other => other,
+    };
+    [
+        format!("/reported/{field}"),
+        format!("/reported/usage/{field}"),
+        format!("/usage/{field}"),
+        format!("/{field}"),
+    ]
+    .iter()
+    .find_map(|path| {
+        metrics
+            .pointer(path)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value >= 0.0)
+    })
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct EvaluationArtifacts {
     pub jsonl_path: PathBuf,
@@ -156,7 +572,8 @@ impl EvaluationStore {
         Self { database }
     }
 
-    /// Persist one completed run's compact metrics.
+    /// Persist one completed run's compact metrics. Retrying the same record is
+    /// idempotent; reusing its ID for different content is rejected atomically.
     ///
     /// # Errors
     ///
@@ -164,7 +581,7 @@ impl EvaluationStore {
     pub fn record(&self, record: &EvaluationRecord) -> Result<()> {
         let metrics = serde_json::to_string(record)?;
         self.database.write_immediate(|transaction| {
-            transaction.execute(
+            let inserted = transaction.execute(
                 "INSERT INTO eval_runs
                  (id, benchmark_id, mode, model_hash, config_hash, metrics_json, created_at_ms)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -179,6 +596,22 @@ impl EvaluationStore {
                     record.created_at_ms
                 ],
             )?;
+            if inserted == 0 {
+                let existing: String = transaction.query_row(
+                    "SELECT metrics_json FROM eval_runs WHERE id = ?1",
+                    [record.run_id.as_str()],
+                    |row| row.get(0),
+                )?;
+                if existing != metrics
+                    && serde_json::from_str::<Value>(&existing).ok()
+                        != Some(serde_json::to_value(record)?)
+                {
+                    return Err(Error::Config(format!(
+                        "evaluation run `{}` already exists with different content",
+                        record.run_id
+                    )));
+                }
+            }
             Ok(())
         })
     }
@@ -392,6 +825,9 @@ fn run_one(
     );
     let started = Instant::now();
     let environment = vec![
+        // Every arm already has an isolated database/socket. A named workspace
+        // inherited from the operator must not redirect or reject those paths.
+        ("ENGRAM_WORKSPACE".to_owned(), "default".to_owned()),
         ("ENGRAM_MODE".to_owned(), mode.as_str().to_owned()),
         ("ENGRAM_SEED".to_owned(), seed.to_string()),
         ("ENGRAM_TASK_ID".to_owned(), task.id.clone()),
@@ -1053,6 +1489,682 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    fn measured_record(mode: EvaluationMode, seed: u64, metrics: Value) -> EvaluationRecord {
+        EvaluationRecord {
+            run_id: EvaluationRunId::new(),
+            benchmark_id: "bench".to_owned(),
+            task_id: "task".to_owned(),
+            mode,
+            seed,
+            ordinal: seed,
+            model_hash: "model".to_owned(),
+            config_hash: "config".to_owned(),
+            brain_snapshot_hash: "snapshot".to_owned(),
+            success: mode == EvaluationMode::Off,
+            timed_out: false,
+            setup_exit_code: None,
+            agent_exit_code: Some(0),
+            validation_exit_code: Some(0),
+            wall_ms: 10,
+            metrics,
+            artifact_path: PathBuf::from("unused"),
+            created_at_ms: 100,
+        }
+    }
+
+    #[test]
+    fn usage_comparison_retains_failures_and_only_compares_measured_pairs() {
+        let records = vec![
+            measured_record(
+                EvaluationMode::Off,
+                1,
+                serde_json::json!({"reported":{"total_cost_usd":2.0,"num_turns":10,"usage":{"input_tokens":200}}}),
+            ),
+            measured_record(
+                EvaluationMode::Brain,
+                1,
+                serde_json::json!({"reported":{"total_cost_usd":1.0,"num_turns":8,"usage":{"input_tokens":100}}}),
+            ),
+            measured_record(
+                EvaluationMode::Off,
+                2,
+                serde_json::json!({"reported":{"total_cost_usd":20.0}}),
+            ),
+            measured_record(EvaluationMode::Brain, 2, Value::Null),
+        ];
+        let reports = compare_usage_records(&records);
+        assert_eq!(reports.len(), 1);
+        let report = &reports[0];
+        assert_eq!(report.paired_runs, 2);
+        assert_eq!(report.off_successes, 2);
+        assert_eq!(report.brain_successes, 0);
+        let cost = &report.metrics["cost_usd"];
+        assert_eq!(cost.measured_pairs, 1);
+        assert_eq!(cost.off_total, Some(2.0));
+        assert_eq!(cost.brain_total, Some(1.0));
+        assert_eq!(cost.brain_minus_off_pct, Some(-50.0));
+        assert_eq!(report.metrics["input_tokens"].measured_pairs, 1);
+        assert_eq!(report.metrics["turns"].measured_pairs, 1);
+        assert_eq!(report.metrics["tool_calls"].off_total, None);
+        assert_eq!(report.metrics["output_tokens"].brain_minus_off_pct, None);
+    }
+
+    #[test]
+    fn usage_comparison_rejects_mismatched_controls_and_duplicate_arms() {
+        let off = measured_record(
+            EvaluationMode::Off,
+            1,
+            serde_json::json!({"reported":{"total_cost_usd":2.0}}),
+        );
+        let brain = measured_record(
+            EvaluationMode::Brain,
+            1,
+            serde_json::json!({"reported":{"total_cost_usd":1.0}}),
+        );
+        for field in ["model", "config", "snapshot", "task", "seed"] {
+            let mut mismatched = brain.clone();
+            match field {
+                "model" => mismatched.model_hash = "other".to_owned(),
+                "config" => mismatched.config_hash = "other".to_owned(),
+                "snapshot" => mismatched.brain_snapshot_hash = "other".to_owned(),
+                "task" => mismatched.task_id = "other".to_owned(),
+                _ => mismatched.seed = 2,
+            }
+            let reports = compare_usage_records(&[off.clone(), mismatched]);
+            assert!(reports.iter().all(|report| report.paired_runs == 0));
+            assert_eq!(
+                reports
+                    .iter()
+                    .map(|report| report.all_attempts.off.attempts
+                        + report.all_attempts.brain.attempts)
+                    .sum::<u64>(),
+                2
+            );
+        }
+        let mut duplicate_arm = off.clone();
+        duplicate_arm.run_id = EvaluationRunId::new();
+        let reports = compare_usage_records(&[off, brain.clone(), duplicate_arm]);
+        assert_eq!(reports[0].paired_runs, 0);
+        assert_eq!(reports[0].excluded_runs, 3);
+        assert_eq!(reports[0].all_attempts.off.attempts, 2);
+        assert_eq!(
+            reports[0].all_attempts.off.totals_observed["cost_usd"],
+            Some(4.0)
+        );
+        assert_eq!(reports[0].all_attempts.brain.attempts, 1);
+        assert_eq!(reports[0].metrics["cost_usd"].measured_pairs, 0);
+        let mut invalid = brain;
+        invalid.config_hash.clear();
+        assert!(compare_usage_records(&[invalid]).is_empty());
+    }
+
+    #[test]
+    fn usage_comparison_has_no_percentage_for_zero_control() {
+        let reports = compare_usage_records(&[
+            measured_record(
+                EvaluationMode::Off,
+                1,
+                serde_json::json!({"reported":{"total_cost_usd":0.0,"num_turns":-1}}),
+            ),
+            measured_record(
+                EvaluationMode::Brain,
+                1,
+                serde_json::json!({"reported":{"total_cost_usd":1.0,"num_turns":2}}),
+            ),
+        ]);
+        assert_eq!(reports[0].metrics["cost_usd"].off_total, Some(0.0));
+        assert_eq!(reports[0].metrics["cost_usd"].brain_minus_off_pct, None);
+        assert_eq!(reports[0].metrics["turns"].measured_pairs, 0);
+    }
+
+    #[test]
+    fn usage_outcome_keeps_behavioral_pass_separate_from_runtime_failure() {
+        for metrics in [
+            serde_json::json!({"outcome":"infrastructure_error","behavioral_grade":{"status":"pass"},"total_tokens":10}),
+            serde_json::json!({"outcome":"pass","behavioral_grade":{"status":"pass"},"is_error":true,"total_tokens":10}),
+            serde_json::json!({"outcome":"pass","reported":{"is_error":true},"total_tokens":10}),
+            serde_json::json!({"outcome":"pass","result_subtype":"error_during_execution","total_tokens":10}),
+        ] {
+            let mut off = measured_record(EvaluationMode::Off, 1, metrics);
+            off.success = true;
+            let brain = measured_record(
+                EvaluationMode::Brain,
+                1,
+                serde_json::json!({"outcome":"pass","total_tokens":20}),
+            );
+            assert_eq!(off.outcome(), EvaluationOutcome::InfrastructureError);
+            let reports = compare_usage_records(&[off, brain]);
+            let report = &reports[0];
+            assert_eq!(report.off_successes, 0);
+            assert_eq!(report.brain_successes, 1);
+            assert_eq!(report.pair_outcomes.infrastructure_or_unknown, 1);
+            assert_eq!(report.pair_outcomes.brain_only_pass, 0);
+            assert_eq!(report.both_clean_pass_pairs, 0);
+            assert_eq!(report.metrics["total_tokens"].off_total, Some(10.0));
+            assert_eq!(
+                report.all_attempts.off.outcome_counts.infrastructure_error,
+                1
+            );
+            assert_eq!(
+                report.both_clean_pass_metrics["total_tokens"].measured_pairs,
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn usage_outcome_budget_failure_does_not_override_invalid_infrastructure() {
+        for subtype in ["error_max_turns", "error_max_budget_usd"] {
+            let mut record = measured_record(
+                EvaluationMode::Off,
+                1,
+                serde_json::json!({"outcome":"pass","result_subtype":subtype,"is_error":true}),
+            );
+            record.agent_exit_code = Some(1);
+            assert_eq!(record.outcome(), EvaluationOutcome::Fail);
+            for issue in ["model_drift", "no_delivery_receipt"] {
+                record.metrics["validity_issues"] = serde_json::json!([issue]);
+                assert_eq!(record.outcome(), EvaluationOutcome::InfrastructureError);
+            }
+            record.metrics["validity_issues"] = serde_json::json!([]);
+            record.metrics["outcome"] = serde_json::json!("infrastructure_error");
+            assert_eq!(record.outcome(), EvaluationOutcome::InfrastructureError);
+        }
+        let mut record = measured_record(
+            EvaluationMode::Off,
+            1,
+            serde_json::json!({"outcome":"pass"}),
+        );
+        record.timed_out = true;
+        assert_eq!(record.outcome(), EvaluationOutcome::Fail);
+        record.setup_exit_code = Some(1);
+        assert_eq!(record.outcome(), EvaluationOutcome::InfrastructureError);
+        record.setup_exit_code = Some(0);
+        record.timed_out = false;
+        record.metrics["agent_timed_out"] = serde_json::json!(true);
+        assert_eq!(record.outcome(), EvaluationOutcome::Fail);
+    }
+
+    #[test]
+    fn usage_outcome_defends_explicit_pass_and_supports_legacy_records() {
+        let mut record = measured_record(EvaluationMode::Off, 1, Value::Null);
+        assert_eq!(record.outcome(), EvaluationOutcome::Pass);
+        record.success = false;
+        assert_eq!(record.outcome(), EvaluationOutcome::Fail);
+        record.metrics = serde_json::json!({"outcome":"pass"});
+        assert_eq!(record.outcome(), EvaluationOutcome::Pass);
+        record.validation_exit_code = Some(1);
+        assert_eq!(record.outcome(), EvaluationOutcome::Fail);
+        record.validation_exit_code = Some(0);
+        record.agent_exit_code = Some(1);
+        assert_eq!(record.outcome(), EvaluationOutcome::InfrastructureError);
+        record.agent_exit_code = Some(0);
+        record.setup_exit_code = Some(2);
+        assert_eq!(record.outcome(), EvaluationOutcome::InfrastructureError);
+        record.setup_exit_code = None;
+        record.success = true;
+        for invalid in [
+            Value::Null,
+            serde_json::json!(true),
+            serde_json::json!("success"),
+            serde_json::json!("PASS"),
+        ] {
+            record.metrics["outcome"] = invalid;
+            assert_eq!(record.outcome(), EvaluationOutcome::Unknown);
+        }
+    }
+
+    #[test]
+    fn usage_comparison_separates_cheap_failed_runs_from_both_pass_metrics() {
+        let records = [
+            measured_record(
+                EvaluationMode::Off,
+                1,
+                serde_json::json!({"outcome":"pass","total_tokens":100,"agent_wall_seconds":10}),
+            ),
+            measured_record(
+                EvaluationMode::Brain,
+                1,
+                serde_json::json!({"outcome":"pass","total_tokens":120,"agent_wall_seconds":12}),
+            ),
+            measured_record(
+                EvaluationMode::Off,
+                2,
+                serde_json::json!({"outcome":"pass","total_tokens":100,"agent_wall_seconds":10}),
+            ),
+            measured_record(
+                EvaluationMode::Brain,
+                2,
+                serde_json::json!({"outcome":"fail","total_tokens":1,"agent_wall_seconds":1}),
+            ),
+        ];
+        let reports = compare_usage_records(&records);
+        let report = &reports[0];
+        assert_eq!(report.metrics["total_tokens"].measured_pairs, 2);
+        assert_eq!(report.metrics["total_tokens"].brain_total, Some(121.0));
+        assert_eq!(
+            report.metrics["total_tokens"].brain_minus_off_pct,
+            Some(-39.5)
+        );
+        assert_eq!(report.both_clean_pass_pairs, 1);
+        assert_eq!(
+            report.both_clean_pass_metrics["total_tokens"].brain_minus_off_pct,
+            Some(20.0)
+        );
+        assert_eq!(
+            report.both_clean_pass_metrics["agent_wall_seconds"].brain_total,
+            Some(12.0)
+        );
+        assert_eq!(report.pair_outcomes.both_pass, 1);
+        assert_eq!(report.pair_outcomes.off_only_pass, 1);
+        assert_eq!(report.all_attempts.brain.attempts, 2);
+        assert_eq!(report.all_attempts.brain.outcome_counts.fail, 1);
+        assert_eq!(
+            report.all_attempts.brain.totals_observed["total_tokens"],
+            Some(121.0)
+        );
+    }
+
+    #[test]
+    fn usage_comparison_pair_contingency_excludes_unknown_and_infrastructure_wins() {
+        let outcomes = [
+            ("pass", "pass"),
+            ("pass", "fail"),
+            ("fail", "pass"),
+            ("fail", "fail"),
+            ("infrastructure_error", "pass"),
+            ("pass", "unknown"),
+        ];
+        let mut records = Vec::new();
+        for (index, (off, brain)) in outcomes.into_iter().enumerate() {
+            let seed = u64::try_from(index).expect("small index");
+            records.push(measured_record(
+                EvaluationMode::Off,
+                seed,
+                serde_json::json!({"outcome":off}),
+            ));
+            records.push(measured_record(
+                EvaluationMode::Brain,
+                seed,
+                serde_json::json!({"outcome":brain}),
+            ));
+        }
+        let reports = compare_usage_records(&records);
+        assert_eq!(reports[0].paired_runs, 6);
+        assert_eq!(
+            reports[0].pair_outcomes,
+            PairOutcomeCounts {
+                both_pass: 1,
+                off_only_pass: 1,
+                brain_only_pass: 1,
+                both_fail: 1,
+                infrastructure_or_unknown: 2
+            }
+        );
+        assert_eq!(reports[0].all_attempts.brain.outcome_counts.unknown, 1);
+        assert_eq!(reports[0].both_clean_pass_pairs, 1);
+    }
+
+    #[test]
+    fn usage_comparison_keeps_unpaired_attempts_and_explicit_measurement_coverage() {
+        let mut missing_task = measured_record(
+            EvaluationMode::Brain,
+            3,
+            serde_json::json!({"outcome":"infrastructure_error","total_tokens":5}),
+        );
+        missing_task.task_id.clear();
+        let records = [
+            measured_record(
+                EvaluationMode::Off,
+                1,
+                serde_json::json!({"total_tokens":100,"processed_input_tokens":90,"input_tokens":5,"cache_read_input_tokens":80,"cache_creation_input_tokens":5,"agent_wall_seconds":2.5}),
+            ),
+            measured_record(
+                EvaluationMode::Off,
+                2,
+                serde_json::json!({"outcome":"fail","total_tokens":null,"input_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":5,"output_tokens":2,"num_turns":4}),
+            ),
+            measured_record(
+                EvaluationMode::Brain,
+                1,
+                serde_json::json!({"outcome":"pass","total_tokens":80,"tool_calls":0}),
+            ),
+            missing_task,
+        ];
+        let reports = compare_usage_records(&records);
+        let report = &reports[0];
+        assert_eq!(report.paired_runs, 1);
+        assert_eq!(report.excluded_runs, 2);
+        assert_eq!(report.all_attempts.off.attempts, 2);
+        assert_eq!(report.all_attempts.brain.attempts, 2);
+        assert_eq!(
+            report.all_attempts.off.totals_observed["total_tokens"],
+            Some(100.0)
+        );
+        assert_eq!(
+            report.all_attempts.brain.totals_observed["total_tokens"],
+            Some(85.0)
+        );
+        assert_eq!(
+            report.all_attempts.off.measurement_coverage["total_tokens"],
+            MeasurementCoverage {
+                available: 1,
+                missing: 1,
+                total: 2,
+                partial: 0,
+            }
+        );
+        assert_eq!(
+            report.all_attempts.off.totals_observed["processed_input_tokens"],
+            Some(90.0)
+        );
+        assert_eq!(
+            report.all_attempts.off.measurement_coverage["processed_input_tokens"].missing,
+            1
+        );
+        assert_eq!(
+            report.all_attempts.off.totals_observed["agent_wall_seconds"],
+            Some(2.5)
+        );
+        assert_eq!(
+            report.all_attempts.off.measurement_coverage["agent_wall_seconds"].missing,
+            1
+        );
+        assert_eq!(
+            report.all_attempts.off.totals_observed["cache_read_tokens"],
+            Some(100.0)
+        );
+        assert_eq!(
+            report.all_attempts.off.totals_observed["cache_write_tokens"],
+            Some(10.0)
+        );
+        assert_eq!(report.all_attempts.off.totals_observed["tool_calls"], None);
+        assert_eq!(
+            report.all_attempts.brain.totals_observed["tool_calls"],
+            Some(0.0)
+        );
+        assert_eq!(report.metrics["total_tokens"].brain_total, Some(80.0));
+        assert_eq!(report.metrics["agent_wall_seconds"].measured_pairs, 0);
+    }
+
+    #[test]
+    fn usage_comparison_does_not_infer_unknown_or_incomplete_metrics() {
+        let records = [
+            measured_record(
+                EvaluationMode::Off,
+                1,
+                serde_json::json!({"outcome":"pass","total_tokens":-1,"processed_input_tokens":"12","agent_wall_seconds":true,"tool_calls":7,"tool_calls_complete":false,"num_turns":2}),
+            ),
+            measured_record(
+                EvaluationMode::Brain,
+                1,
+                serde_json::json!({"outcome":"pass","total_tokens":null,"tool_calls":3,"tool_calls_complete":true,"estimated_tokens":99}),
+            ),
+        ];
+        let reports = compare_usage_records(&records);
+        for name in [
+            "total_tokens",
+            "processed_input_tokens",
+            "agent_wall_seconds",
+            "input_tokens",
+        ] {
+            assert_eq!(reports[0].metrics[name].measured_pairs, 0);
+            assert_eq!(reports[0].all_attempts.off.totals_observed[name], None);
+            assert_eq!(
+                reports[0].all_attempts.off.measurement_coverage[name].missing,
+                1
+            );
+            assert_eq!(
+                reports[0].all_attempts.off.measurement_coverage[name].partial,
+                0
+            );
+        }
+        assert_eq!(
+            reports[0].all_attempts.off.totals_observed["tool_calls"],
+            Some(7.0)
+        );
+        assert_eq!(
+            reports[0].all_attempts.off.measurement_coverage["tool_calls"],
+            MeasurementCoverage {
+                available: 1,
+                missing: 0,
+                total: 1,
+                partial: 1
+            }
+        );
+        assert_eq!(
+            reports[0].all_attempts.brain.totals_observed["tool_calls"],
+            Some(3.0)
+        );
+        assert_eq!(reports[0].metrics["tool_calls"].measured_pairs, 0);
+        assert_eq!(reports[0].both_clean_pass_pairs, 1);
+        assert_eq!(
+            reports[0].both_clean_pass_metrics["tool_calls"].measured_pairs,
+            0
+        );
+    }
+
+    #[test]
+    fn usage_comparison_marks_observed_partial_usage_without_inventing_values() {
+        let records = [
+            measured_record(
+                EvaluationMode::Off,
+                1,
+                serde_json::json!({"outcome":"infrastructure_error","usage_may_be_partial":true,"total_cost_usd":0.5,"total_tokens":10,"processed_input_tokens":8,"input_tokens":2,"output_tokens":2,"cache_read_input_tokens":5,"cache_creation_input_tokens":1,"agent_wall_seconds":3}),
+            ),
+            measured_record(
+                EvaluationMode::Off,
+                2,
+                serde_json::json!({"usage_may_be_partial":true,"tool_calls_complete":false,"total_tokens":null}),
+            ),
+        ];
+        let reports = compare_usage_records(&records);
+        let arm = &reports[0].all_attempts.off;
+        for name in [
+            "cost_usd",
+            "total_tokens",
+            "processed_input_tokens",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_write_tokens",
+        ] {
+            assert_eq!(
+                arm.measurement_coverage[name],
+                MeasurementCoverage {
+                    available: 1,
+                    missing: 1,
+                    total: 2,
+                    partial: 1
+                }
+            );
+        }
+        assert_eq!(arm.totals_observed["total_tokens"], Some(10.0));
+        assert_eq!(arm.totals_observed["cost_usd"], Some(0.5));
+        assert_eq!(arm.totals_observed["tool_calls"], None);
+        assert_eq!(arm.measurement_coverage["tool_calls"].partial, 0);
+        assert_eq!(arm.measurement_coverage["tool_calls"].missing, 2);
+        assert_eq!(arm.measurement_coverage["agent_wall_seconds"].partial, 0);
+    }
+
+    #[test]
+    fn usage_comparison_excludes_partial_usage_even_when_both_outcomes_pass() {
+        let off = measured_record(
+            EvaluationMode::Off,
+            1,
+            serde_json::json!({"outcome":"pass","reported":{"total_cost_usd":0.5,"total_tokens":10,"processed_input_tokens":8,"input_tokens":2,"output_tokens":2,"cache_read_input_tokens":5,"cache_creation_input_tokens":1,"agent_wall_seconds":3}}),
+        );
+        let mut brain = off.clone();
+        brain.run_id = EvaluationRunId::new();
+        brain.mode = EvaluationMode::Brain;
+        brain.metrics["usage_may_be_partial"] = serde_json::json!(true);
+        let reports = compare_usage_records(&[off, brain]);
+        let report = &reports[0];
+        assert_eq!(report.both_clean_pass_pairs, 1);
+        assert_eq!(report.pair_outcomes.both_pass, 1);
+        for name in [
+            "cost_usd",
+            "total_tokens",
+            "processed_input_tokens",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_write_tokens",
+        ] {
+            assert_eq!(report.metrics[name].measured_pairs, 0);
+            assert_eq!(report.metrics[name].brain_minus_off_pct, None);
+            assert_eq!(report.both_clean_pass_metrics[name].measured_pairs, 0);
+            assert_eq!(
+                report.both_clean_pass_metrics[name].brain_minus_off_pct,
+                None
+            );
+            assert!(report.all_attempts.brain.totals_observed[name].is_some());
+            assert_eq!(
+                report.all_attempts.brain.measurement_coverage[name].available,
+                1
+            );
+            assert_eq!(
+                report.all_attempts.brain.measurement_coverage[name].partial,
+                1
+            );
+            assert_eq!(
+                report.all_attempts.off.measurement_coverage[name].partial,
+                0
+            );
+        }
+        assert_eq!(
+            report.all_attempts.brain.totals_observed["total_tokens"],
+            Some(10.0)
+        );
+        assert_eq!(
+            report.all_attempts.brain.totals_observed["cost_usd"],
+            Some(0.5)
+        );
+        assert_eq!(report.metrics["agent_wall_seconds"].measured_pairs, 1);
+        assert_eq!(
+            report.both_clean_pass_metrics["agent_wall_seconds"].measured_pairs,
+            1
+        );
+    }
+
+    #[test]
+    fn usage_comparison_overflow_keeps_coverage_without_numeric_delta() {
+        let mut records = Vec::new();
+        for seed in [1, 2] {
+            records.push(measured_record(
+                EvaluationMode::Off,
+                seed,
+                serde_json::json!({"total_tokens":1e308}),
+            ));
+            records.push(measured_record(
+                EvaluationMode::Brain,
+                seed,
+                serde_json::json!({"total_tokens":1}),
+            ));
+        }
+        let reports = compare_usage_records(&records);
+        assert_eq!(reports[0].metrics["total_tokens"].measured_pairs, 2);
+        assert_eq!(reports[0].metrics["total_tokens"].off_total, None);
+        assert_eq!(reports[0].metrics["total_tokens"].brain_total, Some(2.0));
+        assert_eq!(reports[0].metrics["total_tokens"].brain_minus_off_pct, None);
+        assert_eq!(
+            reports[0].all_attempts.off.totals_observed["total_tokens"],
+            None
+        );
+        assert_eq!(
+            reports[0].all_attempts.off.measurement_coverage["total_tokens"].available,
+            2
+        );
+    }
+
+    #[test]
+    fn usage_comparison_serializes_zero_outcomes_and_reads_legacy_shape() {
+        let reports =
+            compare_usage_records(&[measured_record(EvaluationMode::Off, 1, Value::Null)]);
+        let mut value = serde_json::to_value(&reports[0]).expect("serialize");
+        assert_eq!(
+            value.pointer("/all_attempts/brain/outcome_counts"),
+            Some(&serde_json::json!({"pass":0,"fail":0,"infrastructure_error":0,"unknown":0}))
+        );
+        assert_eq!(
+            value.pointer("/all_attempts/brain/measurement_coverage/total_tokens"),
+            Some(&serde_json::json!({"available":0,"missing":0,"total":0,"partial":0}))
+        );
+        let legacy_coverage: MeasurementCoverage =
+            serde_json::from_value(serde_json::json!({"available":1,"missing":0,"total":1}))
+                .expect("legacy coverage");
+        assert_eq!(legacy_coverage.partial, 0);
+        for field in [
+            "all_attempts",
+            "pair_outcomes",
+            "both_clean_pass_pairs",
+            "both_clean_pass_metrics",
+        ] {
+            value.as_object_mut().expect("object").remove(field);
+        }
+        let legacy: ControlledUsageComparison =
+            serde_json::from_value(value).expect("legacy comparison");
+        assert_eq!(legacy.both_clean_pass_pairs, 0);
+        assert_eq!(legacy.all_attempts, AllAttemptUsage::default());
+        assert_eq!(legacy.pair_outcomes, PairOutcomeCounts::default());
+        assert!(legacy.both_clean_pass_metrics.is_empty());
+    }
+
+    #[test]
+    fn evaluation_store_retries_identical_records_and_rejects_conflicting_id_reuse() {
+        let temp = TempDir::new().expect("temp");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let store = EvaluationStore::new(database.clone());
+        let record = measured_record(
+            EvaluationMode::Off,
+            1,
+            serde_json::json!({"outcome":"pass","total_tokens":42}),
+        );
+        store.record(&record).expect("initial record");
+        store.record(&record).expect("byte-identical retry");
+        let pretty = serde_json::to_string_pretty(&record).expect("pretty JSON");
+        database
+            .write_immediate(|tx| {
+                tx.execute(
+                    "UPDATE eval_runs SET metrics_json = ?1 WHERE id = ?2",
+                    params![pretty, record.run_id.as_str()],
+                )?;
+                Ok(())
+            })
+            .expect("reformat stored JSON");
+        store.record(&record).expect("semantically identical retry");
+        for field in ["metrics", "success", "task", "controls", "timestamp"] {
+            let mut conflicting = record.clone();
+            match field {
+                "metrics" => conflicting.metrics["total_tokens"] = serde_json::json!(43),
+                "success" => conflicting.success = false,
+                "task" => conflicting.task_id = "other".to_owned(),
+                "controls" => conflicting.config_hash = "other".to_owned(),
+                _ => conflicting.created_at_ms += 1,
+            }
+            let error = store.record(&conflicting).expect_err("conflicting ID");
+            assert!(
+                error
+                    .to_string()
+                    .contains("already exists with different content")
+            );
+        }
+        database
+            .with_reader(|connection| {
+                let count: i64 =
+                    connection.query_row("SELECT count(*) FROM eval_runs", [], |row| row.get(0))?;
+                assert_eq!(count, 1);
+                let stored: String = connection.query_row(
+                    "SELECT metrics_json FROM eval_runs WHERE id = ?1",
+                    [record.run_id.as_str()],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(serde_json::from_str::<EvaluationRecord>(&stored)?, record);
+                Ok(())
+            })
+            .expect("original unchanged");
+    }
 
     #[test]
     fn paired_runner_isolates_modes_and_emits_reports() {

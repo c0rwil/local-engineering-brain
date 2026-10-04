@@ -135,6 +135,9 @@ pub struct CompiledContext {
     pub mode: ContextMode,
     pub stable_prefix: String,
     pub dynamic_context: String,
+    /// Compile-time content/provenance signature; old stored runs lack one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_digest: Option<String>,
     pub items: Vec<ContextItem>,
     pub metrics: ContextMetrics,
 }
@@ -271,6 +274,7 @@ impl ContextCompiler {
                 mode: ContextMode::Off,
                 stable_prefix: String::new(),
                 dynamic_context: String::new(),
+                delivery_digest: None,
                 items: Vec::new(),
                 metrics: ContextMetrics {
                     compile_ms: 0,
@@ -283,6 +287,10 @@ impl ContextCompiler {
         } else {
             self.compile_brain(request)?
         };
+        if context.delivery_digest.is_none() {
+            context.delivery_digest =
+                Some(self.delivery_digest(request, &context, &context.dynamic_context)?);
+        }
         context.metrics.compile_ms =
             u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         Ok(PreparedContext {
@@ -352,7 +360,7 @@ impl ContextCompiler {
     fn fill_memory_sections(
         &self,
         candidates: Vec<crate::retrieval::RetrievedMemory>,
-        compact_injections: &mut BTreeMap<MemoryId, crate::memory::CompactInjection>,
+        compact_injections: &BTreeMap<MemoryId, crate::memory::CompactInjection>,
         remaining: u32,
         heading: &str,
         review_heading: &str,
@@ -480,11 +488,26 @@ impl ContextCompiler {
             // always carry `valid_from_commit`; without this they would never
             // travel between repos. A missing checkout degrades conservatively
             // (commit-bounded memories are excluded, unbounded ones travel).
-            let linked_git = registry
-                .alias_paths(&link.project_id)?
-                .into_iter()
-                .find(|path| path.is_dir())
-                .and_then(|path| crate::projects::GitState::discover(&path).ok().flatten());
+            // Graph-only links and unbounded conventions do not need a Git
+            // status/diff walk of another checkout merely to retrieve context.
+            let needs_commit_check = self.database.with_reader(|connection| {
+                Ok(connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM memories WHERE project_id=?1
+                     AND status='active' AND epistemic_state='validated'
+                     AND (valid_from_commit IS NOT NULL OR valid_to_commit IS NOT NULL))",
+                    [link.project_id.as_str()],
+                    |row| row.get::<_, bool>(0),
+                )?)
+            })?;
+            let linked_git = if needs_commit_check {
+                registry
+                    .alias_paths(&link.project_id)?
+                    .into_iter()
+                    .find(|path| path.is_dir())
+                    .and_then(|path| crate::projects::GitState::discover(&path).ok().flatten())
+            } else {
+                None
+            };
             let candidates = self.retriever.retrieve(&RetrievalRequest {
                 project_id: &link.project_id,
                 task_text: &request.task_text,
@@ -500,13 +523,14 @@ impl ContextCompiler {
                 .iter()
                 .map(|candidate| candidate.memory.id.clone())
                 .collect::<Vec<_>>();
-            let mut compact_injections = if self.compact_injection {
+            let compact_injections = if self.compact_injection {
                 MemoryStore::new(self.database.clone()).compact_injections(&ids)?
             } else {
                 BTreeMap::new()
             };
             let mut heading = format!(
-                "# Linked repository `{}` ({}) - validated knowledge that applies across repos\n",
+                "{}# Linked repository `{}` ({}) - validated knowledge that applies across repos\n",
+                if dynamic.is_empty() { "" } else { "\n" },
                 context_safe(&link.name),
                 context_safe(&link.relation)
             );
@@ -539,7 +563,7 @@ impl ContextCompiler {
                     continue;
                 }
                 let (block, block_tokens) =
-                    self.memory_block(&candidate.memory, &mut compact_injections)?;
+                    self.memory_block(&candidate.memory, &compact_injections)?;
                 let heading_tokens = if section.is_empty() {
                     estimate_tokens(&heading)
                 } else {
@@ -570,15 +594,13 @@ impl ContextCompiler {
                 });
             }
             if !section.is_empty() {
-                if !dynamic.is_empty() {
-                    dynamic.push('\n');
-                }
                 dynamic.push_str(&section);
             }
         }
         Ok(considered)
     }
 
+    #[allow(clippy::too_many_lines)] // Keep the budgeted assembly and its signature together.
     fn compile_brain(&self, request: &ContextCompileRequest) -> Result<CompiledContext> {
         let stable_budget = self
             .stable_prefix_tokens
@@ -599,7 +621,29 @@ impl ContextCompiler {
             limit: 100,
         })?;
         let candidate_count = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
-        let mut compact_injections = if self.compact_injection {
+        // Confidence and past utility are not evidence of relevance to this
+        // task. Standing project preferences remain available, but unrelated
+        // lessons must not fill the prompt merely because there is room.
+        let candidates = candidates
+            .into_iter()
+            .filter(|candidate| {
+                (candidate.memory.kind == "preference" && candidate.memory.scope_type == "project")
+                    || candidate.why.lexical > 0.0
+                    || candidate.why.exact > 0.0
+                    || candidate.why.structural > 0.0
+                    || candidate.why.semantic > 0.0
+            })
+            .collect::<Vec<_>>();
+        // Reserve only the space actually occupied by relevant source pointers.
+        // A full memory candidate set must not crowd out the code for this task.
+        let (source_text, source_items) = crate::repository_context::build(
+            &self.database,
+            request,
+            remaining.min(request.token_budget / 3),
+            self.linked_projects,
+        )?;
+        let memory_budget = remaining.saturating_sub(estimate_tokens(&source_text));
+        let compact_injections = if self.compact_injection {
             let ids = candidates
                 .iter()
                 .map(|candidate| candidate.memory.id.clone())
@@ -611,8 +655,8 @@ impl ContextCompiler {
         let heading = request.framing.unwrap_or_default().heading();
         let selection = self.fill_memory_sections(
             candidates,
-            &mut compact_injections,
-            remaining,
+            &compact_injections,
+            memory_budget,
             heading,
             REVIEW_HEADING,
         )?;
@@ -620,6 +664,12 @@ impl ContextCompiler {
         let review = selection.review;
         let mut items = selection.items;
         let mut candidate_count = candidate_count;
+        let source_start = dynamic.len();
+        dynamic.push_str(&source_text);
+        for mut item in source_items {
+            item.ordinal = u32::try_from(items.len() + 1).unwrap_or(u32::MAX);
+            items.push(item);
+        }
         if self.linked_projects {
             let local_tokens = estimate_tokens(&dynamic).saturating_add(estimate_tokens(&review));
             let linked_budget = remaining.saturating_sub(local_tokens);
@@ -633,19 +683,28 @@ impl ContextCompiler {
         // Review standards render LAST: adjacency to the conversation is the
         // salience this section exists for.
         if !review.is_empty() {
-            if !dynamic.is_empty() {
-                dynamic.push('\n');
-            }
+            // Each preceding block already ends in a newline. An unbudgeted
+            // separator here can exceed the hard cap by one token.
             dynamic.push_str(&review);
         }
         let selected_tokens = estimate_tokens(&format!("{stable_prefix}{dynamic}"));
         debug_assert!(selected_tokens <= request.token_budget);
-        Ok(CompiledContext {
+        // Canonicalize the known source block at its actual assembly boundary.
+        // Memory text can contain arbitrary Markdown, including identical
+        // headings, so searching the complete rendered output is unsafe.
+        let canonical_dynamic = format!(
+            "{}{}{}",
+            &dynamic[..source_start],
+            canonical_source_map(&source_text),
+            &dynamic[source_start + source_text.len()..],
+        );
+        let mut context = CompiledContext {
             id: ContextRunId::new(),
             request_id: request.request_id.clone(),
             mode: ContextMode::Brain,
             stable_prefix,
             dynamic_context: dynamic,
+            delivery_digest: None,
             items,
             metrics: ContextMetrics {
                 compile_ms: 0,
@@ -655,13 +714,16 @@ impl ContextCompiler {
                 stable_prefix_hash: String::new(),
             },
         }
-        .with_stable_hash())
+        .with_stable_hash();
+        context.delivery_digest =
+            Some(self.delivery_digest(request, &context, &canonical_dynamic)?);
+        Ok(context)
     }
 
     fn memory_block(
         &self,
         memory: &MemoryRecord,
-        compact_injections: &mut BTreeMap<MemoryId, CompactInjection>,
+        compact_injections: &BTreeMap<MemoryId, CompactInjection>,
     ) -> Result<(String, u32)> {
         if !self.compact_injection {
             let block = format!(
@@ -673,7 +735,9 @@ impl ContextCompiler {
             let tokens = estimate_tokens(&block);
             return Ok((block, tokens));
         }
-        let projection = compact_injections.remove(&memory.id).ok_or_else(|| {
+        // A candidate that does not fit may be visited again during the second
+        // selection pass. Looking at its rendering must not consume it.
+        let projection = compact_injections.get(&memory.id).ok_or_else(|| {
             Error::Config(format!(
                 "compact injection projection is missing for memory `{}`; rebuild required",
                 memory.id
@@ -685,7 +749,7 @@ impl ContextCompiler {
                 memory.id
             )));
         }
-        Ok((projection.text, projection.token_estimate))
+        Ok((projection.text.clone(), projection.token_estimate))
     }
 
     fn stable_prefix(
@@ -703,16 +767,6 @@ impl ContextCompiler {
                 [project_id.as_str()],
                 |row| row.get::<_, String>(0),
             )?;
-            let mut statement = connection.prepare(
-                "SELECT DISTINCT kind, label FROM nodes
-                 WHERE project_id = ?1 AND tombstoned_at_ms IS NULL
-                   AND kind IN ('Module','Type','Interface')
-                 ORDER BY kind, label LIMIT 24",
-            )?;
-            let rows = statement.query_map([project_id.as_str()], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?;
-            let facts = rows.collect::<std::result::Result<Vec<_>, _>>()?;
             let mut fact_statement = connection.prepare(
                 "SELECT key, value FROM project_facts
                  WHERE project_id = ?1 AND key NOT LIKE 'internal.%'
@@ -722,7 +776,7 @@ impl ContextCompiler {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?;
             let curated = fact_rows.collect::<std::result::Result<Vec<_>, _>>()?;
-            Ok((project_name, facts, curated))
+            Ok((project_name, curated))
         })?;
         let mut output = String::new();
         append_if_fits(
@@ -735,7 +789,7 @@ impl ContextCompiler {
         );
         // Curated architecture facts (deployment hosts, hosting, storage)
         // lead: they are the highest-signal lines an engineer needs first.
-        for (key, value) in facts.2 {
+        for (key, value) in facts.1 {
             if !append_if_fits(
                 &mut output,
                 &format!("- {}: {}\n", context_safe(&key), context_safe(&value)),
@@ -760,16 +814,52 @@ impl ContextCompiler {
                 );
             }
         }
-        for (kind, label) in facts.1 {
-            if !append_if_fits(
-                &mut output,
-                &format!("- {}: {}\n", context_safe(&kind), context_safe(&label)),
-                budget,
-            ) {
-                break;
-            }
-        }
         Ok(output)
+    }
+
+    fn delivery_digest(
+        &self,
+        request: &ContextCompileRequest,
+        context: &CompiledContext,
+        canonical_dynamic: &str,
+    ) -> Result<String> {
+        let mut sources = self.database.with_reader(|connection| {
+            context.items.iter().map(|item| {
+                // Observation times and memory usage counters change during
+                // harmless reindexing/compilation; they are not freshness.
+                let query = match item.source_type.as_str() {
+                    "code" | "code_dependency" => Some(
+                        "SELECT json_array(project_id,current_digest,source_ref,extractor_version,tombstoned_at_ms)
+                         FROM nodes WHERE id=?1"),
+                    "memory" | "linked_memory" => Some(
+                        "SELECT json_array(project_id,scope_type,scope_id,kind,epistemic_state,status,
+                            valid_from_commit,valid_to_commit,known_from_ms,known_to_ms,trust_source)
+                         FROM memories WHERE id=?1"),
+                    "verification" => Some(
+                        "SELECT json_array(project_id,artifact_digest,commit_hash,strength,exit_code)
+                         FROM evidence WHERE id=?1"),
+                    _ => None,
+                };
+                let provenance: Option<String> = match query {
+                    Some(query) => connection.prepare_cached(query)?.query_row([&item.source_id], |row| row.get(0)).optional()?,
+                    None => None,
+                };
+                Ok((item.source_type.clone(), item.source_id.clone(), provenance))
+            }).collect::<Result<Vec<_>>>()
+        })?;
+        sources.sort_unstable();
+        Ok(sha256(&serde_json::to_vec(&(
+            "context-delivery-v1",
+            &request.project_id,
+            &request.repository_root,
+            &request.task_id,
+            sha256(request.task_text.trim().as_bytes()),
+            &request.head,
+            context.mode,
+            &context.stable_prefix,
+            canonical_dynamic,
+            sources,
+        ))?))
     }
 
     fn persist(&self, request: &ContextCompileRequest, context: &CompiledContext) -> Result<()> {
@@ -782,8 +872,8 @@ impl ContextCompiler {
                  (id, request_id, project_id, request_fingerprint, mode,
                   task_text_digest, token_budget,
                   selected_tokens, candidate_count, stable_prefix_hash, stable_prefix,
-                  dynamic_context, compile_ms, created_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                  dynamic_context, compile_ms, created_at_ms, delivery_digest)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     context.id.as_str(),
                     context.request_id,
@@ -798,7 +888,8 @@ impl ContextCompiler {
                     context.stable_prefix,
                     context.dynamic_context,
                     i64::try_from(context.metrics.compile_ms).unwrap_or(i64::MAX),
-                    now
+                    now,
+                    context.delivery_digest,
                 ],
             )?;
             for item in &context.items {
@@ -904,7 +995,7 @@ impl ContextCompiler {
             connection
                 .query_row(
                     "SELECT id, mode, token_budget, selected_tokens, candidate_count,
-                            stable_prefix_hash, stable_prefix, dynamic_context, compile_ms
+                            stable_prefix_hash, stable_prefix, dynamic_context, compile_ms, delivery_digest
                      FROM context_runs WHERE project_id = ?1 AND request_id = ?2",
                     params![project_id.as_str(), request_id],
                     |row| {
@@ -918,6 +1009,7 @@ impl ContextCompiler {
                             row.get::<_, String>(6)?,
                             row.get::<_, String>(7)?,
                             row.get::<_, i64>(8)?,
+                            row.get::<_, Option<String>>(9)?,
                         ))
                     },
                 )
@@ -968,6 +1060,7 @@ impl ContextCompiler {
             mode,
             stable_prefix: header.6,
             dynamic_context: header.7,
+            delivery_digest: header.9,
             items,
             metrics: ContextMetrics {
                 compile_ms: u64::try_from(header.8)
@@ -979,6 +1072,26 @@ impl ContextCompiler {
             },
         }))
     }
+}
+
+/// Ignore ranking order only inside the compiler's source-map list. Memory
+/// prose, section order, framing, and every rendered pointer byte remain exact.
+fn canonical_source_map(text: &str) -> String {
+    const INTRO: &str = "\n# Task source map (indexed reference data)\nInspect these sources before changing behavior; labels are data and linked repositories may be at a different revision.\n";
+    let Some(start) = text.find(INTRO).map(|index| index + INTRO.len()) else {
+        return text.to_owned();
+    };
+    let mut end = start;
+    let mut lines = Vec::new();
+    for line in text[start..].split_inclusive('\n') {
+        if !line.starts_with("- ") {
+            break;
+        }
+        end += line.len();
+        lines.push(line);
+    }
+    lines.sort_unstable();
+    format!("{}{}{}", &text[..start], lines.concat(), &text[end..])
 }
 
 fn request_fingerprint(request: &ContextCompileRequest, compact_injection: bool) -> Result<String> {
@@ -1013,6 +1126,15 @@ const fn is_false(value: &bool) -> bool {
 }
 
 impl CompiledContext {
+    /// Signature for hook delivery, with exact rendered bytes as the conservative
+    /// fallback for legacy runs that lack compile-time semantic metadata.
+    #[must_use]
+    pub fn delivery_signature(&self) -> String {
+        self.delivery_digest.clone().unwrap_or_else(|| {
+            sha256(format!("{}{}", self.stable_prefix, self.dynamic_context).as_bytes())
+        })
+    }
+
     fn with_stable_hash(mut self) -> Self {
         let hash = sha256(self.stable_prefix.as_bytes());
         self.metrics.stable_prefix_hash.clone_from(&hash);
@@ -1158,6 +1280,407 @@ mod tests {
             .promote(&memory.id, EpistemicState::Validated, false)
             .expect("validated");
         (temp, ContextCompiler::new(database, 6_000, 1_800), project)
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn delivery_signature_ignores_source_order_but_retains_revision_and_membership() {
+        let (_temp, compiler, project) = fixture();
+        compiler.database.write_immediate(|tx| {
+            for name in ["alpha", "beta"] {
+                tx.execute("INSERT INTO nodes(id,project_id,kind,stable_key,label,file_path,current_digest,source_kind,source_ref,extractor_version,observed_at_ms)
+                    VALUES(?1,?2,'Function',?1,?3,?4,'digest-1','native','revision-1','test',0)",
+                    params![name, project.as_str(), format!("abort_{name}"), format!("src/{name}.rs")])?;
+            }
+            Ok(())
+        }).unwrap();
+        let request = ContextCompileRequest {
+            request_id: "delivery-alpha".to_owned(),
+            project_id: project.clone(),
+            task_text: "fix abort cleanup".to_owned(),
+            current_paths: vec!["src/alpha.rs".to_owned()],
+            token_budget: 6000,
+            mode: ContextMode::Brain,
+            repository_root: None,
+            head: None,
+            task_id: None,
+            framing: None,
+        };
+        let first = compiler.compile(&request).unwrap();
+        let mut changed = request.clone();
+        changed.request_id = "delivery-beta".to_owned();
+        changed.current_paths = vec!["src/beta.rs".to_owned()];
+        let reordered = compiler.compile(&changed).unwrap();
+        assert_ne!(first.dynamic_context, reordered.dynamic_context);
+        assert_eq!(first.delivery_digest, reordered.delivery_digest);
+        assert_eq!(
+            first
+                .items
+                .iter()
+                .filter(|item| item.source_type == "code")
+                .count(),
+            2
+        );
+
+        for (column, value) in [("current_digest", "digest-2"), ("source_ref", "revision-2")] {
+            compiler
+                .database
+                .write_immediate(|tx| {
+                    tx.execute(
+                        &format!("UPDATE nodes SET {column}=?1 WHERE id='alpha'"),
+                        [value],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+            changed.request_id = format!("delivery-{column}");
+            let revised = compiler.compile(&changed).unwrap();
+            assert_eq!(revised.dynamic_context, reordered.dynamic_context);
+            assert_ne!(revised.delivery_digest, reordered.delivery_digest);
+            // Replays remain tied to the original compile-time provenance.
+            let replay = compiler.compile(&request).unwrap();
+            assert_eq!(replay.id, first.id);
+            assert_eq!(replay.delivery_digest, first.delivery_digest);
+            assert_eq!(replay.stable_prefix, first.stable_prefix);
+            assert_eq!(replay.dynamic_context, first.dynamic_context);
+            assert_eq!(
+                replay
+                    .items
+                    .iter()
+                    .map(|item| (&item.source_type, &item.source_id))
+                    .collect::<Vec<_>>(),
+                first
+                    .items
+                    .iter()
+                    .map(|item| (&item.source_type, &item.source_id))
+                    .collect::<Vec<_>>()
+            );
+        }
+        compiler.database.write_immediate(|tx| {
+            tx.execute("UPDATE nodes SET current_digest='digest-1',source_ref='revision-1',tombstoned_at_ms=1 WHERE id='alpha'", [])?;
+            Ok(())
+        }).unwrap();
+        changed.request_id = "delivery-removed".to_owned();
+        let removed = compiler.compile(&changed).unwrap();
+        assert_ne!(removed.delivery_digest, first.delivery_digest);
+        assert!(!removed.items.iter().any(|item| item.source_id == "alpha"));
+        compiler
+            .database
+            .write_immediate(|tx| {
+                tx.execute(
+                    "UPDATE nodes SET tombstoned_at_ms=NULL,observed_at_ms=999 WHERE id='alpha'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        changed.request_id = "delivery-restored".to_owned();
+        assert_eq!(
+            compiler.compile(&changed).unwrap().delivery_digest,
+            first.delivery_digest
+        );
+        compiler.database.write_immediate(|tx| {
+            tx.execute("INSERT INTO nodes(id,project_id,kind,stable_key,label,file_path,current_digest,source_kind,source_ref,extractor_version,observed_at_ms)
+                VALUES('gamma',?1,'Function','gamma','abort_gamma','src/gamma.rs','digest-1','native','revision-1','test',0)", [project.as_str()])?;
+            Ok(())
+        }).unwrap();
+        changed.request_id = "delivery-added".to_owned();
+        let added = compiler.compile(&changed).unwrap();
+        assert!(added.items.iter().any(|item| item.source_id == "gamma"));
+        assert_ne!(added.delivery_digest, first.delivery_digest);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn delivery_signature_tracks_facts_lessons_and_task_workspace_scope() {
+        let (_temp, compiler, project) = fixture();
+        let mut request = ContextCompileRequest {
+            request_id: "delivery-facts-base".to_owned(),
+            project_id: project.clone(),
+            task_text: "fix abort cleanup".to_owned(),
+            current_paths: vec![],
+            token_budget: 6000,
+            mode: ContextMode::Brain,
+            repository_root: None,
+            head: None,
+            task_id: None,
+            framing: None,
+        };
+        let initial = compiler.compile(&request).unwrap();
+        assert!(
+            initial
+                .items
+                .iter()
+                .any(|item| item.source_type == "memory")
+        );
+        ProjectRegistry::new(compiler.database.clone())
+            .set_fact(&project, "storage", "SQLite", None)
+            .unwrap();
+        request.request_id = "delivery-facts-new".to_owned();
+        let fact = compiler.compile(&request).unwrap();
+        assert!(fact.stable_prefix.contains("storage: SQLite"));
+        assert_ne!(initial.delivery_digest, fact.delivery_digest);
+        compiler.database.write_immediate(|tx| {
+            tx.execute("UPDATE memories SET rationale='Abort regression now covers cancellation' WHERE project_id=?1", [project.as_str()])?;
+            Ok(())
+        }).unwrap();
+        request.request_id = "delivery-lesson-edit".to_owned();
+        let lesson = compiler.compile(&request).unwrap();
+        assert_ne!(lesson.delivery_digest, fact.delivery_digest);
+        assert!(lesson.dynamic_context.contains("covers cancellation"));
+        compiler
+            .database
+            .write_immediate(|tx| {
+                tx.execute(
+                    "UPDATE memories SET known_from_ms=known_from_ms+1 WHERE project_id=?1",
+                    [project.as_str()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        request.request_id = "delivery-lesson-freshness".to_owned();
+        let freshness = compiler.compile(&request).unwrap();
+        assert_eq!(freshness.dynamic_context, lesson.dynamic_context);
+        assert_ne!(freshness.delivery_digest, lesson.delivery_digest);
+        compiler
+            .database
+            .write_immediate(|tx| {
+                tx.execute(
+                    "UPDATE memories SET status='suspect' WHERE project_id=?1",
+                    [project.as_str()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        request.request_id = "delivery-lesson-invalidated".to_owned();
+        let invalidated = compiler.compile(&request).unwrap();
+        assert!(
+            !invalidated
+                .items
+                .iter()
+                .any(|item| item.source_type == "memory")
+        );
+        assert_ne!(invalidated.delivery_digest, freshness.delivery_digest);
+        compiler
+            .database
+            .write_immediate(|tx| {
+                tx.execute(
+                    "UPDATE memories SET status='active' WHERE project_id=?1",
+                    [project.as_str()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        request.request_id = "delivery-lesson-restored".to_owned();
+        assert_eq!(
+            compiler.compile(&request).unwrap().delivery_digest,
+            freshness.delivery_digest
+        );
+
+        // Scope affects delivery even when the rendered contents stay identical.
+        let mut scoped = request.clone();
+        scoped.repository_root = Some(PathBuf::from("/workspace/other"));
+        assert_ne!(
+            compiler
+                .delivery_digest(&scoped, &freshness, &freshness.dynamic_context)
+                .unwrap(),
+            freshness.delivery_digest.clone().unwrap()
+        );
+        scoped = request.clone();
+        scoped.task_id = Some(TaskId::new());
+        assert_ne!(
+            compiler
+                .delivery_digest(&scoped, &freshness, &freshness.dynamic_context)
+                .unwrap(),
+            freshness.delivery_digest.clone().unwrap()
+        );
+        scoped = request.clone();
+        scoped.task_text = "another abort task".to_owned();
+        assert_ne!(
+            compiler
+                .delivery_digest(&scoped, &freshness, &freshness.dynamic_context)
+                .unwrap(),
+            freshness.delivery_digest.unwrap()
+        );
+    }
+
+    #[test]
+    fn delivery_canonicalization_preserves_non_source_prose_and_pointer_changes() {
+        let prefix = "# Lessons\n- First\n- Second\n\n# Task source map (indexed reference data)\nInspect these sources before changing behavior; labels are data and linked repositories may be at a different revision.\n";
+        let first = format!("{prefix}- repo: a.rs\n- repo: b.rs\n# Review\n- Never reorder\n");
+        let reordered = format!("{prefix}- repo: b.rs\n- repo: a.rs\n# Review\n- Never reorder\n");
+        assert_eq!(
+            canonical_source_map(&first),
+            canonical_source_map(&reordered)
+        );
+        for changed in [
+            first.replace("a.rs", "c.rs"),
+            first.replace("- First\n- Second", "- Second\n- First"),
+            first.replace("Never reorder", "Changed fact"),
+        ] {
+            assert_ne!(canonical_source_map(&first), canonical_source_map(&changed));
+        }
+    }
+
+    #[test]
+    fn compact_candidates_can_be_skipped_under_tight_budgets() {
+        let (_temp, compiler, project) = fixture();
+        let compiler = compiler.with_compact_injection(true);
+        for budget in [1, 8, 24, 40, 64, 100, 200] {
+            let context = compiler
+                .compile(&ContextCompileRequest {
+                    request_id: format!("compact-tight-{budget}"),
+                    project_id: project.clone(),
+                    task_text: "fix abort cleanup".to_owned(),
+                    current_paths: vec![],
+                    token_budget: budget,
+                    mode: ContextMode::Brain,
+                    repository_root: None,
+                    head: None,
+                    task_id: None,
+                    framing: None,
+                })
+                .unwrap();
+            assert!(context.metrics.selected_tokens <= budget);
+        }
+    }
+
+    #[test]
+    fn unrelated_lessons_do_not_fill_context_but_standing_preferences_remain() {
+        let (_temp, compiler, project) = fixture();
+        let store = MemoryStore::new(compiler.database.clone());
+        let preference = store
+            .create_candidate(
+                &project,
+                &MemoryDraft {
+                    scope_type: "project".to_owned(),
+                    scope_id: project.to_string(),
+                    kind: "preference".to_owned(),
+                    claim: "Behavior changes include a regression test".to_owned(),
+                    rationale: "Established team convention".to_owned(),
+                    confidence: 0.5,
+                    importance: 1.0,
+                    tags: vec![],
+                    valid_from_commit: None,
+                    valid_to_commit: None,
+                    trust_source: "human_instruction".to_owned(),
+                    evidence_ids: vec![],
+                    source_task_ids: vec![],
+                    node_ids: vec![],
+                },
+            )
+            .unwrap();
+        store
+            .promote(&preference.id, EpistemicState::Validated, true)
+            .unwrap();
+        let scoped = store
+            .create_candidate(
+                &project,
+                &MemoryDraft {
+                    scope_type: "file".to_owned(),
+                    scope_id: "src/invoice.rs".to_owned(),
+                    kind: "preference".to_owned(),
+                    claim: "Store invoice amounts as integers".to_owned(),
+                    rationale: "A convention for billing files only".to_owned(),
+                    confidence: 0.5,
+                    importance: 1.0,
+                    tags: vec![],
+                    valid_from_commit: None,
+                    valid_to_commit: None,
+                    trust_source: "human_instruction".to_owned(),
+                    evidence_ids: vec![],
+                    source_task_ids: vec![],
+                    node_ids: vec![],
+                },
+            )
+            .unwrap();
+        store
+            .promote(&scoped.id, EpistemicState::Validated, true)
+            .unwrap();
+        let context = compiler
+            .compile(&ContextCompileRequest {
+                request_id: "relevance-gate".to_owned(),
+                project_id: project,
+                task_text: "Improve authentication".to_owned(),
+                current_paths: vec![],
+                token_budget: 2000,
+                mode: ContextMode::Brain,
+                repository_root: None,
+                head: None,
+                task_id: None,
+                framing: None,
+            })
+            .unwrap();
+        assert!(!context.dynamic_context.contains("Release reservation"));
+        assert!(!context.dynamic_context.contains("Store invoice amounts"));
+        assert!(
+            context
+                .dynamic_context
+                .contains("Behavior changes include a regression test")
+        );
+        assert_eq!(
+            context
+                .items
+                .iter()
+                .filter(|i| i.source_type == "memory")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn relevant_source_keeps_space_when_memory_budget_is_full() {
+        let (_temp, compiler, project) = fixture();
+        compiler.database.write_immediate(|tx| {
+            tx.execute("INSERT INTO nodes(id,project_id,kind,stable_key,label,file_path,current_digest,source_kind,source_ref,extractor_version,observed_at_ms) VALUES(?1,?2,'Function','abort_handler','abort_handler','src/abort.rs','digest','native','head','test',0)",
+                params![crate::ids::NodeId::new().to_string(), project.as_str()])?;
+            Ok(())
+        }).unwrap();
+        let store = MemoryStore::new(compiler.database.clone());
+        for index in 0..8 {
+            let memory = store
+                .create_candidate(
+                    &project,
+                    &MemoryDraft {
+                        scope_type: "project".to_owned(),
+                        scope_id: project.to_string(),
+                        kind: "lesson".to_owned(),
+                        claim: format!("Abort cleanup rule {index}"),
+                        rationale: "Verified cleanup behavior. ".repeat(24),
+                        confidence: 0.5,
+                        importance: 1.0,
+                        tags: vec!["abort".to_owned()],
+                        valid_from_commit: None,
+                        valid_to_commit: None,
+                        trust_source: "human_instruction".to_owned(),
+                        evidence_ids: vec![],
+                        source_task_ids: vec![],
+                        node_ids: vec![],
+                    },
+                )
+                .unwrap();
+            store
+                .promote(&memory.id, EpistemicState::Validated, true)
+                .unwrap();
+        }
+        let context = compiler
+            .compile(&ContextCompileRequest {
+                request_id: "source-reservation".to_owned(),
+                project_id: project,
+                task_text: "Fix abort cleanup".to_owned(),
+                current_paths: vec!["src/abort.rs".to_owned()],
+                token_budget: 800,
+                mode: ContextMode::Brain,
+                repository_root: None,
+                head: None,
+                task_id: None,
+                framing: None,
+            })
+            .unwrap();
+        assert!(context.items.iter().any(|i| i.source_type == "memory"));
+        assert!(context.items.iter().any(|i| i.source_type == "code"));
+        assert!(context.dynamic_context.contains("src/abort.rs"));
+        assert!(context.metrics.selected_tokens <= 800);
     }
 
     #[test]

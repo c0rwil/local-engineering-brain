@@ -1,0 +1,641 @@
+{
+  "created_at_utc": "2026-09-26T01:51:08.531085+00:00",
+  "schema_version": 1,
+  "method": "Match deduplicated assistant Bash tool-use IDs to is_error user tool_result blocks; E2BIG launch failure requires the observed Could not start / OS exec argument limit (E2BIG) / At spawn / Bash sandbox profile signature. No command, tool input, output payload, prompt, or source text is included.",
+  "collections": {
+    "v2": {
+      "trace_count": 4,
+      "trials_with_spawn_E2BIG": 4,
+      "totals": {
+        "bash_calls": 18,
+        "spawn_E2BIG_failures": 18,
+        "successful_bash_calls": 0,
+        "other_bash_errors": 0,
+        "bash_calls_missing_result": 0,
+        "interrupted_bash_calls": 0,
+        "non_bash_error_results": 0,
+        "trace_literal_E2BIG_occurrences": 50,
+        "terminal_error_results": 0,
+        "permission_denials": 0,
+        "hook_responses": 204,
+        "failed_hook_responses": 0,
+        "rate_limit_events_not_allowed": 0,
+        "malformed_trace_lines": 0,
+        "conflicting_tool_ids": 0
+      },
+      "trials": [
+        {
+          "trial": "r01_guide_hot_path-r1-brain",
+          "trace_sha256": "a34b68cade2f4a000c6d1a20e09b1e2cdc8a98807235440ff6b9ac7002638db3",
+          "totals": {
+            "bash_calls": 3,
+            "spawn_E2BIG_failures": 3,
+            "successful_bash_calls": 0,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 8,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 85,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r01_guide_hot_path-r1-off",
+          "trace_sha256": "64bec4c8f1ecedd46bd78b3947ecf081730040864a9d7b05ad46c0a7b352c082",
+          "totals": {
+            "bash_calls": 5,
+            "spawn_E2BIG_failures": 5,
+            "successful_bash_calls": 0,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 13,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r02_lean_task_status-r1-brain",
+          "trace_sha256": "b4aecc2cc68958f5d9b7d0b16fd08b759f4e32b30cf73439f3bcdec7fad5ba7b",
+          "totals": {
+            "bash_calls": 4,
+            "spawn_E2BIG_failures": 4,
+            "successful_bash_calls": 0,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 11,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 119,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r02_lean_task_status-r1-off",
+          "trace_sha256": "8e165c8fabc3449d6d05138d4e4c73cdf0cff5398b5562988c6078e2538e814b",
+          "totals": {
+            "bash_calls": 6,
+            "spawn_E2BIG_failures": 6,
+            "successful_bash_calls": 0,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 18,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        }
+      ]
+    },
+    "v1": {
+      "trace_count": 24,
+      "trials_with_spawn_E2BIG": 0,
+      "totals": {
+        "bash_calls": 372,
+        "spawn_E2BIG_failures": 0,
+        "successful_bash_calls": 364,
+        "other_bash_errors": 8,
+        "bash_calls_missing_result": 0,
+        "interrupted_bash_calls": 0,
+        "non_bash_error_results": 10,
+        "trace_literal_E2BIG_occurrences": 0,
+        "terminal_error_results": 1,
+        "permission_denials": 0,
+        "hook_responses": 857,
+        "failed_hook_responses": 0,
+        "rate_limit_events_not_allowed": 0,
+        "malformed_trace_lines": 0,
+        "conflicting_tool_ids": 0
+      },
+      "trials": [
+        {
+          "trial": "r01_guide_hot_path-r1-brain",
+          "trace_sha256": "4c0307e5b84c971d48a607eea9dc8763bf0ef42b15e1dc33013bd75d2d56b18c",
+          "totals": {
+            "bash_calls": 7,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 7,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 2,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 115,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r01_guide_hot_path-r1-off",
+          "trace_sha256": "48ed1c3e03cecb09a5df2c67dcfb0c53a672cb690af0fc4c46c6be8de1a261dc",
+          "totals": {
+            "bash_calls": 3,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 3,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 1,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r01_guide_hot_path-r2-brain",
+          "trace_sha256": "5a433bfacf8e099f2c235812888d56d79c388f15bf1fc526d2576d1dc6ae9938",
+          "totals": {
+            "bash_calls": 15,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 15,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 1,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 93,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r01_guide_hot_path-r2-off",
+          "trace_sha256": "bd0b30d13087551d906ad16b52133545f3a4686019736ba1d0a125d450caf9ad",
+          "totals": {
+            "bash_calls": 34,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 34,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r01_guide_hot_path-r3-brain",
+          "trace_sha256": "3592da362680a38e9a29ced94f3a9eb5f5fefe5ce14111987f2fba9bba85440c",
+          "totals": {
+            "bash_calls": 20,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 20,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 1,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 94,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r01_guide_hot_path-r3-off",
+          "trace_sha256": "b02e094f5db3a2b2749c8941c00ead7e5903e54eb5298a459ca7b384a6da878c",
+          "totals": {
+            "bash_calls": 16,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 16,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 1,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r02_lean_task_status-r1-brain",
+          "trace_sha256": "0b838d4554ec6e3ded47366d58c6297ea0997967f5a488a7bd0eaa4807cd5ccc",
+          "totals": {
+            "bash_calls": 16,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 14,
+            "other_bash_errors": 2,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 86,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r02_lean_task_status-r1-off",
+          "trace_sha256": "d9208a0d04fda8619d78929506e8f4a80df37616ba8ebfac7a1c253896bb0a02",
+          "totals": {
+            "bash_calls": 29,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 29,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r02_lean_task_status-r2-brain",
+          "trace_sha256": "ac2fd64fa487b372fdd1b04e46334675377c88018ad1bdead288b787710744f3",
+          "totals": {
+            "bash_calls": 20,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 19,
+            "other_bash_errors": 1,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 75,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r02_lean_task_status-r2-off",
+          "trace_sha256": "4b3de8dbfc07e6beaa4d34785fc98b757e98dd6ec9d274fd2394825b4af3faa9",
+          "totals": {
+            "bash_calls": 13,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 13,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r02_lean_task_status-r3-brain",
+          "trace_sha256": "152675429c5233ad34b568a67dbc790025f1f01228cfa10cd8fcee9a5162d0aa",
+          "totals": {
+            "bash_calls": 17,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 16,
+            "other_bash_errors": 1,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 82,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r02_lean_task_status-r3-off",
+          "trace_sha256": "c6dc9190e1eeeb6471c764dd178aad1fc7a5692133edf64698e7f12cc9d79d30",
+          "totals": {
+            "bash_calls": 47,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 45,
+            "other_bash_errors": 2,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r05_test_env_isolation-r1-brain",
+          "trace_sha256": "a6b0f7707d268e5cf7e2f41ed365ef7680e0c2e2b2fb172fe43a713df62a7194",
+          "totals": {
+            "bash_calls": 11,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 11,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 1,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 54,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r05_test_env_isolation-r1-off",
+          "trace_sha256": "4b792292a3b2c6fa126fa9f0da1516112a2a64d43fcde371ec77dcb96ed82c9d",
+          "totals": {
+            "bash_calls": 11,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 11,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 1,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r05_test_env_isolation-r2-brain",
+          "trace_sha256": "480ad6d3bb80975e4767d59c1d191284106fbc665bf4bf8f87b67beca11980e9",
+          "totals": {
+            "bash_calls": 10,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 10,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 1,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 38,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r05_test_env_isolation-r2-off",
+          "trace_sha256": "510591b555bfc09a22a68c522699169e4207037878e76ff6f1e4747a94ca8139",
+          "totals": {
+            "bash_calls": 10,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 10,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 1,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r05_test_env_isolation-r3-brain",
+          "trace_sha256": "e1af270f66ebaa28ee5fc68bfb033b940157041211067138781f894f3a9f6122",
+          "totals": {
+            "bash_calls": 9,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 8,
+            "other_bash_errors": 1,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 36,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r05_test_env_isolation-r3-off",
+          "trace_sha256": "3010eeb62f3fe5d7b3573ff55572fa7ea685f9a38176a42f11954a90481dcd54",
+          "totals": {
+            "bash_calls": 11,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 10,
+            "other_bash_errors": 1,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 1,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r06_onboarding_outage-r1-brain",
+          "trace_sha256": "954632257400150d22fce5d13a55d3c57c4bbff87b7c96189bdd604a30f6f6b8",
+          "totals": {
+            "bash_calls": 13,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 13,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 54,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r06_onboarding_outage-r1-off",
+          "trace_sha256": "75b2ae323b9ad7f1ac4fe546466976f01ad26519eb5285afe64d7fb92324220b",
+          "totals": {
+            "bash_calls": 9,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 9,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r06_onboarding_outage-r2-brain",
+          "trace_sha256": "98a347e8788f59dc16ee673cbc4db2f62a49f73a2cce4c73a9b14b3e6e0d32ea",
+          "totals": {
+            "bash_calls": 9,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 9,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 51,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r06_onboarding_outage-r2-off",
+          "trace_sha256": "c9bb1dcc6a3c7964510a6e5b493d5a15921115cbf128405a3544cec815b88761",
+          "totals": {
+            "bash_calls": 10,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 10,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r06_onboarding_outage-r3-brain",
+          "trace_sha256": "ee03eef51afb9e46c6b46488a2f56af81bebf1a2a1b605de6bcb0437cd171d09",
+          "totals": {
+            "bash_calls": 23,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 23,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 79,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        },
+        {
+          "trial": "r06_onboarding_outage-r3-off",
+          "trace_sha256": "561bb69880fec918bf8116288a67285e8ad177653606777121dfb0f69f52ead7",
+          "totals": {
+            "bash_calls": 9,
+            "spawn_E2BIG_failures": 0,
+            "successful_bash_calls": 9,
+            "other_bash_errors": 0,
+            "bash_calls_missing_result": 0,
+            "interrupted_bash_calls": 0,
+            "non_bash_error_results": 0,
+            "trace_literal_E2BIG_occurrences": 0,
+            "terminal_error_results": 0,
+            "permission_denials": 0,
+            "hook_responses": 0,
+            "failed_hook_responses": 0,
+            "rate_limit_events_not_allowed": 0,
+            "malformed_trace_lines": 0,
+            "conflicting_tool_ids": 0
+          }
+        }
+      ]
+    }
+  }
+}

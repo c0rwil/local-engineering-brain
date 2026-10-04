@@ -1,0 +1,122 @@
+{
+  "task_id": "r06_onboarding_outage",
+  "validation_status": "behavioral_preflight_passed_shared_local_runtime",
+  "base_commit": "4a2668b9bb198ae7d9108f2cebefb84fa9244b24",
+  "reference_fix_commit": "60cfcd4eda9d776f6cdac8af88f853c9276cb30e",
+  "source_repository_unchanged": true,
+  "dependency_cache": "/tmp/engram-platform-preflight-20260924/node_modules",
+  "historical_lockfile_exact_install": false,
+  "dependency_note": "Both arms use a private clone of the same installed dependencies. Runtime lockfile differs from historical source lockfile; no package installation or live-service access was used.",
+  "sha256": {
+    "grade.py": "ddb5ac0a303f26909164ccd91ad391723e2fafba961b050e95c5bc5ca6f28eab",
+    "onboarding.private.test.ts": "75b89b943b9ca63bbbaa2d304b2aa8aa24cb88fae84c8c1e473dc8367f96080b"
+  },
+  "controls": [
+    {
+      "name": "base",
+      "expected_status": "fail",
+      "observed_status": "fail",
+      "grader_exit_code": 1,
+      "passed_checks": 14,
+      "total_checks": 26,
+      "duration_seconds": 6.176,
+      "failed_checks": [
+        "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+        "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+        "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+        "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+        "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+        "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+        "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+        "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+        "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+        "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+        "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+        "private onboarding behavior hung fetch aborts by five seconds and gate/welcome settle safely"
+      ],
+      "report": "/tmp/engram-platform-preflight-20260924/base-grade.json",
+      "log": "/private/tmp/engram-platform-preflight-20260924/base-grade.log"
+    },
+    {
+      "name": "reference",
+      "expected_status": "pass",
+      "observed_status": "pass",
+      "grader_exit_code": 0,
+      "passed_checks": 26,
+      "total_checks": 26,
+      "duration_seconds": 5.667,
+      "failed_checks": [],
+      "report": "/tmp/engram-platform-preflight-20260924/reference-grade.json",
+      "log": "/private/tmp/engram-platform-preflight-20260924/reference-grade.log"
+    },
+    {
+      "name": "welcome-loop",
+      "expected_status": "fail",
+      "observed_status": "fail",
+      "grader_exit_code": 1,
+      "passed_checks": 21,
+      "total_checks": 26,
+      "duration_seconds": 5.663,
+      "failed_checks": [
+        "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+        "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+        "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+        "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+        "private onboarding behavior hung fetch aborts by five seconds and gate/welcome settle safely"
+      ],
+      "report": "/tmp/engram-platform-preflight-20260924/welcome-loop-grade.json",
+      "log": "/private/tmp/engram-platform-preflight-20260924/welcome-loop-grade.log"
+    },
+    {
+      "name": "no-deadline",
+      "expected_status": "fail",
+      "observed_status": "fail",
+      "grader_exit_code": 1,
+      "passed_checks": 25,
+      "total_checks": 26,
+      "duration_seconds": 6.193,
+      "failed_checks": [
+        "private onboarding behavior hung fetch aborts by five seconds and gate/welcome settle safely"
+      ],
+      "report": "/tmp/engram-platform-preflight-20260924/no-deadline-grade.json",
+      "log": "/private/tmp/engram-platform-preflight-20260924/no-deadline-grade.log"
+    },
+    {
+      "name": "invalid-source",
+      "expected_status": "fail",
+      "observed_status": "fail",
+      "grader_exit_code": 1,
+      "passed_checks": 0,
+      "total_checks": 1,
+      "duration_seconds": 0.613,
+      "failed_checks": [
+        "candidate source loads in the prepared Node test environment"
+      ],
+      "report": "/tmp/engram-platform-preflight-20260924/invalid-source-grade.json",
+      "log": "/private/tmp/engram-platform-preflight-20260924/invalid-source-grade.log"
+    },
+    {
+      "name": "missing-dependencies",
+      "expected_status": "infrastructure_error",
+      "observed_status": "infrastructure_error",
+      "grader_exit_code": 2,
+      "passed_checks": 0,
+      "total_checks": 0,
+      "duration_seconds": 0.0,
+      "failed_checks": [],
+      "report": "/tmp/engram-platform-preflight-20260924/missing-dependencies-grade.json",
+      "log": "/private/tmp/engram-platform-preflight-20260924/missing-dependencies-grade.log"
+    }
+  ],
+  "runtime": {
+    "vitest": "4.1.5",
+    "msw": "2.13.5",
+    "node": "v26.5.1"
+  },
+  "lock_hashes": {
+    "grader": "ddb5ac0a303f26909164ccd91ad391723e2fafba961b050e95c5bc5ca6f28eab",
+    "private_tests": "75b89b943b9ca63bbbaa2d304b2aa8aa24cb88fae84c8c1e473dc8367f96080b",
+    "repository_lockfile": "0dba8da86df7b193e5ad123d169b30047a2b9d01b1d88b0c6058454b9b45e512",
+    "prepared_runtime_lockfile": "4d3b3ce6a1af0d369c6e63947ae6a899f77bfc66e3f559993662af14f453141d"
+  }
+}

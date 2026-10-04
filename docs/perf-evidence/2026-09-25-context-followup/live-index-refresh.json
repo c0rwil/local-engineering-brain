@@ -1,0 +1,82 @@
+[
+  {
+    "name": "engram",
+    "project_id": "prj_2892401e-338b-4e66-ab91-35cc6b5d5ca1",
+    "seconds": 3.62,
+    "index": {
+      "scan_id": "scn_a213c092-f8bf-44b1-90af-8ffdda8a6215",
+      "provider": "tree_sitter",
+      "incremental": false,
+      "discovered_files": 189,
+      "parsed_files": 189,
+      "unchanged_files": 0,
+      "removed_files": 0,
+      "nodes_written": 16548,
+      "edges_written": 24201
+    }
+  },
+  {
+    "name": "agi-backend-rust",
+    "project_id": "prj_16b30794-4c44-43b8-aced-1f0e61898c41",
+    "seconds": 3.295,
+    "index": {
+      "scan_id": "scn_7a813865-dfe0-4d65-a49f-282729ab4faf",
+      "provider": "tree_sitter",
+      "incremental": false,
+      "discovered_files": 127,
+      "parsed_files": 127,
+      "unchanged_files": 0,
+      "removed_files": 0,
+      "nodes_written": 22434,
+      "edges_written": 38449
+    }
+  },
+  {
+    "name": "agents",
+    "project_id": "prj_d7473cc6-65a8-440b-abd0-b9867df5aa51",
+    "seconds": 3.855,
+    "index": {
+      "scan_id": "scn_5453b5d1-df72-4680-a9e3-9bc86c64cdf8",
+      "provider": "tree_sitter",
+      "incremental": false,
+      "discovered_files": 1037,
+      "parsed_files": 1037,
+      "unchanged_files": 0,
+      "removed_files": 0,
+      "nodes_written": 16235,
+      "edges_written": 15384
+    }
+  },
+  {
+    "name": "mobile",
+    "project_id": "prj_e32bc34c-5b40-47c2-a164-8d1033b142d5",
+    "seconds": 9.493,
+    "index": {
+      "scan_id": "scn_c169374d-833d-407c-9280-201b9b963263",
+      "provider": "tree_sitter",
+      "incremental": false,
+      "discovered_files": 1559,
+      "parsed_files": 1559,
+      "unchanged_files": 0,
+      "removed_files": 0,
+      "nodes_written": 64153,
+      "edges_written": 85820
+    }
+  },
+  {
+    "name": "platform",
+    "project_id": "prj_faa2c31e-5abc-4615-bf0f-06df01937b26",
+    "seconds": 2.045,
+    "index": {
+      "scan_id": "scn_bc4f6694-3e6b-4911-b0c7-fc3af7373811",
+      "provider": "tree_sitter",
+      "incremental": false,
+      "discovered_files": 672,
+      "parsed_files": 672,
+      "unchanged_files": 0,
+      "removed_files": 0,
+      "nodes_written": 9354,
+      "edges_written": 9305
+    }
+  }
+]

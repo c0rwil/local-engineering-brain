@@ -255,7 +255,14 @@ fn fts_query(task: &str) -> Option<String> {
 /// Light deterministic stemmer: trims common English inflections so
 /// "retries"/"retrying" meet "retry" without a full stemming dependency.
 fn light_stem(term: &str) -> String {
-    for suffix in ["ing", "ies", "ied", "es", "ed", "s"] {
+    for suffix in ["ies", "ied"] {
+        if let Some(stripped) = term.strip_suffix(suffix)
+            && stripped.len() >= 3
+        {
+            return format!("{stripped}y");
+        }
+    }
+    for suffix in ["ing", "es", "ed", "s"] {
         if let Some(stripped) = term.strip_suffix(suffix) {
             if stripped.len() >= 3 {
                 return stripped.to_owned();
@@ -367,6 +374,14 @@ fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn inflected_retry_claims_keep_their_relevance_signal() {
+        let task_terms = super::coverage_terms("retrying");
+        assert_eq!(super::light_stem("retries"), "retry");
+        assert_eq!(super::light_stem("retried"), "retry");
+        assert!(super::claim_coverage("retries", &[], &task_terms) > 0.0);
+    }
+
     use tempfile::TempDir;
 
     use super::*;

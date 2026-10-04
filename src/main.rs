@@ -33,6 +33,9 @@ use engram::storage::Database;
     long_about = "Local-first engineering memory, world-model, and runtime tooling"
 )]
 struct Cli {
+    /// Isolated engineering workspace. Defaults to `ENGRAM_WORKSPACE` or default.
+    #[arg(long, global = true, value_name = "NAME")]
+    workspace: Option<String>,
     /// Override the canonical `SQLite` database path.
     #[arg(long, global = true, value_name = "PATH")]
     db: Option<PathBuf>,
@@ -46,7 +49,41 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+enum WorkspaceAction {
+    List,
+    Show,
+}
+
+#[derive(Debug, Subcommand)]
+enum JudgeAction {
+    Status,
+    Run,
+}
+
+#[derive(Debug, Subcommand)]
 enum Commands {
+    /// Inspect durable usage, context delivery, and learning coverage.
+    Effectiveness {
+        #[arg(long, default_value_t = 7, value_parser = clap::value_parser!(u32).range(1..=3650))]
+        days: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record provider-reported usage from a JSON file (additive, idempotent samples).
+    Usage {
+        #[arg(value_name = "JSON_FILE")]
+        file: PathBuf,
+    },
+    /// Inspect workspace profiles. Select one with --workspace NAME.
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceAction,
+    },
+    /// Inspect or run automatic evidence review using the configured model.
+    Judge {
+        #[command(subcommand)]
+        action: JudgeAction,
+    },
     /// Check configuration, canonical storage, and local-only safety defaults.
     Doctor {
         #[arg(long)]
@@ -228,8 +265,8 @@ enum Commands {
     #[command(hide = true)]
     Hook {
         /// `session-start`, `prompt` (`UserPromptSubmit`), `pretool`
-        /// (`PreToolUse` for Read/Edit/Write), `bash` (`PostToolUse` for
-        /// Bash), or `session-end`.
+        /// (`PreToolUse` for Read/Edit/Write), `bash` (`PostToolUse` for all
+        /// tools; verification stays shell-only), `stop`, or `session-end`.
         event: String,
         /// Emit context as `hookSpecificOutput.additionalContext` JSON (the
         /// Codex CLI contract) instead of plain stdout.
@@ -806,11 +843,37 @@ fn main() -> ExitCode {
 #[allow(clippy::too_many_lines)]
 fn run(cli: Cli) -> Result<bool> {
     let overrides = ConfigOverrides {
+        workspace: cli.workspace,
         db_path: cli.db,
         local_only: None,
     };
     let socket_override = cli.socket;
     match cli.command {
+        Commands::Effectiveness { days, json } => {
+            run_effectiveness(&overrides, socket_override.as_deref(), days, json)
+        }
+        Commands::Usage { file } => {
+            let request: engram::effectiveness::UsageRecordRequest = serde_json::from_reader(
+                std::fs::File::open(&file).map_err(|e| engram::Error::Config(e.to_string()))?,
+            )?;
+            let config = load_daemon_config(&overrides, socket_override.as_deref(), None)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&block_on(client(&config).record_usage(&request))?)?
+            );
+            Ok(true)
+        }
+        Commands::Workspace { action } => run_workspace(&overrides, &action),
+        Commands::Judge { action } => {
+            let config = load_daemon_config(&overrides, socket_override.as_deref(), None)?;
+            let client = client(&config);
+            let value = match action {
+                JudgeAction::Status => block_on(client.judge_status())?,
+                JudgeAction::Run => block_on(client.judge_run())?,
+            };
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            Ok(true)
+        }
         Commands::Product { action } => {
             run_product(&overrides, socket_override.as_deref(), &action)
         }
@@ -1043,7 +1106,7 @@ fn run(cli: Cli) -> Result<bool> {
             json,
         ),
         Commands::InternalCrashTransaction { ready } => {
-            let config = Config::load_for(None, &overrides)?;
+            let config = Config::load_for_current_dir(&overrides)?;
             let database = Database::open(&config.storage.db_path)?;
             EventStore::new(database).hold_uncommitted_test_append(&ready)?;
             Ok(false)
@@ -1419,7 +1482,11 @@ fn load_daemon_config(
     socket: Option<&Path>,
     project_root: Option<&Path>,
 ) -> Result<Config> {
-    let mut config = Config::load_for(project_root, overrides)?;
+    let mut config = if let Some(root) = project_root {
+        Config::load_for(Some(root), overrides)?
+    } else {
+        Config::load_for_current_dir(overrides)?
+    };
     apply_socket_override(&mut config, socket)?;
     require_daemon(&config)?;
     Ok(config)
@@ -1851,7 +1918,7 @@ fn print_memory(memory: &engram::memory::MemoryRecord, json: bool) -> Result<()>
 }
 
 fn run_doctor(overrides: &ConfigOverrides, socket: Option<&Path>, json: bool) -> Result<bool> {
-    let mut config = Config::load_for(None, overrides)?;
+    let mut config = Config::load_for_current_dir(overrides)?;
     apply_socket_override(&mut config, socket)?;
     let report = if config.daemon.socket_path.exists() {
         require_daemon(&config)?;
@@ -2246,20 +2313,21 @@ fn run_hook_event(
     event: &str,
     codex: bool,
 ) -> Result<bool> {
-    use std::io::Read as _;
+    use std::io::{Read as _, Write as _};
     // One emitter for every context-bearing event: plain stdout for Claude
     // Code (its native contract for SessionStart/UserPromptSubmit), the
     // additionalContext envelope for Codex — and for PreToolUse everywhere,
     // where plain stdout is not read back into context.
     let emit = |event_name: &str, context: &str| {
-        if codex || event_name == "PreToolUse" {
-            println!(
-                "{}",
-                engram::agenthooks::additional_context_output(event_name, context)
-            );
+        let output = if codex || event_name == "PreToolUse" {
+            engram::agenthooks::additional_context_output(event_name, context)
         } else {
-            println!("{context}");
-        }
+            context.to_owned()
+        };
+        let mut stdout = std::io::stdout().lock();
+        writeln!(stdout, "{output}")
+            .and_then(|()| stdout.flush())
+            .is_ok()
     };
     let mut stdin = String::new();
     if std::io::stdin().read_to_string(&mut stdin).is_err() {
@@ -2278,7 +2346,11 @@ fn run_hook_event(
         .and_then(serde_json::Value::as_str)
         .map_or_else(|| PathBuf::from("."), PathBuf::from);
     let tool_input = payload.get("tool_input").cloned().unwrap_or_default();
-    let target_dir = engram::agenthooks::tool_directory(&cwd, &tool_input);
+    let tool_paths = engram::agenthooks::resolve_tool_paths(&cwd, &tool_input);
+    let target_dir = tool_paths.first().map_or_else(
+        || engram::agenthooks::tool_directory(&cwd, &tool_input),
+        |path| engram::agenthooks::tool_path_directory(path),
+    );
     let config_dir = if matches!(event, "pretool" | "bash") {
         &target_dir
     } else {
@@ -2289,7 +2361,7 @@ fn run_hook_event(
     else {
         return Ok(true);
     };
-    if apply_socket_override(&mut config, socket).is_err() || require_daemon(&config).is_err() {
+    if apply_socket_override(&mut config, socket).is_err() {
         return Ok(true);
     }
     let state_dir = config
@@ -2298,6 +2370,29 @@ fn run_hook_event(
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
+    if event == "prompt" {
+        let prompt = payload
+            .get("user_prompt")
+            .or_else(|| payload.get("prompt"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if !prompt.is_empty() {
+            let Ok(redactor) =
+                engram::security::Redactor::new(&config.security.custom_redaction_patterns)
+            else {
+                return Ok(true);
+            };
+            if engram::agenthooks::save_pending_prompt(&state_dir, &session_id, prompt, &redactor)
+                .is_err()
+            {
+                return Ok(true);
+            }
+        }
+    }
+    if require_daemon(&config).is_err() {
+        return Ok(true);
+    }
     let client = client(&config);
     match event {
         "prompt" => {
@@ -2316,65 +2411,70 @@ fn run_hook_event(
                         .join("\n")
                 )
             };
-            if !engram::agenthooks::claim_once(&state_dir, &session_id, "prompt") {
-                if !relay_block.is_empty() {
-                    emit("UserPromptSubmit", &relay_block);
+            // A prompt refreshes intent without opening another episode. Only a
+            // successful emission replaces the last delivered context receipt.
+            let delivered = (|| {
+                let prompt = engram::agenthooks::pending_prompt(&state_dir, &session_id)?;
+                let lookup = block_on(client.lookup_project(&cwd)).ok()?;
+                lookup.project?; // Never auto-enroll an untracked repository.
+                let status = block_on(client.resolve_project(&cwd)).ok()?;
+                let project_id = status.resolved.project.id.clone();
+                let scope = engram::agenthooks::scoped_session_id(&session_id, &project_id);
+                let current_paths = engram::agenthooks::recent_paths(&state_dir, &scope);
+                let claim = engram::agenthooks::claim_context_delivery(
+                    &state_dir,
+                    &scope,
+                    &prompt,
+                    &current_paths,
+                    config.context.max_injected_tokens,
+                    status.resolved.git.as_ref(),
+                )?;
+                let request_id = format!("hook_{}", uuid::Uuid::new_v4());
+                let context = block_on(client.compile_context(&ContextCompileRequest {
+                    request_id: request_id.clone(),
+                    project_id,
+                    task_text: prompt,
+                    current_paths,
+                    token_budget: config.context.max_injected_tokens,
+                    mode: ContextMode::Brain,
+                    repository_root: Some(status.resolved.root),
+                    head: status.resolved.git.and_then(|git| git.head),
+                    task_id: None,
+                    framing: None,
+                }))
+                .ok()?;
+                let text = format!("{}{}", context.stable_prefix, context.dynamic_context);
+                if text.trim().is_empty() {
+                    let _ = claim.invalidate_empty();
+                    return None;
                 }
-                return Ok(true); // primed (pinned semantics) or a concurrent hook won
-            }
-            let prompt = payload
-                .get("user_prompt")
-                .or_else(|| payload.get("prompt"))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .trim()
-                .to_owned();
-            if prompt.is_empty() {
-                return Ok(true);
-            }
-            let redactor =
-                engram::security::Redactor::new(&config.security.custom_redaction_patterns)?;
-            engram::agenthooks::save_pending_prompt(&state_dir, &session_id, &prompt, &redactor)?;
-            // Universal-install safety: only engage for repositories already
-            // registered in the brain. Resolving would REGISTER (and write
-            // .engram/project.toml into) any repo the user happens to open;
-            // a global hook must never do that silently. `engram index <repo>`
-            // remains the explicit opt-in per repository.
-            let Ok(lookup) = block_on(client.lookup_project(&cwd)) else {
-                return Ok(true);
-            };
-            if lookup.project.is_none() {
-                return Ok(true);
-            }
-            let Ok(status) = block_on(client.resolve_project(&cwd)) else {
-                return Ok(true);
-            };
-            let project_id = status.resolved.project.id.clone();
-            let Ok(context) = block_on(client.compile_context(&ContextCompileRequest {
-                request_id: format!("hook_{session_id}"),
-                project_id: project_id.clone(),
-                task_text: prompt,
-                current_paths: Vec::new(),
-                token_budget: config.context.max_injected_tokens,
-                mode: ContextMode::Brain,
-                repository_root: Some(status.resolved.root),
-                head: status.resolved.git.and_then(|git| git.head),
-                task_id: None,
-                framing: None,
-            })) else {
-                return Ok(true);
-            };
-            let scope = engram::agenthooks::scoped_session_id(&session_id, &project_id);
-            let _ = engram::agenthooks::claim_once(&state_dir, &scope, "context");
+                let digest = context.delivery_signature();
+                if !claim.should_emit_digest(&digest).unwrap_or(false) {
+                    return None;
+                }
+                let task_id = engram::agenthooks::load_session(&state_dir, &scope)
+                    .map(|session| session.task_id);
+                Some((claim, request_id, context.id, text, task_id, digest))
+            })();
             let injected = format!(
-                "{relay_block}{}{}",
-                context.stable_prefix, context.dynamic_context
+                "{relay_block}{}",
+                delivered
+                    .as_ref()
+                    .map_or("", |delivery| delivery.3.as_str())
             );
-            if !injected.trim().is_empty() {
-                emit("UserPromptSubmit", &injected);
+            if !injected.trim().is_empty() && emit("UserPromptSubmit", &injected) {
+                if let Some((claim, request_id, run_id, _, task_id, digest)) = delivered {
+                    let _ = claim.delivered_digest(&request_id, &run_id, &digest);
+                    if let Some(task_id) = task_id {
+                        let _ = block_on(client.context_delivered(
+                            &engram::daemon::ContextDeliveryRequest { run_id, task_id },
+                        ));
+                    }
+                }
             }
         }
         "session-start" => {
+            initialize_hook_usage_baseline(&state_dir, &session_id, &payload);
             if !engram::agenthooks::claim_once(&state_dir, &session_id, "brief") {
                 return Ok(true); // a concurrent hook (user + project level) already briefed
             }
@@ -2423,138 +2523,125 @@ fn run_hook_event(
             }
         }
         "pretool" => {
-            let tool_input = payload.get("tool_input").cloned().unwrap_or_default();
-            let files = engram::agenthooks::extract_file_paths(&tool_input);
-            let files = if files.is_empty() {
-                vec![None]
-            } else {
-                files.into_iter().map(Some).collect()
-            };
             let mut pretool_context = String::new();
+            let mut deliveries = Vec::new();
             let byte_limit = if codex {
                 usize::try_from(config.context.max_injected_tokens.saturating_mul(4))
                     .unwrap_or(usize::MAX)
             } else {
                 usize::MAX
             };
-            for file_path in files {
-                let target_dir = file_path.as_ref().map_or_else(
-                    || target_dir.clone(),
-                    |path| {
-                        engram::agenthooks::tool_directory(
-                            &cwd,
-                            &serde_json::json!({"file_path":path}),
-                        )
-                    },
-                );
-                let Ok(lookup) = block_on(client.lookup_project(&target_dir)) else {
-                    continue;
-                };
-                let Some(project) = lookup.project else {
-                    continue;
-                };
+            for (resolved, observed_paths) in hook_tool_projects(&client, &target_dir, &tool_paths)
+            {
+                let project_id = resolved.resolved.project.id.clone();
                 let Some((scope, session)) =
-                    hook_episode(&client, &state_dir, &session_id, &project.id)
+                    hook_episode(&client, &state_dir, &session_id, &project_id)
                 else {
                     continue;
                 };
-                // Capture every edited repository even when earlier context filled
-                // the output budget. Claims only survive delivery of a whole block.
+                let _ = engram::agenthooks::remember_paths(&state_dir, &scope, &observed_paths);
+                let current_paths = engram::agenthooks::recent_paths(&state_dir, &scope);
+                // Capture each touched repository even if an earlier block used
+                // the output budget. Undelivered context remains retryable.
                 let remaining_tokens = if codex {
                     u32::try_from(byte_limit.saturating_sub(pretool_context.len()) / 4)
                         .unwrap_or(u32::MAX)
                 } else {
                     config.context.max_injected_tokens
                 };
-                if remaining_tokens > 0
-                    && engram::agenthooks::claim_once(&state_dir, &scope, "context")
+                let prompt =
+                    engram::agenthooks::pending_prompt(&state_dir, &session_id).unwrap_or_default();
+                if let Some(claim) = (remaining_tokens > 0)
+                    .then(|| {
+                        engram::agenthooks::claim_context_delivery(
+                            &state_dir,
+                            &scope,
+                            &prompt,
+                            &current_paths,
+                            remaining_tokens,
+                            resolved.resolved.git.as_ref(),
+                        )
+                    })
+                    .flatten()
                 {
-                    let prompt = engram::agenthooks::pending_prompt(&state_dir, &session_id)
-                        .unwrap_or_default();
-                    let Ok(resolved) = block_on(client.resolve_project(&target_dir)) else {
-                        engram::agenthooks::release_claim(&state_dir, &scope, "context");
-                        continue;
-                    };
-                    let mut delivered = false;
+                    let request_id = format!("hook_{}", uuid::Uuid::new_v4());
                     if let Ok(context) = block_on(client.compile_context(&ContextCompileRequest {
-                        request_id: format!("hook_{scope}"),
-                        project_id: project.id.clone(),
+                        request_id: request_id.clone(),
+                        project_id: project_id.clone(),
                         task_text: prompt,
-                        current_paths: Vec::new(),
+                        current_paths,
                         token_budget: remaining_tokens,
                         mode: ContextMode::Brain,
                         repository_root: Some(resolved.resolved.root),
                         head: resolved.resolved.git.and_then(|git| git.head),
-                        task_id: Some(session.task_id),
+                        task_id: None,
                         framing: None,
                     })) {
                         let text = format!("{}{}", context.stable_prefix, context.dynamic_context);
-                        if !text.is_empty()
-                            && text.len() <= byte_limit.saturating_sub(pretool_context.len())
+                        let digest = context.delivery_signature();
+                        if text.trim().is_empty() {
+                            let _ = claim.invalidate_empty();
+                        } else if text.len() <= byte_limit.saturating_sub(pretool_context.len())
+                            && claim.should_emit_digest(&digest).unwrap_or(false)
                         {
                             pretool_context.push_str(&text);
-                            delivered = true;
+                            deliveries.push((
+                                claim,
+                                request_id,
+                                context.id,
+                                digest,
+                                session.task_id,
+                            ));
                         }
                     }
-                    if !delivered {
-                        engram::agenthooks::release_claim(&state_dir, &scope, "context");
-                    }
                 }
-                let Some(file_path) = file_path else {
-                    continue;
-                };
-                // Repo-relative path: the graph stores paths relative to the
-                // root. Canonicalize BOTH sides before stripping — the root
-                // comes back canonicalized, and a tool path through a symlink
-                // (macOS /tmp, notably) otherwise never matches it.
-                let absolute = if Path::new(&file_path).is_absolute() {
-                    PathBuf::from(&file_path)
-                } else {
-                    cwd.join(&file_path)
-                };
-                let absolute = absolute.canonicalize().unwrap_or(absolute);
-                let Ok(root) = discover_project_root(&target_dir) else {
-                    continue;
-                };
-                let root = root.canonicalize().unwrap_or(root);
-                let Ok(relative) = absolute.strip_prefix(&root) else {
-                    continue; // outside the repo: nothing to know
-                };
-                let relative = relative.to_string_lossy().into_owned();
-                let Ok(shape) = block_on(client.file_shape(&engram::daemon::FileShapeRequest {
-                    project_id: project.id,
-                    file_path: relative.clone(),
-                })) else {
-                    continue;
-                };
-                let symbols: Vec<(String, String)> = shape
-                    .symbols
-                    .iter()
-                    .map(|symbol| (symbol.kind.clone(), symbol.label.clone()))
-                    .collect();
-                let callers: Vec<(String, String)> = shape
-                    .callers
-                    .iter()
-                    .map(|caller| (caller.label.clone(), caller.file_path.clone()))
-                    .collect();
-                if let Some(text) = engram::agenthooks::render_file_shape(
-                    &relative,
-                    &symbols,
-                    &callers,
-                    &shape.imports,
-                ) {
-                    if text.len() <= byte_limit.saturating_sub(pretool_context.len())
-                        && engram::agenthooks::mark_file_briefed(&state_dir, &scope, &relative)
-                    {
-                        pretool_context.push_str(&text);
+                for relative in observed_paths {
+                    let Ok(shape) =
+                        block_on(client.file_shape(&engram::daemon::FileShapeRequest {
+                            project_id: project_id.clone(),
+                            file_path: relative.clone(),
+                        }))
+                    else {
+                        continue;
+                    };
+                    let symbols: Vec<(String, String)> = shape
+                        .symbols
+                        .iter()
+                        .map(|symbol| (symbol.kind.clone(), symbol.label.clone()))
+                        .collect();
+                    let callers: Vec<(String, String)> = shape
+                        .callers
+                        .iter()
+                        .map(|caller| (caller.label.clone(), caller.file_path.clone()))
+                        .collect();
+                    if let Some(text) = engram::agenthooks::render_file_shape(
+                        &relative,
+                        &symbols,
+                        &callers,
+                        &shape.imports,
+                    ) {
+                        if text.len() <= byte_limit.saturating_sub(pretool_context.len())
+                            && engram::agenthooks::mark_file_briefed(&state_dir, &scope, &relative)
+                        {
+                            pretool_context.push_str(&text);
+                        }
                     }
                 }
             }
-            if !pretool_context.trim().is_empty() {
-                emit("PreToolUse", &pretool_context);
+            if !pretool_context.trim().is_empty() && emit("PreToolUse", &pretool_context) {
+                for (claim, request_id, run_id, digest, task_id) in deliveries {
+                    let _ = claim.delivered_digest(&request_id, &run_id, &digest);
+                    let _ = block_on(client.context_delivered(
+                        &engram::daemon::ContextDeliveryRequest { run_id, task_id },
+                    ));
+                }
             }
         }
+        "stop" => {
+            capture_hook_transcript_usage(&client, &state_dir, &session_id, &payload, codex);
+        }
         "session-end" => {
+            capture_hook_transcript_usage(&client, &state_dir, &session_id, &payload, codex);
             for (scope, session) in engram::agenthooks::project_sessions(&state_dir, &session_id) {
                 let outcome =
                     match engram::agenthooks::auto_close_outcome(session.last_verification_exit) {
@@ -2576,6 +2663,16 @@ fn run_hook_event(
                 let _ = std::fs::remove_file(engram::agenthooks::session_files_path(
                     &state_dir, &scope,
                 ));
+                let _ = std::fs::remove_file(
+                    engram::agenthooks::session_state_path(&state_dir, &scope)
+                        .with_extension("context-run"),
+                );
+                for extension in ["context-delivery", "recent-paths"] {
+                    let _ = std::fs::remove_file(
+                        engram::agenthooks::session_state_path(&state_dir, &scope)
+                            .with_extension(extension),
+                    );
+                }
                 engram::agenthooks::clear_claims(&state_dir, &scope);
             }
             let _ = std::fs::remove_file(
@@ -2585,28 +2682,49 @@ fn run_hook_event(
             engram::agenthooks::clear_claims(&state_dir, &session_id);
         }
         "bash" => {
-            let command = payload
-                .get("tool_input")
-                .and_then(|input| input.get("command"))
+            let mut primary = None;
+            for (resolved, paths) in hook_tool_projects(&client, &target_dir, &tool_paths) {
+                let Some((scope, session)) = hook_episode(
+                    &client,
+                    &state_dir,
+                    &session_id,
+                    &resolved.resolved.project.id,
+                ) else {
+                    continue;
+                };
+                // PostToolUse can be the only observed event for an edit.
+                let _ = engram::agenthooks::remember_paths(&state_dir, &scope, &paths);
+                if primary.is_none() {
+                    primary = Some((scope, session));
+                }
+            }
+            let Some((scope, session)) = primary else {
+                return Ok(true);
+            };
+            // A multi-repository patch is still one tool call. Attribute its
+            // receipt once to the first tracked target, never once per file.
+            record_hook_tool_usage(&client, &state_dir, &scope, &session, &payload, codex);
+            // All tools contribute actual call counts. Only shell verification
+            // results can become deterministic evidence.
+            if payload
+                .get("tool_name")
                 .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
+                .is_some_and(|name| {
+                    !matches!(
+                        name,
+                        "Bash" | "shell" | "exec_command" | "functions.exec_command"
+                    )
+                })
+            {
+                return Ok(true);
+            }
+            let command = engram::agenthooks::tool_command(&tool_input);
             let verification = command
                 .trim()
                 .strip_prefix("cd ")
                 .and_then(|s| s.split_once("&&"))
                 .map_or(command, |(_, rest)| rest.trim());
             let Some(kind) = engram::agenthooks::detect_verification(verification) else {
-                return Ok(true);
-            };
-            let Ok(lookup) = block_on(client.lookup_project(&target_dir)) else {
-                return Ok(true);
-            };
-            let Some(project) = lookup.project else {
-                return Ok(true);
-            };
-            let Some((scope, session)) =
-                hook_episode(&client, &state_dir, &session_id, &project.id)
-            else {
                 return Ok(true);
             };
             let empty = serde_json::Value::Null;
@@ -2652,6 +2770,201 @@ fn run_hook_event(
     Ok(true)
 }
 
+/// Route already resolved tool paths once and retain each repository's actual paths.
+fn hook_tool_projects(
+    client: &engram::daemon::DaemonClient,
+    target_dir: &Path,
+    tool_paths: &[PathBuf],
+) -> Vec<(ProjectStatus, Vec<String>)> {
+    let mut projects: Vec<(ProjectStatus, Vec<String>)> = Vec::new();
+    let targets = if tool_paths.is_empty() {
+        vec![(target_dir.to_path_buf(), None)]
+    } else {
+        tool_paths
+            .iter()
+            .map(|path| (engram::agenthooks::tool_path_directory(path), Some(path)))
+            .collect()
+    };
+    for (directory, path) in targets {
+        let Ok(lookup) = block_on(client.lookup_project(&directory)) else {
+            continue;
+        };
+        let Some(project) = lookup.project else {
+            continue;
+        };
+        let index = if let Some(index) = projects
+            .iter()
+            .position(|(resolved, _)| resolved.resolved.project.id == project.id)
+        {
+            index
+        } else {
+            let Ok(resolved) = block_on(client.resolve_project(&directory)) else {
+                continue;
+            };
+            projects.push((resolved, Vec::new()));
+            projects.len() - 1
+        };
+        let (resolved, paths) = &mut projects[index];
+        if let Some(relative) =
+            path.and_then(|path| path.strip_prefix(&resolved.resolved.root).ok())
+        {
+            let relative = relative.to_string_lossy().into_owned();
+            if !paths.contains(&relative) {
+                paths.push(relative);
+            }
+        }
+    }
+    projects
+}
+
+/// Tool call identity must come from the agent. Commands and timestamps are
+/// not unique call ids and cannot support truthful, idempotent call counts.
+fn record_hook_tool_usage(
+    client: &engram::daemon::DaemonClient,
+    state_dir: &Path,
+    scope: &str,
+    session: &engram::agenthooks::HookSession,
+    payload: &serde_json::Value,
+    codex: bool,
+) {
+    let Some(tool_id) = payload
+        .get("tool_use_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())
+    else {
+        return;
+    };
+    let Some(session_id) = session
+        .session_id
+        .as_ref()
+        .filter(|id| id.as_str() != "unknown-session")
+    else {
+        return;
+    };
+    let context_run_id = engram::agenthooks::context_run_id(state_dir, scope);
+    let _ = block_on(
+        client.record_usage(&engram::effectiveness::UsageRecordRequest {
+            sample_id: engram::agenthooks::tool_usage_sample_id(session_id, tool_id),
+            project_id: session.project_id.clone(),
+            task_id: Some(session.task_id.clone()),
+            mode: context_run_id
+                .as_ref()
+                .map(|_| engram::effectiveness::UsageMode::Brain),
+            context_run_id,
+            session_id: Some(session_id.clone()),
+            source: if codex { "codex" } else { "claude_code" }.to_owned(),
+            provider: None,
+            model: None,
+            metrics: engram::effectiveness::UsageMetrics {
+                tool_calls: Some(1),
+                ..engram::effectiveness::UsageMetrics::default()
+            },
+            observed_at_ms: None,
+        }),
+    );
+}
+
+/// A resumed session starts with existing transcript samples already consumed.
+/// Missing transcript paths remain uninitialized until the first usable Stop;
+/// that Stop establishes a baseline and does not guess historical attribution.
+fn initialize_hook_usage_baseline(state_dir: &Path, session_id: &str, payload: &serde_json::Value) {
+    if session_id == "unknown-session" {
+        return;
+    }
+    let Some(path) = payload
+        .get("transcript_path")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return;
+    };
+    let samples = match engram::usage_capture::read_transcript(Path::new(path)) {
+        Ok(samples) => samples,
+        Err(engram::Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+            Vec::new()
+        }
+        Err(_) => return,
+    };
+    let scope = engram::agenthooks::usage_session_scope(session_id);
+    let Ok(receipts) = engram::agenthooks::usage_receipts(state_dir, &scope) else {
+        return;
+    };
+    let mut receipts = receipts.unwrap_or_default();
+    receipts.extend(samples.into_iter().map(|sample| sample.sample_id));
+    let _ = engram::agenthooks::save_usage_receipts(state_dir, &scope, &receipts);
+}
+
+/// Attribute only usage observed after this workspace's session baseline.
+/// Ambiguous project intervals are consumed without inventing an allocation.
+fn capture_hook_transcript_usage(
+    client: &engram::daemon::DaemonClient,
+    state_dir: &Path,
+    session_id: &str,
+    payload: &serde_json::Value,
+    codex: bool,
+) {
+    if session_id == "unknown-session" {
+        return;
+    }
+    let Some(path) = payload
+        .get("transcript_path")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return;
+    };
+    let Ok(samples) = engram::usage_capture::read_transcript(Path::new(path)) else {
+        return;
+    };
+    let usage_scope = engram::agenthooks::usage_session_scope(session_id);
+    let Ok(previous) = engram::agenthooks::usage_receipts(state_dir, &usage_scope) else {
+        return;
+    };
+    let sessions = engram::agenthooks::project_sessions(state_dir, session_id);
+    let initialized = previous.is_some();
+    let mut receipts = previous.unwrap_or_default();
+    if !initialized || sessions.len() != 1 {
+        receipts.extend(samples.into_iter().map(|sample| sample.sample_id));
+        let _ = engram::agenthooks::save_usage_receipts(state_dir, &usage_scope, &receipts);
+        return;
+    }
+    let session = &sessions[0].1;
+    // Keep the hook bounded if the daemon becomes unavailable. Successful
+    // receipts persist so a later Stop/SessionEnd resumes outstanding samples.
+    let _ = block_on(async {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            for sample in samples {
+                if receipts.contains(&sample.sample_id) {
+                    continue;
+                }
+                let sample_id = sample.sample_id.clone();
+                if client
+                    .record_usage(&engram::effectiveness::UsageRecordRequest {
+                        sample_id: sample.sample_id,
+                        project_id: session.project_id.clone(),
+                        task_id: Some(session.task_id.clone()),
+                        // The baseline proves when we began observing; it does
+                        // not identify which injected context this model used.
+                        mode: None,
+                        context_run_id: None,
+                        session_id: Some(session_id.to_owned()),
+                        source: if codex { "codex" } else { "claude_code" }.to_owned(),
+                        provider: sample.provider,
+                        model: sample.model,
+                        metrics: sample.metrics,
+                        observed_at_ms: None,
+                    })
+                    .await
+                    .is_ok()
+                {
+                    receipts.insert(sample_id);
+                }
+            }
+        })
+        .await;
+        Ok(())
+    });
+    let _ = engram::agenthooks::save_usage_receipts(state_dir, &usage_scope, &receipts);
+}
+
 /// Lazily open one episode per session/project, only after a tool touches it.
 fn hook_episode(
     client: &engram::daemon::DaemonClient,
@@ -2667,12 +2980,15 @@ fn hook_episode(
     if !engram::agenthooks::claim_once(state_dir, &scope, "episode") {
         return None;
     }
-    let Ok(task) = block_on(client.start_task(&TaskStartRequest {
-        context_request_id: Some(format!("hook_{session_id}")),
-        project_id: project_id.clone(),
-        prompt,
-        session_id: Some(session_id.to_owned()),
-    })) else {
+    let Ok(task) = block_on(
+        client.start_task(&TaskStartRequest {
+            context_request_id: engram::agenthooks::context_request_id(state_dir, &scope)
+                .or_else(|| Some(format!("hook_{session_id}"))),
+            project_id: project_id.clone(),
+            prompt,
+            session_id: Some(session_id.to_owned()),
+        }),
+    ) else {
         engram::agenthooks::clear_claims(state_dir, &scope);
         return None;
     };
@@ -2855,7 +3171,7 @@ fn run_ask(
 
 #[allow(clippy::too_many_lines)]
 fn run_relay_action(overrides: &ConfigOverrides, action: &RelayAction) -> Result<bool> {
-    let config = Config::load_for(None, overrides)?;
+    let config = Config::load_for_current_dir(overrides)?;
     let state_dir = config
         .storage
         .db_path
@@ -3210,7 +3526,7 @@ fn run_onboard(
             root.display()
         )));
     }
-    let mut config = Config::load_for(None, overrides)?;
+    let mut config = Config::load_for_current_dir(overrides)?;
     apply_socket_override(&mut config, socket)?;
     require_daemon(&config)?;
     let patient = DaemonClient::new(
@@ -3286,7 +3602,7 @@ fn run_sync(
     push_only: bool,
     json: bool,
 ) -> Result<bool> {
-    let mut config = Config::load_for(None, overrides)?;
+    let mut config = Config::load_for_current_dir(overrides)?;
     apply_socket_override(&mut config, socket)?;
     let central_url = central.map_or_else(|| config.sync.central_url.clone(), str::to_owned);
     let bearer = token
@@ -3437,7 +3753,7 @@ fn run_daemon_action(
     socket: Option<&Path>,
     action: &DaemonAction,
 ) -> Result<bool> {
-    let mut config = Config::load_for(None, overrides)?;
+    let mut config = Config::load_for_current_dir(overrides)?;
     apply_socket_override(&mut config, socket)?;
     // `stop` must not require a build-matched daemon: after an upgrade the
     // whole point of stopping is that the socket serves an OLD build, and
@@ -3536,6 +3852,86 @@ fn run_metrics(overrides: &ConfigOverrides, socket: Option<&Path>, json: bool) -
             "  neighbor entries/bytes {}/{}",
             cache.neighbors.entries, cache.neighbors.weighted_bytes
         );
+    }
+    Ok(true)
+}
+
+fn run_effectiveness(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    days: u32,
+    json: bool,
+) -> Result<bool> {
+    let config = load_daemon_config(overrides, socket, None)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let now = i64::try_from(now).unwrap_or(i64::MAX);
+    let report = block_on(client(&config).effectiveness(
+        &engram::effectiveness::EffectivenessRequest {
+            project_ids: None,
+            since_ms: Some(now - i64::from(days) * 86_400_000),
+            until_ms: None,
+        },
+    ))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("Workspace: {} · last {days} days", config.workspace);
+        println!("Observed usage samples: {}", report.usage.samples);
+        println!(
+            "Input tokens: {} · output tokens: {} · tool calls: {} · reported cost: {}",
+            report
+                .usage
+                .totals
+                .input_tokens
+                .map_or_else(|| "unknown".into(), |n| n.to_string()),
+            report
+                .usage
+                .totals
+                .output_tokens
+                .map_or_else(|| "unknown".into(), |n| n.to_string()),
+            report
+                .usage
+                .totals
+                .tool_calls
+                .map_or_else(|| "unknown".into(), |n| n.to_string()),
+            report
+                .usage
+                .totals
+                .cost_usd
+                .map_or_else(|| "unknown".into(), |n| format!("${n:.4}"))
+        );
+        for project in &report.projects {
+            println!(
+                "{}: {} context runs, {} with lessons; {} active validated, {} pending reviews",
+                project.project_name,
+                project.contexts.runs,
+                project.contexts.runs_with_memories,
+                project.memories.active_validated,
+                project.memories.pending_reviews
+            );
+        }
+        println!(
+            "Coverage is partial. Use --json for per-field reporting coverage and controlled comparisons. Daily totals alone do not establish savings."
+        );
+    }
+    Ok(true)
+}
+
+fn run_workspace(overrides: &ConfigOverrides, action: &WorkspaceAction) -> Result<bool> {
+    let config = Config::load_for_current_dir(overrides)?;
+    let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let profiles = engram::workspaces::list(&home, &config)?;
+    match action {
+        WorkspaceAction::List => println!("{}", serde_json::to_string_pretty(&profiles)?),
+        WorkspaceAction::Show => println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &serde_json::json!({"workspace":config.workspace,"database":config.storage.db_path,"socket":config.daemon.socket_path,"web_enabled":config.web.enabled,"web_port":config.web.port})
+            )?
+        ),
     }
     Ok(true)
 }
@@ -3771,7 +4167,7 @@ fn run_product(
     action: &ProductAction,
 ) -> Result<bool> {
     use engram::product::{BundleRequest, ImpactRequest, Query};
-    let mut config = Config::load_for(None, overrides)?;
+    let mut config = Config::load_for_current_dir(overrides)?;
     apply_socket_override(&mut config, socket)?;
     require_daemon(&config)?;
     let client = client(&config);

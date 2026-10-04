@@ -2,10 +2,9 @@
 //! automatic evidence capture with NO proxy and NO agent cooperation.
 //!
 //! `engram hook prompt` runs on `UserPromptSubmit`: the first prompt of a
-//! session opens a task episode, compiles brain context for that exact text
-//! (declaring the task for truthful usage provenance), and prints it —
-//! Claude Code adds hook stdout to the model's context. Later prompts print
-//! nothing, mirroring the proxy's session-pinned semantics.
+//! session compiles brain context for that text. Later prompts refresh context
+//! as repository knowledge changes. Tool use lazily opens one episode per
+//! project; repeated semantically identical context stays silent.
 //!
 //! `engram hook bash` runs on `PostToolUse` for Bash: when the executed command
 //! is a recognizable verification (test/build/lint/typecheck), its exit code
@@ -48,6 +47,13 @@ pub fn evidence_fingerprint(command: &str, exit_code: i32) -> String {
     crate::experience::sha256(format!("{exit_code}:{}", command.trim()).as_bytes())
 }
 
+/// Stable receipt identity from the agent's actual session and tool-use ids.
+#[must_use]
+pub fn tool_usage_sample_id(session_id: &str, tool_use_id: &str) -> String {
+    let identity = serde_json::to_vec(&(session_id, tool_use_id)).unwrap_or_default();
+    format!("tool:{}", crate::experience::sha256(&identity))
+}
+
 /// A session can edit several repositories. Each gets a separate episode.
 #[must_use]
 pub fn scoped_session_id(session_id: &str, project_id: &ProjectId) -> String {
@@ -74,7 +80,7 @@ pub fn project_sessions(state_dir: &Path, session_id: &str) -> Vec<(String, Hook
         .collect()
 }
 
-/// Retain only a bounded, redacted prompt until the first tool use.
+/// Retain the latest bounded, redacted prompt for later tool use and context.
 ///
 /// # Errors
 /// Returns filesystem errors.
@@ -99,44 +105,90 @@ pub fn pending_prompt(state_dir: &Path, session_id: &str) -> Option<String> {
         .ok()
 }
 
-/// Resolve explicit tool paths before falling back to the session cwd.
-/// A simple leading `cd <path> &&` is recognized; shell code is never executed.
+/// Read shell text from Claude and native Codex tool argument shapes.
 #[must_use]
-pub fn tool_directory(cwd: &Path, input: &serde_json::Value) -> PathBuf {
+pub fn tool_command(input: &serde_json::Value) -> &str {
+    input
+        .get("command")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| input.get("cmd").and_then(serde_json::Value::as_str))
+        .unwrap_or("")
+}
+
+/// Resolve the tool's working directory without executing shell text.
+fn tool_workdir(cwd: &Path, input: &serde_json::Value) -> PathBuf {
     let explicit = input
         .get("cwd")
         .or_else(|| input.get("workdir"))
-        .and_then(serde_json::Value::as_str);
-    let command = input
-        .get("command")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
+        .map(PathBuf::from);
+    let base = explicit.map_or_else(
+        || cwd.to_path_buf(),
+        |path| {
+            if path.is_absolute() {
+                path
+            } else {
+                cwd.join(path)
+            }
+        },
+    );
+    let command = tool_command(input);
     let cd_path = command
         .trim()
         .strip_prefix("cd ")
         .and_then(|s| s.split_once("&&"))
         .map(|(path, _)| path.trim().trim_matches(['\'', '"']))
         .filter(|path| !path.contains(['$', '`', ';', '|', '\n']));
-    let file = extract_file_path(input);
-    let raw = explicit.or(cd_path).or(file.as_deref());
-    let Some(raw) = raw else {
-        return cwd.to_path_buf();
-    };
-    let path = PathBuf::from(raw);
-    let mut path = if path.is_absolute() {
-        path
-    } else {
-        cwd.join(path)
-    };
-    if explicit.is_none() && cd_path.is_none() {
-        path.pop();
+    let path = cd_path.map_or(base.clone(), |path| base.join(path));
+    normalize_tool_path(&path)
+}
+
+// Canonicalize existing ancestors too: newly created files still need to
+// agree with canonical repository roots (notably /tmp on macOS).
+fn normalize_tool_path(path: &Path) -> PathBuf {
+    if let Ok(path) = path.canonicalize() {
+        return path;
     }
-    while !path.is_dir() {
-        if !path.pop() {
-            return cwd.to_path_buf();
+    let Some(parent) = path.parent().filter(|parent| *parent != path) else {
+        return path.to_path_buf();
+    };
+    let parent = normalize_tool_path(parent);
+    match path.components().next_back() {
+        Some(std::path::Component::ParentDir) => parent.parent().unwrap_or(&parent).to_path_buf(),
+        Some(std::path::Component::Normal(name)) => parent.join(name),
+        _ => parent,
+    }
+}
+
+/// Resolve explicit file arguments exactly once against the effective tool cwd.
+#[must_use]
+pub fn resolve_tool_paths(cwd: &Path, input: &serde_json::Value) -> Vec<PathBuf> {
+    let base = tool_workdir(cwd, input);
+    extract_file_paths(input)
+        .into_iter()
+        .map(|path| normalize_tool_path(&base.join(path)))
+        .collect()
+}
+
+/// Existing directory for a resolved file path, including files not yet created.
+#[must_use]
+pub fn tool_path_directory(path: &Path) -> PathBuf {
+    let mut directory = path.parent().unwrap_or(path).to_path_buf();
+    while !directory.is_dir() {
+        if !directory.pop() {
+            break;
         }
     }
-    path
+    directory
+}
+
+/// Resolve explicit tool workdirs or the first file's containing directory.
+#[must_use]
+pub fn tool_directory(cwd: &Path, input: &serde_json::Value) -> PathBuf {
+    resolve_tool_paths(cwd, input).first().map_or_else(
+        || tool_workdir(cwd, input),
+        |path| tool_path_directory(path),
+    )
 }
 
 /// Pull the file path out of a tool input (Read/Edit/Write shapes).
@@ -155,10 +207,7 @@ pub fn extract_file_paths(tool_input: &serde_json::Value) -> Vec<String> {
             }
         }
     }
-    let command = tool_input
-        .get("command")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
+    let command = tool_command(tool_input);
     if !command.starts_with("*** Begin Patch\n") {
         return Vec::new();
     }
@@ -218,6 +267,315 @@ pub fn release_claim(state_dir: &Path, session_id: &str, tag: &str) {
 #[must_use]
 pub fn session_files_path(state_dir: &Path, session_id: &str) -> PathBuf {
     session_state_path(state_dir, session_id).with_extension("files")
+}
+
+/// Read the context previously delivered for this exact project/session.
+#[must_use]
+pub fn context_run_id(state_dir: &Path, scope: &str) -> Option<crate::ids::ContextRunId> {
+    context_delivery(state_dir, scope)
+        .and_then(|delivery| delivery.run_id)
+        .or_else(|| legacy_context_run_id(state_dir, scope))
+}
+
+fn legacy_context_run_id(state_dir: &Path, scope: &str) -> Option<crate::ids::ContextRunId> {
+    let bytes =
+        std::fs::read(session_state_path(state_dir, scope).with_extension("context-run")).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Receipt for the last context successfully emitted for this project/session.
+#[derive(Deserialize, Serialize)]
+struct ContextDelivery {
+    fingerprint: String,
+    request_id: String,
+    #[serde(default)]
+    run_id: Option<crate::ids::ContextRunId>,
+    #[serde(default, alias = "text_digest")]
+    delivery_digest: Option<String>,
+}
+
+/// A transient delivery lock. Dropping an unsuccessful attempt permits retry.
+pub struct ContextDeliveryClaim {
+    state_dir: PathBuf,
+    scope: String,
+    fingerprint: String,
+    lock_directory: PathBuf,
+    owner_path: PathBuf,
+}
+
+impl ContextDeliveryClaim {
+    /// Compare exact text for callers without compiler delivery metadata.
+    ///
+    /// # Errors
+    /// Returns filesystem errors writing the updated input fingerprint.
+    pub fn should_emit(&self, text: &str) -> Result<bool> {
+        self.should_emit_digest(&crate::experience::sha256(text.as_bytes()))
+    }
+
+    /// Suppress only the last successfully delivered semantic pack.
+    /// The last emitted run and request stay authoritative for usage attribution.
+    /// Removals and returning to an older set are changes, not permanent ID hits.
+    ///
+    /// # Errors
+    /// Returns filesystem errors writing the updated input fingerprint.
+    pub fn should_emit_digest(&self, digest: &str) -> Result<bool> {
+        let Some(mut previous) = context_delivery(&self.state_dir, &self.scope) else {
+            return Ok(true);
+        };
+        if previous.delivery_digest.as_deref() != Some(digest) {
+            return Ok(true);
+        }
+        previous.fingerprint.clone_from(&self.fingerprint);
+        if previous.run_id.is_none() {
+            previous.run_id = legacy_context_run_id(&self.state_dir, &self.scope);
+        }
+        write_private_sidecar(
+            &session_state_path(&self.state_dir, &self.scope).with_extension("context-delivery"),
+            &serde_json::to_vec(&previous)?,
+        )?;
+        Ok(false)
+    }
+
+    /// Mark emitted context as delivered, without replacing prior receipts on failure.
+    ///
+    /// # Errors
+    /// Returns filesystem errors writing the single atomic delivery receipt.
+    pub fn delivered(
+        &self,
+        request_id: &str,
+        run_id: &crate::ids::ContextRunId,
+        text: &str,
+    ) -> Result<()> {
+        self.delivered_digest(
+            request_id,
+            run_id,
+            &crate::experience::sha256(text.as_bytes()),
+        )
+    }
+
+    /// Persist a compiler signature only after the complete output succeeds.
+    ///
+    /// # Errors
+    /// Returns filesystem errors writing the atomic receipt.
+    pub fn delivered_digest(
+        &self,
+        request_id: &str,
+        run_id: &crate::ids::ContextRunId,
+        digest: &str,
+    ) -> Result<()> {
+        write_private_sidecar(
+            &session_state_path(&self.state_dir, &self.scope).with_extension("context-delivery"),
+            &serde_json::to_vec(&ContextDelivery {
+                fingerprint: self.fingerprint.clone(),
+                request_id: request_id.to_owned(),
+                run_id: Some(run_id.clone()),
+                delivery_digest: Some(digest.to_owned()),
+            })?,
+        )
+    }
+
+    /// Forget the comparison baseline when a successful compilation is empty.
+    /// This records no delivery and preserves the last emitted attribution IDs.
+    /// A later restored pack must be delivered again after removal/invalidation.
+    ///
+    /// # Errors
+    /// Returns filesystem errors updating an existing receipt.
+    pub fn invalidate_empty(&self) -> Result<()> {
+        let Some(mut previous) = context_delivery(&self.state_dir, &self.scope) else {
+            return Ok(());
+        };
+        previous.delivery_digest = None;
+        previous.fingerprint.clone_from(&self.fingerprint);
+        write_private_sidecar(
+            &session_state_path(&self.state_dir, &self.scope).with_extension("context-delivery"),
+            &serde_json::to_vec(&previous)?,
+        )
+    }
+}
+
+impl Drop for ContextDeliveryClaim {
+    fn drop(&mut self) {
+        if std::fs::remove_file(&self.owner_path).is_ok() {
+            let _ = std::fs::remove_dir(&self.lock_directory);
+        }
+    }
+}
+
+// Publish a complete owner directory atomically. Recovery removes only the
+// dead owner's unique file; a concurrent replacement stays nonempty and safe.
+fn delivery_lock(state_dir: &Path, scope: &str) -> Option<(PathBuf, PathBuf)> {
+    let directory = session_state_path(state_dir, scope).with_extension("context-delivering.lock");
+    let parent = directory.parent()?;
+    std::fs::create_dir_all(parent).ok()?;
+    let temporary = tempfile::tempdir_in(parent).ok()?;
+    let owner = format!("{}-{}", std::process::id(), uuid::Uuid::new_v4());
+    std::fs::write(temporary.path().join(&owner), []).ok()?;
+    if std::fs::rename(temporary.path(), &directory).is_err() {
+        let owners: Vec<_> = std::fs::read_dir(&directory).ok()?.take(2).collect();
+        if owners.len() != 1 {
+            return None;
+        }
+        let stale = owners.into_iter().next()?.ok()?;
+        let filename = stale.file_name();
+        let pid = filename.to_str()?.split_once('-')?.0.parse::<u32>().ok()?;
+        if pid <= 1 {
+            return None;
+        }
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .ok()?
+            .success();
+        if alive || std::fs::remove_file(stale.path()).is_err() {
+            return None;
+        }
+        // If another hook already recovered the lock, its nonempty owner
+        // directory makes both this removal and the following rename fail.
+        let _ = std::fs::remove_dir(&directory);
+        std::fs::rename(temporary.path(), &directory).ok()?;
+    }
+    let owner_path = directory.join(owner);
+    Some((directory, owner_path))
+}
+
+fn context_delivery(state_dir: &Path, scope: &str) -> Option<ContextDelivery> {
+    let bytes =
+        std::fs::read(session_state_path(state_dir, scope).with_extension("context-delivery"))
+            .ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Request identity for linking a lazy episode to context actually delivered.
+#[must_use]
+pub fn context_request_id(state_dir: &Path, scope: &str) -> Option<String> {
+    context_delivery(state_dir, scope).map(|delivery| delivery.request_id)
+}
+
+/// Serialize delivery attempts. Input equality cannot prove content equality:
+/// indexed sources, lessons and facts may change without prompt/path/Git changes.
+#[must_use]
+pub fn claim_context_delivery(
+    state_dir: &Path,
+    scope: &str,
+    prompt: &str,
+    current_paths: &[String],
+    token_budget: u32,
+    git: Option<&crate::projects::GitState>,
+) -> Option<ContextDeliveryClaim> {
+    let (lock_directory, owner_path) = delivery_lock(state_dir, scope)?;
+    let mut paths: Vec<&str> = current_paths.iter().map(String::as_str).collect();
+    paths.sort_unstable();
+    paths.dedup();
+    let fingerprint = crate::experience::sha256(
+        &serde_json::to_vec(&(
+            prompt.trim(),
+            paths,
+            token_budget,
+            git.map(|git| (&git.head, &git.diff_fingerprint)),
+        ))
+        .unwrap_or_default(),
+    );
+    let claim = ContextDeliveryClaim {
+        state_dir: state_dir.to_path_buf(),
+        scope: scope.to_owned(),
+        fingerprint,
+        lock_directory,
+        owner_path,
+    };
+    Some(claim)
+}
+
+/// Recently observed repository-relative tool paths, bounded per session/project.
+#[must_use]
+pub fn recent_paths(state_dir: &Path, scope: &str) -> Vec<String> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    let Ok(file) =
+        std::fs::File::open(session_state_path(state_dir, scope).with_extension("recent-paths"))
+    else {
+        return Vec::new();
+    };
+    if file.take(256 * 1024 + 1).read_to_end(&mut bytes).is_err() || bytes.len() > 256 * 1024 {
+        return Vec::new();
+    }
+    Some(bytes)
+        .and_then(|bytes| serde_json::from_slice::<Vec<String>>(&bytes).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|path| !path.is_empty() && path.len() <= 4096)
+        .take(32)
+        .collect()
+}
+
+/// Retain actual observed paths independently of whether context was emitted.
+///
+/// # Errors
+/// Returns filesystem errors writing the bounded private path sidecar.
+pub fn remember_paths(state_dir: &Path, scope: &str, observed: &[String]) -> Result<()> {
+    let mut paths = recent_paths(state_dir, scope);
+    for path in observed
+        .iter()
+        .filter(|path| !path.is_empty() && path.len() <= 4096)
+    {
+        paths.retain(|previous| previous != path);
+        paths.insert(0, path.clone());
+        paths.truncate(32);
+    }
+    write_private_sidecar(
+        &session_state_path(state_dir, scope).with_extension("recent-paths"),
+        &serde_json::to_vec(&paths)?,
+    )
+}
+
+/// Stable session-wide scope for usage baseline and acknowledged sample ids.
+#[must_use]
+pub fn usage_session_scope(session_id: &str) -> String {
+    format!(
+        "usage-{}",
+        &crate::experience::sha256(session_id.as_bytes())[..24]
+    )
+}
+
+/// Local receipts avoid resending transcripts and define the observed baseline.
+/// `None` means this workspace has not established a baseline for the session.
+///
+/// # Errors
+/// Rejects unreadable, malformed, or excessively large receipt metadata.
+pub fn usage_receipts(
+    state_dir: &Path,
+    scope: &str,
+) -> Result<Option<std::collections::BTreeSet<String>>> {
+    let path = session_state_path(state_dir, scope).with_extension("usage-receipts");
+    let metadata = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(crate::error::io_error(&path, error)),
+    };
+    if metadata.len() > 4 * 1024 * 1024 {
+        return Err(Error::Config(
+            "usage receipt metadata exceeds 4 MiB".to_owned(),
+        ));
+    }
+    let bytes = std::fs::read(&path).map_err(|error| crate::error::io_error(&path, error))?;
+    Ok(Some(serde_json::from_slice(&bytes)?))
+}
+
+/// Persist sample ids already acknowledged or deliberately consumed as an
+/// unattributed baseline/ambiguous interval. No transcript content is retained.
+///
+/// # Errors
+/// Returns errors writing private receipt sidecars.
+pub fn save_usage_receipts(
+    state_dir: &Path,
+    scope: &str,
+    samples: &std::collections::BTreeSet<String>,
+) -> Result<()> {
+    write_private_sidecar(
+        &session_state_path(state_dir, scope).with_extension("usage-receipts"),
+        &serde_json::to_vec(samples)?,
+    )
 }
 
 /// Record `file_path` as briefed; returns false when it already was (skip).
@@ -392,7 +750,9 @@ pub fn render_file_shape(
     if symbols.is_empty() && callers.is_empty() {
         return None;
     }
-    let mut brief = format!("# Graph shape: {file_path}\n");
+    let mut brief = format!(
+        "# Indexed reference data: {file_path}\nVerify current source before relying on these symbols and relationships.\n"
+    );
     if !symbols.is_empty() {
         let listed: Vec<String> = symbols
             .iter()
@@ -633,10 +993,23 @@ pub fn claude_hooks_json(engram_binary: &str) -> serde_json::Value {
             }]
         }],
         "PostToolUse": [{
-            "matcher": "Bash",
             "hooks": [{
                 "type": "command",
                 "command": format!("{engram_binary} hook bash"),
+                "timeout": 15
+            }]
+        }],
+        "PostToolUseFailure": [{
+            "hooks": [{
+                "type": "command",
+                "command": format!("{engram_binary} hook bash"),
+                "timeout": 15
+            }]
+        }],
+        "Stop": [{
+            "hooks": [{
+                "type": "command",
+                "command": format!("{engram_binary} hook stop"),
                 "timeout": 15
             }]
         }],
@@ -680,10 +1053,16 @@ pub fn codex_hooks_json(engram_binary: &str) -> serde_json::Value {
             }]
         }],
         "PostToolUse": [{
-            "matcher": "Bash|shell",
             "hooks": [{
                 "type": "command",
                 "command": format!("{engram_binary} hook bash --codex"),
+                "timeout": 15
+            }]
+        }],
+        "Stop": [{
+            "hooks": [{
+                "type": "command",
+                "command": format!("{engram_binary} hook stop --codex"),
                 "timeout": 15
             }]
         }],
@@ -820,10 +1199,10 @@ fn is_engram_hook(command: &str) -> bool {
         args.as_slice(),
         [
             "hook",
-            "session-start" | "prompt" | "pretool" | "bash" | "session-end"
+            "session-start" | "prompt" | "pretool" | "bash" | "stop" | "session-end"
         ] | [
             "hook",
-            "session-start" | "prompt" | "pretool" | "bash" | "session-end",
+            "session-start" | "prompt" | "pretool" | "bash" | "stop" | "session-end",
             "--codex"
         ]
     ) {
@@ -917,6 +1296,168 @@ mod tests {
         assert_eq!(
             extract_file_path(&serde_json::json!({"command": "ls"})),
             None
+        );
+    }
+
+    #[test]
+    fn delivery_lock_recovers_dead_owners_but_preserves_live_owners() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let claim =
+            claim_context_delivery(temp.path(), "session", "inspect", &[], 256, None).unwrap();
+        assert!(
+            claim_context_delivery(temp.path(), "session", "inspect", &[], 256, None).is_none()
+        );
+        drop(claim);
+        let mut dead = std::process::Command::new("true").spawn().unwrap();
+        let pid = dead.id();
+        dead.wait().unwrap();
+        let lock =
+            session_state_path(temp.path(), "session").with_extension("context-delivering.lock");
+        std::fs::create_dir(&lock).unwrap();
+        std::fs::write(lock.join(format!("{pid}-dead")), []).unwrap();
+        let recovered =
+            claim_context_delivery(temp.path(), "session", "inspect", &[], 256, None).unwrap();
+        let run_id = crate::ids::ContextRunId::new();
+        recovered.delivered("request", &run_id, "context").unwrap();
+        drop(recovered);
+        let repeated = claim_context_delivery(temp.path(), "session", "inspect", &[], 256, None)
+            .expect("unchanged inputs must still check changed knowledge");
+        assert!(!repeated.should_emit("context").unwrap());
+        drop(repeated);
+        assert!(
+            claim_context_delivery(temp.path(), "session", "changed", &[], 256, None).is_some()
+        );
+    }
+
+    #[test]
+    fn delivery_receipt_atomically_replaces_ids_and_reads_legacy_sidecars() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = session_state_path(temp.path(), "session");
+        let legacy_id = crate::ids::ContextRunId::new();
+        write_private_sidecar(
+            &path.with_extension("context-run"),
+            &serde_json::to_vec(&legacy_id).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            context_run_id(temp.path(), "session"),
+            Some(legacy_id.clone())
+        );
+        let run_id = crate::ids::ContextRunId::new();
+        let claim =
+            claim_context_delivery(temp.path(), "session", "inspect", &[], 256, None).unwrap();
+        claim.delivered("new-request", &run_id, "context").unwrap();
+        drop(claim);
+        let receipt: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(path.with_extension("context-delivery")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(receipt["run_id"], run_id.as_str());
+        assert_eq!(receipt["request_id"], "new-request");
+        assert_eq!(context_run_id(temp.path(), "session"), Some(run_id.clone()));
+        assert_eq!(
+            legacy_context_run_id(temp.path(), "session"),
+            Some(legacy_id),
+            "legacy compatibility is read-only"
+        );
+        // A new budget rechecks inputs, but identical text keeps both emitted IDs.
+        let claim =
+            claim_context_delivery(temp.path(), "session", "inspect", &[], 512, None).unwrap();
+        assert!(!claim.should_emit("context").unwrap());
+        drop(claim);
+        assert_eq!(context_run_id(temp.path(), "session"), Some(run_id));
+        assert_eq!(
+            context_request_id(temp.path(), "session").as_deref(),
+            Some("new-request")
+        );
+        let repeated =
+            claim_context_delivery(temp.path(), "session", "inspect", &[], 512, None).unwrap();
+        assert!(!repeated.should_emit("context").unwrap());
+    }
+
+    #[test]
+    fn legacy_text_receipts_reemit_once_before_semantic_suppression() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let run = crate::ids::ContextRunId::new();
+        let path = session_state_path(temp.path(), "legacy").with_extension("context-delivery");
+        write_private_sidecar(
+            &path,
+            &serde_json::to_vec(&serde_json::json!({
+                "fingerprint": "old-inputs", "request_id": "old-request", "run_id": run,
+                "text_digest": crate::experience::sha256(b"rendered context")
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let claim =
+            claim_context_delivery(temp.path(), "legacy", "inspect", &[], 256, None).unwrap();
+        assert_eq!(context_run_id(temp.path(), "legacy"), Some(run.clone()));
+        assert!(claim.should_emit_digest("semantic-context-v1").unwrap());
+        claim
+            .delivered_digest("new-request", &run, "semantic-context-v1")
+            .unwrap();
+        assert!(!claim.should_emit_digest("semantic-context-v1").unwrap());
+    }
+
+    #[test]
+    fn semantic_receipts_retry_failures_and_track_only_the_latest_successful_pack() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let acquire =
+            |scope| claim_context_delivery(temp.path(), scope, "inspect", &[], 256, None).unwrap();
+        let first = crate::ids::ContextRunId::new();
+        let claim = acquire("session-project");
+        assert!(claim.should_emit_digest("a+b@revision-1").unwrap());
+        claim
+            .delivered_digest("first", &first, "a+b@revision-1")
+            .unwrap();
+        drop(claim);
+
+        // A failed output never calls delivered_digest, so the exact attempt retries.
+        let failed = acquire("session-project");
+        assert!(failed.should_emit_digest("a+b@revision-2").unwrap());
+        drop(failed);
+        let retry = acquire("session-project");
+        assert!(retry.should_emit_digest("a+b@revision-2").unwrap());
+        assert!(!retry.should_emit_digest("a+b@revision-1").unwrap());
+        let second = crate::ids::ContextRunId::new();
+        retry
+            .delivered_digest("second", &second, "a@revision-1")
+            .unwrap();
+        drop(retry);
+
+        // A removal is a new pack; restoring an old set is eligible again.
+        let restored = acquire("session-project");
+        assert!(restored.should_emit_digest("a+b@revision-1").unwrap());
+        restored.invalidate_empty().unwrap();
+        assert!(restored.should_emit_digest("a@revision-1").unwrap());
+        assert_eq!(context_run_id(temp.path(), "session-project"), Some(second));
+        assert_eq!(
+            context_request_id(temp.path(), "session-project").as_deref(),
+            Some("second")
+        );
+        drop(restored);
+
+        for scope in ["other-task-project", "session-other-project"] {
+            assert!(acquire(scope).should_emit_digest("a+b@revision-1").unwrap());
+        }
+    }
+
+    #[test]
+    fn recent_paths_are_bounded_and_track_observation_recency() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let paths: Vec<_> = (0..40).map(|n| format!("src/{n}.rs")).collect();
+        remember_paths(temp.path(), "session", &paths).unwrap();
+        remember_paths(temp.path(), "session", &["src/12.rs".to_owned()]).unwrap();
+        let recent = recent_paths(temp.path(), "session");
+        assert_eq!(recent.len(), 32);
+        assert_eq!(recent[0], "src/12.rs");
+        assert!(!recent.contains(&"src/0.rs".to_owned()));
+        assert_eq!(
+            recent
+                .iter()
+                .filter(|path| path.as_str() == "src/12.rs")
+                .count(),
+            1
         );
     }
 

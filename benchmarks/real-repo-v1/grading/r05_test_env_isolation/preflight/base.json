@@ -1,0 +1,40 @@
+{
+  "task": "r05_test_env_isolation",
+  "status": "fail",
+  "checks": [
+    {
+      "name": "compiles_with_behavioral_tests",
+      "passed": true
+    },
+    {
+      "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+      "passed": false,
+      "exit_code": 101
+    },
+    {
+      "name": "development_still_loads_dotenv",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "poisoned_lock_does_not_break_settings_harness",
+      "passed": false,
+      "exit_code": 101
+    },
+    {
+      "name": "poisoned_lock_does_not_break_cluster_contract",
+      "passed": false,
+      "exit_code": 101
+    },
+    {
+      "name": "poisoned_lock_does_not_break_upstash_contract",
+      "passed": false,
+      "exit_code": 101
+    }
+  ],
+  "logs": "/private/tmp/engram-rust-preflight-r05-base.logs",
+  "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+  "build_exit_code": 0,
+  "elapsed_seconds": 70.94,
+  "hidden_tests_sha256": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7"
+}

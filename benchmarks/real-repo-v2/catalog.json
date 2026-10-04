@@ -1,0 +1,301 @@
+{
+  "schema_version": 2,
+  "created_on": "2026-09-25",
+  "purpose": "Controlled source-only Off versus installed Engram engineering benchmark with clarified, preflighted task contracts",
+  "status": "ready_for_collection",
+  "executable_runner_config": true,
+  "protocol": "README.md",
+  "pilot_task_ids": [
+    "r01_guide_hot_path",
+    "r02_lean_task_status",
+    "r05_test_env_isolation",
+    "r06_onboarding_outage"
+  ],
+  "pilot_repetitions": 3,
+  "pilot_agent_runs": 24,
+  "tasks": [
+    {
+      "id": "r01_guide_hot_path",
+      "title": "Skip task-guide work in the action hot path",
+      "repository": "agi-backend-rust",
+      "selection": "pilot",
+      "difficulty": "medium",
+      "kind": "historical_replay",
+      "status": "executable_preflight_passed",
+      "prompt_file": "prompts/r01_guide_hot_path.md",
+      "base_commit": "bbce775ef3252e4ad882ac43e6564263302f8076",
+      "reference_fix_commit": "ff515c8a0b8fedc4757209ce3291ee61d0f5aa7d",
+      "evaluator_source_paths": [
+        "src/models/api.rs",
+        "src/services/guides.rs",
+        "src/services/partner_runtime.rs"
+      ],
+      "acceptance": [
+        "Absent switches preserve both guide families.",
+        "use_task_guides:false results in zero mock search requests and no task guide or deferred resolution, while retaining the app guide.",
+        "use_app_guides:false still searches for task guides and omits the app guide.",
+        "use_guide:false overrides both family switches.",
+        "Session action request conversion retains the switches.",
+        "Enforcing partner policy can disable task guides or all guides across the production request/context path, and cannot override a caller's opt-out."
+      ],
+      "candidate_validation_commands": [
+        "cargo test --offline --locked --no-run"
+      ],
+      "preflight_remaining": [],
+      "environment": [
+        "Preflight used Homebrew Rust 1.96.0; historical package declares a 1.91.1 minimum. Offline locked dependencies are prepared before agent timing. Behavioral grader uses in-process loopback search/cache mocks, no production database or model."
+      ],
+      "engram_hypothesis": "Find the shared resolver, request conversion and policy merge without repeated route-by-route searches.",
+      "provenance": "Narrow historical Git change; larger CHANGELOG 0.58.0 variant adds generate_guides.",
+      "grader": {
+        "entrypoint": "grading/r01_guide_hot_path/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 14,
+        "preflight_evidence": "grading/r01_guide_hot_path/preflight.json",
+        "calibration_controls": [
+          "base",
+          "reference",
+          "request-mutator-only",
+          "resolver-only",
+          "discard-text-after-retrieval",
+          "ignore-task-policy"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      },
+      "contract_changes_from_v1": [
+        "Retain the enforcing policy context through resolution; no requirement that request normalization alone encode policy restrictions."
+      ]
+    },
+    {
+      "id": "r02_lean_task_status",
+      "title": "Make phone-task status polling lean by default",
+      "repository": "agents",
+      "selection": "pilot",
+      "difficulty": "medium",
+      "kind": "historical_replay",
+      "status": "executable_preflight_passed",
+      "prompt_file": "prompts/r02_lean_task_status.md",
+      "base_commit": "1b5c21e44eda8e68dbbe457f7e98e7a607ff3b1a",
+      "reference_fix_commit": "5b0c08504f191c7f9b96893764c120cb0f85efd0",
+      "evaluator_source_paths": [
+        "src/agency/api/services/mcp_tool_handlers.py",
+        "src/agency/api/services/mcp_session_service.py",
+        "contract_test_fixtures/v1",
+        "contract_test_fixtures/v2",
+        "docs/mcp-phone-tools.md"
+      ],
+      "acceptance": [
+        "Default result has the requested summary fields and no steps.",
+        "Default works when list_steps raises, using the count operation instead.",
+        "Explicit steps and since_step return the requested history; count remains total.",
+        "False boolean and string false disable include_steps only. A non-null since_step uses Python integer conversion, implies history, and returns -32602 when conversion fails.",
+        "Existing contract v1 JSON fields, scalar types and values remain compatible; additive optional fields and formatting changes are allowed. Preserve the actual device wire contract.",
+        "Consumers needing user-control steps explicitly request them."
+      ],
+      "candidate_validation_commands": [
+        "python3 -m py_compile src/agency/api/services/mcp_tool_handlers.py src/agency/api/services/mcp_session_service.py scripts/mcp_user_control_integration_test.py"
+      ],
+      "preflight_remaining": [],
+      "environment": [
+        "Python standard-library grader executes actual handler/service and consumer code with isolated external-service doubles. Preflight used Python 3.14.6. No development conftest, database, embeddings, network, or subprocesses; the candidate may add isolated tests."
+      ],
+      "engram_hypothesis": "Find contract versioning obligations, the expensive Redis call and consumers beyond the handler.",
+      "provenance": "Historical Git change.",
+      "grader": {
+        "entrypoint": "grading/r02_lean_task_status/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 33,
+        "preflight_evidence": "grading/r02_lean_task_status/preflight.json",
+        "calibration_controls": [
+          "base",
+          "reference",
+          "lean-payload-only",
+          "serializer-drops-field",
+          "history-and-serializer-erase-payload",
+          "additive-status-fields",
+          "reformatted-fixtures",
+          "additive-device-fields",
+          "removed-existing-field",
+          "changed-existing-value",
+          "changed-existing-scalar-type",
+          "changed-existing-array",
+          "changed-existing-array-order",
+          "cursor-false-disabled",
+          "cursor-strict-types",
+          "cursor-rounded",
+          "consumer-missing-history-opt-in",
+          "consumer-string-true-opt-in",
+          "schema-type-arrays",
+          "schema-anyof-oneof",
+          "schema-local-references",
+          "schema-missing-flag",
+          "schema-missing-cursor",
+          "schema-wrong-flag-type",
+          "schema-wrong-cursor-type",
+          "schema-missing-required-task",
+          "schema-cyclic-reference",
+          "v2-explicit-history-examples",
+          "v2-filtered-history-example",
+          "v2-fixtures-omitted",
+          "v2-history-total-too-small",
+          "v2-history-missing-wire-field",
+          "v2-missing-summary-field"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      },
+      "reference_limitations": [
+        "The v2 prompt explicitly retains historical Python integer conversion for cursors, including booleans and fractional numbers.",
+        "New v2 fixtures are checked if supplied; a v2 directory is not required.",
+        "Synthetic API response-byte measurements are product metrics, not coding-agent token savings."
+      ],
+      "contract_changes_from_v1": [
+        "Semantic JSON compatibility replaces byte identity for historical contract fixtures.",
+        "Cursor coercion and include_steps false parsing are explicit."
+      ]
+    },
+    {
+      "id": "r05_test_env_isolation",
+      "title": "Keep developer environment files out of contract tests",
+      "repository": "agi-backend-rust",
+      "selection": "pilot_control",
+      "difficulty": "small",
+      "kind": "historical_replay",
+      "status": "executable_preflight_passed",
+      "prompt_file": "prompts/r05_test_env_isolation.md",
+      "base_commit": "cae95f3086d7320551ab02ba4ba0fc105dc13342",
+      "reference_fix_commit": "30cc0acfcb7766e8ff0de47119d072b6f46543a8",
+      "evaluator_source_paths": [
+        "src/config.rs",
+        "tests/http_contract.rs"
+      ],
+      "acceptance": [
+        "Test environment does not reload scrubbed values from a synthetic .env.",
+        "Non-test local startup still loads .env.",
+        "A deliberately poisoned shared test lock does not cascade into unrelated lock panics.",
+        "The original failure remains visible."
+      ],
+      "candidate_validation_commands": [
+        "cargo test --offline --locked --no-run"
+      ],
+      "preflight_remaining": [],
+      "environment": [
+        "Preflight used Homebrew Rust 1.96.0 with offline locked dependencies. Private tests use harmless synthetic .env values and fresh subprocesses; no database, Redis, or model is started."
+      ],
+      "engram_hypothesis": "Locate the settings constructor and shared harness together. A small control can show no benefit or negative overhead.",
+      "provenance": "CHANGELOG 0.59.2 and historical Git change.",
+      "grader": {
+        "entrypoint": "grading/r05_test_env_isolation/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 5,
+        "preflight_evidence": "grading/r05_test_env_isolation/preflight.json",
+        "calibration_controls": [
+          "base",
+          "reference",
+          "remove-dotenv-globally"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      },
+      "contract_changes_from_v1": []
+    },
+    {
+      "id": "r06_onboarding_outage",
+      "title": "Bound onboarding checks without redirect loops",
+      "repository": "platform",
+      "selection": "pilot",
+      "difficulty": "medium",
+      "kind": "historical_replay",
+      "status": "executable_preflight_passed",
+      "prompt_file": "prompts/r06_onboarding_outage.md",
+      "base_commit": "4a2668b9bb198ae7d9108f2cebefb84fa9244b24",
+      "reference_fix_commit": "60cfcd4eda9d776f6cdac8af88f853c9276cb30e",
+      "evaluator_source_paths": [
+        "features/onboarding/actions/_call-backend.ts",
+        "features/onboarding/actions/enforce-onboarding-gate.ts",
+        "features/onboarding/actions/onboarding.test.ts"
+      ],
+      "acceptance": [
+        "500, unreachable, and malformed JSON/non-JSON backend responses do not admit users to gated pages.",
+        "Welcome stays usable on the same failures without redirect loops.",
+        "Completed users pass the gate and leave welcome for a safe destination.",
+        "A five-second deadline covers response headers and body consumption. Header/request timeouts return failure with status 503 or 504; interrupted body failures may return 502, 503 or 504. The gate stays closed and welcome remains usable.",
+        "Unsafe return URLs remain blocked, including existing invalid-route handling for pathnames containing ://; safe invite/CLI destinations survive."
+      ],
+      "candidate_validation_commands": [
+        "pnpm test:run features/onboarding/actions/onboarding.test.ts"
+      ],
+      "preflight_remaining": [],
+      "environment": [
+        "Node v26.5.1, Vitest 4.1.5, and MSW 2.13.5 in a private cloned dependency tree; this is not a lockfile-exact historical installation. Identical prepared dependencies are used across arms. No live Clerk or backend; deadline grading uses real timers and fetch aborts."
+      ],
+      "engram_hypothesis": "Reuse server-action/fetch conventions and understand opposite gate and welcome-page redirects.",
+      "provenance": "Historical Git change.",
+      "grader": {
+        "entrypoint": "grading/r06_onboarding_outage/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 31,
+        "preflight_evidence": "grading/r06_onboarding_outage/preflight.json",
+        "calibration_controls": [
+          "base",
+          "reference_503",
+          "reference_504",
+          "alternative_without_abort",
+          "bad_no_deadline",
+          "bad_headers_only_deadline",
+          "bad_welcome_loop",
+          "bad_timeout_status"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      },
+      "reference_limitations": [
+        "Malformed response means invalid JSON syntax or a non-JSON body; schema-invalid but syntactically valid profiles remain outside this task.",
+        "Deadline grading allows 500 ms scheduling tolerance; independent checks cover profile, gate and welcome outcomes, including stalled bodies.",
+        "Prepared dependency lock differs from historical source lock; record both, use identical dependencies across arms, and recalibrate controls before collection."
+      ],
+      "contract_changes_from_v1": [
+        "Header/request timeout failures may use 503 or 504; interrupted body failures may also use 502.",
+        "The deadline includes response-body consumption; profile, gate and welcome outcomes are graded independently."
+      ]
+    }
+  ],
+  "runner": "scripts/run_real_repo_followup.py",
+  "execution_status": "ready_for_collection",
+  "runtime": {
+    "model": "claude-opus-4-8[1m]",
+    "effort": "high",
+    "agent_mode": "single_agent",
+    "tools": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep"
+    ],
+    "brain_condition": "isolated_source_only_native_hooks",
+    "mcp_enabled": false,
+    "agent_seconds": 1200,
+    "grader_seconds": 1800,
+    "max_budget_usd_estimate_per_run": 8,
+    "repetitions_interpretation": "Three repetitions are diagnostic, not statistically decisive.",
+    "coding_environment": {
+      "git_configuration": "Global/system config and global exclude rules disabled.",
+      "cargo_home": "Private per-arm registry-only copy; no inherited credentials or Git checkout cache.",
+      "prepared_dependencies": "Identical frozen starting dependencies across arms.",
+      "pnpm_config_pm_on_fail": "ignore",
+      "pnpm_config_verify_deps_before_run": "false",
+      "pnpm_note": "Prevents pnpm 11 automatic package-manager download or dependency reinstall during coding."
+    },
+    "provider_prompt_cache": {
+      "enabled": true,
+      "reset_between_trials": false,
+      "limitation": "Provider prompt-cache state is not reset or controlled between trials. Report cache-creation and cache-read tokens separately. CLI cost is an estimate, not subscription cash billing."
+    }
+  },
+  "suite_id": "real-repo-v2",
+  "arms": [
+    "off",
+    "brain"
+  ],
+  "measurement_scope": "New 24-run diagnostic comparison; not a retrospective rescore or a causal comparison to v1 outcomes.",
+  "attempt_retention": "Retain every completed attempt and all interrupted infrastructure evidence. Stop for inspection after an unscorable/provider-error result; resume at the next planned ID without replacing the attempt."
+}

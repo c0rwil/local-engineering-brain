@@ -1,0 +1,52 @@
+{
+  "status": "verified",
+  "kind": "deterministic_cli_runtime_preflight",
+  "remote_model_calls": 0,
+  "proof_sha256": "06941c30f47d538e5b8e1e160210154a2413266acb14c08545e014f0e287e30b",
+  "controls_sha256": "ec058a5fc01c073f47dec35a1657e0a24234f76bac9eed92aeb9397f917370ab",
+  "checks_by_arm": {
+    "off": {
+      "passed": true,
+      "checks": {
+        "cli_exit": true,
+        "exact_tool_count": true,
+        "active_read": true,
+        "private_read_denials": true,
+        "sandboxed_bash": true,
+        "unsandboxed_bypass_closed": true,
+        "temp_inventory_stress": true
+      },
+      "elapsed_seconds": 1.3876286656595767
+    },
+    "brain": {
+      "passed": true,
+      "checks": {
+        "cli_exit": true,
+        "exact_tool_count": true,
+        "active_read": true,
+        "private_read_denials": true,
+        "sandboxed_bash": true,
+        "unsandboxed_bypass_closed": true,
+        "temp_inventory_stress": true
+      },
+      "elapsed_seconds": 2.5548556661233306
+    }
+  },
+  "artifact_sha256": {
+    "runtime-preflight/off.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "runtime-preflight/brain.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "runtime-preflight/brain.tool-results.json": "2ffa09b3f9cb105ba17d559cadd91247117118e2f5a096547ffb62ca6a232a0c",
+    "runtime-preflight/brain.checks.json": "cee316158c5bbb9f97f51a7841047babca722a65f59075e23d9aef600dc9259c",
+    "runtime-preflight/off.trace.jsonl": "c7c68158c41d7383fea62cc9498b05758de8dc6f5f9aa75f6a18cbd15cde28eb",
+    "runtime-preflight/private-canary.txt": "ad70319f8082d696a86cb58e9761117d338f6e099729ce393e5bafeb12be0559",
+    "runtime-preflight/brain.trace.jsonl": "8ec51985316f95ab287e2bb49940929dea431e5ef15a3ac041d0eca0fbecbd52",
+    "runtime-preflight/off.tool-results.json": "2ffa09b3f9cb105ba17d559cadd91247117118e2f5a096547ffb62ca6a232a0c",
+    "runtime-preflight/off.checks.json": "df811141f7c9fee6ca034d463901cc799a444a5fda467c8b3df30a6c605b1022",
+    "runtime-preflight/brain.settings.json": "eb6060ccdc71b80de9cc5e32c8b17dbff7fbb503f2fb051dc84ad6bea834b795",
+    "runtime-preflight/off.settings.json": "2eb54b5e255b8a5070146bb7f428e94dea573191561304d48302bcd2e75ce99f"
+  },
+  "limitations": [
+    "The provider is a scripted loopback server; its synthetic token values are not model usage.",
+    "Executed probe settings add a temporary sibling deny to the production policy; that extra conservative test rule is documented in the private proof."
+  ]
+}

@@ -1,0 +1,162 @@
+{
+  "suite_id": "real-repo-v2",
+  "task_id": "r05_test_env_isolation",
+  "base_commit": "cae95f3086d7320551ab02ba4ba0fc105dc13342",
+  "reference_fix_commit": "30cc0acfcb7766e8ff0de47119d072b6f46543a8",
+  "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]",
+  "fixture_root": "/private/tmp/engram-v2-rust-preflight-0j8hotbp",
+  "grader_sha256": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+  "private_tests_sha256": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7",
+  "preflight_driver_sha256": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc",
+  "mutations": {
+    "remove-dotenv-globally": "--- reference/src/config.rs\n+++ remove-dotenv-globally/src/config.rs\n@@ -414,7 +414,7 @@\n         // re-adds every one of them, so a local file silently changed what the\n         // tests exercised \u2014 and only on that machine.\n         if std::env::var(\"ENVIRONMENT\").as_deref() != Ok(\"test\") {\n-            let _ = dotenvy::dotenv();\n+            // Deliberately broken: skip dotenv in every environment.\n         }\n         let environment = env_string(\"ENVIRONMENT\", \"development\");\n         // Python parity (_sentry_effective_enabled): Sentry is on by default in\n"
+  },
+  "runs": [
+    {
+      "fixture": "base",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "test_mode_does_not_restore_scrubbed_dotenv_values"
+      ],
+      "expected_check_count": 6,
+      "exit_code": 1,
+      "calibrated": true,
+      "result": {
+        "task": "r05_test_env_isolation",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": false,
+            "exit_code": 101
+          }
+        ],
+        "logs": "/private/tmp/engram-v2-rust-preflight-0j8hotbp/base-result.logs",
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 42.075
+      }
+    },
+    {
+      "fixture": "reference",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "expected_check_count": 6,
+      "exit_code": 0,
+      "calibrated": true,
+      "result": {
+        "task": "r05_test_env_isolation",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": true,
+            "exit_code": 0
+          }
+        ],
+        "logs": "/private/tmp/engram-v2-rust-preflight-0j8hotbp/reference-result.logs",
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 40.61
+      }
+    },
+    {
+      "fixture": "remove-dotenv-globally",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "development_still_loads_dotenv"
+      ],
+      "expected_check_count": 6,
+      "exit_code": 1,
+      "calibrated": true,
+      "result": {
+        "task": "r05_test_env_isolation",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": true,
+            "exit_code": 0
+          }
+        ],
+        "logs": "/private/tmp/engram-v2-rust-preflight-0j8hotbp/remove-dotenv-globally-result.logs",
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 39.803
+      }
+    }
+  ],
+  "status": "pass"
+}

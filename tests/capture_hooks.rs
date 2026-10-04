@@ -168,11 +168,34 @@ fn codex_budget_preserves_capture_and_retries_omitted_file_briefs() {
             .unwrap(),
         2
     );
+    let partial_budget: i64 = connection.query_row(
+        "SELECT min(c.token_budget) FROM context_runs c JOIN projects p ON p.id=c.project_id WHERE p.name='two'",
+        [], |row| row.get(0)).unwrap();
+    assert!(
+        partial_budget < 256,
+        "the second repository gets only the remaining budget"
+    );
     let retry = format!(
         "*** Begin Patch\n*** Update File: {}\n@@\n-old\n+new\n*** End Patch",
         paths.last().unwrap().display()
     );
-    let output = cli(root, &["hook", "pretool", "--codex"], Some(payload(retry)));
+    let output = cli(
+        root,
+        &["hook", "pretool", "--codex"],
+        Some(payload(retry.clone())),
+    );
+    let result: Value = serde_json::from_str(&output).unwrap();
+    let context = result["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(context.len() <= 1024);
+    // A newly eligible source map can consume the remaining shape budget.
+    // Its identical repeat is silent, leaving room for the whole file brief.
+    let output = if context.contains("two_long_function_name_19") {
+        output
+    } else {
+        cli(root, &["hook", "pretool", "--codex"], Some(payload(retry)))
+    };
     let result: Value = serde_json::from_str(&output).unwrap();
     let context = result["hookSpecificOutput"]["additionalContext"]
         .as_str()
@@ -182,6 +205,10 @@ fn codex_budget_preserves_capture_and_retries_omitted_file_briefs() {
         context.contains("two_long_function_name_19"),
         "omitted briefs must remain eligible: {context}"
     );
+    assert_eq!(connection.query_row(
+        "SELECT max(c.token_budget) FROM context_runs c JOIN projects p ON p.id=c.project_id WHERE p.name='two'",
+        [], |row| row.get::<_, i64>(0)).unwrap(), 256,
+        "the same paths must be reevaluated when the full budget is available");
     cli(root, &["daemon", "stop"], None);
 }
 
@@ -228,13 +255,13 @@ fn native_codex_shell_and_multi_repo_patch_open_scoped_episodes() {
             .unwrap(),
         2
     );
-    // Native unified-exec is normalized to Bash, with explicit workdir and exit code.
+    // Native Codex exec passes cmd, including cd relative to the tool workdir.
     cli(
         root,
         &["hook", "prompt", "--codex"],
         Some(json!({"session_id":"native-shell","cwd":one,"prompt":"Verify compute"})),
     );
-    let shell = json!({"session_id":"native-shell","cwd":one,"tool_name":"Bash","tool_input":{"command":"cargo test","cwd":two},"tool_response":{"exit_code":0,"stdout":"test result: ok"}});
+    let shell = json!({"session_id":"native-shell","cwd":one,"tool_name":"functions.exec_command","tool_input":{"cmd":"cd ../two && cargo test","workdir":one},"tool_response":{"exit_code":0,"stdout":"test result: ok"}});
     let output = cli(root, &["hook", "pretool", "--codex"], Some(shell.clone()));
     assert!(
         serde_json::from_str::<Value>(&output).unwrap()["hookSpecificOutput"]["additionalContext"]
@@ -250,6 +277,16 @@ fn native_codex_shell_and_multi_repo_patch_open_scoped_episodes() {
             )
             .unwrap(),
         "codex-hook"
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT p.name FROM evidence e JOIN projects p ON p.id=e.project_id",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+        "two"
     );
     cli(
         root,
@@ -342,7 +379,7 @@ fn lazy_hooks_route_edits_and_verification_to_target_and_close_every_project() {
         .expect("usage linkage");
     assert_eq!(
         linked, 2,
-        "both original prompt and cross-repo injection attach to their episode"
+        "only the emitted original prompt and cross-repo context attach to their episodes"
     );
     let mut verification =
         payload(json!({"command":format!("cd '{}' && cargo test", second.display())}));
@@ -378,4 +415,836 @@ fn lazy_hooks_route_edits_and_verification_to_target_and_close_every_project() {
     assert_eq!(open, 0);
     assert!(engram::agenthooks::pending_prompt(state, "capture-test").is_none());
     cli(state, &["daemon", "stop"], None);
+}
+
+#[test]
+fn hooks_count_real_tool_ids_and_final_usage_once_without_guessing_cost() {
+    let temp = TempDir::new().expect("temp");
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::write(repo.join("lib.rs"), "pub fn compute() {}\n").unwrap();
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    cli(
+        root,
+        &["hook", "session-start"],
+        Some(json!({
+            "session_id":"usage-session", "cwd":repo, "transcript_path":root.join("usage.jsonl")
+        })),
+    );
+    cli(
+        root,
+        &["hook", "prompt"],
+        Some(json!({
+            "session_id":"usage-session", "cwd":repo, "prompt":"Inspect compute"
+        })),
+    );
+    let read = json!({"session_id":"usage-session", "cwd":repo, "tool_name":"Read",
+        "tool_use_id":"actual-tool-1", "tool_input":{"file_path":repo.join("lib.rs"),"command":"cargo test"},
+        "tool_response":{"exit_code":0}});
+    cli(root, &["hook", "pretool"], Some(read.clone()));
+    cli(root, &["hook", "bash"], Some(read.clone()));
+    cli(root, &["hook", "bash"], Some(read));
+    // Failure hooks supply an error, not necessarily an observed exit code.
+    // Count the actual call once without inventing verification evidence.
+    let failed = json!({"session_id":"usage-session", "cwd":repo,
+        "hook_event_name":"PostToolUseFailure", "tool_name":"Bash",
+        "tool_use_id":"actual-failed-tool-2", "tool_input":{"command":"cargo test"},
+        "error":"Tool execution was interrupted", "is_interrupt":true});
+    cli(root, &["hook", "bash"], Some(failed.clone()));
+    cli(root, &["hook", "bash"], Some(failed));
+    cli(
+        root,
+        &["hook", "bash"],
+        Some(json!({"session_id":"usage-session", "cwd":repo,
+        "tool_name":"Read", "tool_input":{"file_path":repo.join("lib.rs")}})),
+    );
+    let transcript = root.join("usage.jsonl");
+    std::fs::write(&transcript, concat!(
+        "{\"type\":\"assistant\",\"message\":{\"id\":\"msg-final\",\"model\":\"local-model\",\"usage\":{\"input_tokens\":100,\"output_tokens\":2}}}\n",
+        "{\"type\":\"assistant\",\"message\":{\"id\":\"msg-final\",\"model\":\"local-model\",\"usage\":{\"input_tokens\":100,\"output_tokens\":10}}}\n"
+    )).unwrap();
+    let stop = json!({"session_id":"usage-session", "cwd":repo, "transcript_path":transcript});
+    cli(root, &["hook", "stop"], Some(stop.clone()));
+    cli(root, &["hook", "stop"], Some(stop.clone()));
+    cli(root, &["hook", "session-end"], Some(stop));
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    let totals: (i64, i64, i64, i64, i64, i64) = connection.query_row(
+        "SELECT count(*),sum(tool_calls),sum(input_tokens),sum(output_tokens),count(cost_usd),count(context_run_id) FROM resource_usage",
+        [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
+    ).unwrap();
+    assert_eq!(totals, (3, 2, 100, 10, 0, 2));
+    let historical_links: (i64, i64) = connection.query_row(
+        "SELECT count(context_run_id),count(mode) FROM resource_usage WHERE input_tokens IS NOT NULL",
+        [], |row| Ok((row.get(0)?,row.get(1)?)),
+    ).unwrap();
+    assert_eq!(
+        historical_links,
+        (0, 0),
+        "historical samples cannot prove context or mode attribution"
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM evidence", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        0,
+        "neither reading a command nor a failure without an exit code proves verification"
+    );
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
+fn multi_repo_session_does_not_duplicate_or_guess_provider_usage_attribution() {
+    let temp = TempDir::new().expect("temp");
+    let root = temp.path();
+    let first = root.join("first");
+    let second = root.join("second");
+    for repo in [&first, &second] {
+        std::fs::create_dir(repo).unwrap();
+        std::fs::write(repo.join("lib.rs"), "pub fn compute() {}\n").unwrap();
+        cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    }
+    cli(
+        root,
+        &["hook", "session-start", "--codex"],
+        Some(json!({
+            "session_id":"multi-usage", "cwd":first, "transcript_path":root.join("usage.jsonl")
+        })),
+    );
+    cli(
+        root,
+        &["hook", "prompt", "--codex"],
+        Some(json!({
+            "session_id":"multi-usage", "cwd":first, "prompt":"Inspect both repositories"
+        })),
+    );
+    for (repo, tool_id) in [(&first, "first-call"), (&second, "second-call")] {
+        let read = json!({"session_id":"multi-usage", "cwd":first,"tool_name":"Read",
+            "tool_use_id":tool_id,"tool_input":{"file_path":repo.join("lib.rs")}});
+        cli(root, &["hook", "pretool", "--codex"], Some(read.clone()));
+        cli(root, &["hook", "bash", "--codex"], Some(read));
+    }
+    let transcript = root.join("usage.jsonl");
+    std::fs::write(
+        &transcript,
+        json!({"type":"event_msg","payload":{"type":"token_count","info":{
+            "total_token_usage":{"input_tokens":100,"output_tokens":10,"cached_input_tokens":50}
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    cli(
+        root,
+        &["hook", "stop", "--codex"],
+        Some(json!({"session_id":"multi-usage", "cwd":first,"transcript_path":transcript})),
+    );
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    let totals: (i64, i64, i64) = connection.query_row(
+        "SELECT count(DISTINCT project_id),sum(tool_calls),count(input_tokens) FROM resource_usage",
+        [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+    ).unwrap();
+    assert_eq!(totals, (2, 2, 0));
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
+fn hook_templates_capture_all_tools_and_stop_usage() {
+    for hooks in [
+        engram::agenthooks::claude_hooks_json("engram"),
+        engram::agenthooks::codex_hooks_json("engram"),
+    ] {
+        assert!(hooks["PostToolUse"][0].get("matcher").is_none());
+        assert!(
+            hooks["Stop"][0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("hook stop")
+        );
+    }
+    let claude = engram::agenthooks::claude_hooks_json("engram");
+    assert_eq!(
+        claude["PostToolUseFailure"][0]["hooks"][0]["command"],
+        "engram hook bash"
+    );
+    assert!(claude["PostToolUseFailure"][0].get("matcher").is_none());
+    assert!(
+        engram::agenthooks::codex_hooks_json("engram")
+            .get("PostToolUseFailure")
+            .is_none()
+    );
+}
+
+#[test]
+fn claude_failure_hook_upgrade_preserves_foreign_handlers_and_is_idempotent() {
+    let original = json!({"hooks":{"PostToolUseFailure":[{"matcher":"Bash","hooks":[
+        {"type":"command","command":"/old/engram hook bash"},
+        {"type":"command","command":"echo foreign-failure-handler"}
+    ]}]}});
+    let once = engram::agenthooks::merge_claude_hooks(original, "/new/engram").unwrap();
+    let groups = once["hooks"]["PostToolUseFailure"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(
+        groups[0]["hooks"][0]["command"],
+        "echo foreign-failure-handler"
+    );
+    assert_eq!(groups[1]["hooks"][0]["command"], "/new/engram hook bash");
+    assert_eq!(
+        engram::agenthooks::merge_claude_hooks(once.clone(), "/new/engram").unwrap(),
+        once
+    );
+}
+
+#[test]
+fn resumed_transcript_and_missing_start_use_conservative_usage_baselines() {
+    let temp = TempDir::new().expect("temp");
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::write(repo.join("lib.rs"), "pub fn compute() {}\n").unwrap();
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let transcript = root.join("resumed.jsonl");
+    let message = |id: &str, input: i64| {
+        json!({"type":"assistant","message":{"id":id,
+        "usage":{"input_tokens":input,"output_tokens":1}}})
+        .to_string()
+            + "\n"
+    };
+    std::fs::write(&transcript, message("historic-untracked", 900)).unwrap();
+    cli(
+        root,
+        &["hook", "session-start"],
+        Some(json!({"session_id":"resumed", "cwd":repo,"transcript_path":transcript})),
+    );
+    for session in ["resumed", "no-start"] {
+        cli(
+            root,
+            &["hook", "prompt"],
+            Some(json!({"session_id":session, "cwd":repo,"prompt":"Inspect compute"})),
+        );
+        cli(
+            root,
+            &["hook", "pretool"],
+            Some(json!({"session_id":session,"cwd":repo,
+            "tool_name":"Read","tool_input":{"file_path":repo.join("lib.rs")}})),
+        );
+    }
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&transcript)
+        .unwrap()
+        .write_all(message("after-resume", 7).as_bytes())
+        .unwrap();
+    cli(
+        root,
+        &["hook", "stop"],
+        Some(json!({"session_id":"resumed", "cwd":repo,"transcript_path":transcript})),
+    );
+    cli(
+        root,
+        &["hook", "stop"],
+        Some(json!({"session_id":"no-start", "cwd":repo,"transcript_path":transcript})),
+    );
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT sum(input_tokens) FROM resource_usage WHERE session_id='resumed'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        7
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT count(*) FROM resource_usage WHERE session_id='no-start'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&transcript)
+        .unwrap()
+        .write_all(message("after-baseline", 5).as_bytes())
+        .unwrap();
+    cli(
+        root,
+        &["hook", "stop"],
+        Some(json!({"session_id":"no-start", "cwd":repo,"transcript_path":transcript})),
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT sum(input_tokens) FROM resource_usage WHERE session_id='no-start'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        5
+    );
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
+fn followup_intent_refreshes_context_and_reuses_the_project_episode() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    for name in ["compute", "auxiliary", "actual"] {
+        std::fs::write(
+            repo.join(format!("{name}.rs")),
+            format!("pub fn {name}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let prompt = |text: &str| json!({"session_id":"followup", "cwd":repo, "prompt":text});
+    assert!(!cli(root, &["hook", "prompt"], Some(prompt("Inspect compute"))).is_empty());
+    assert!(cli(root, &["hook", "prompt"], Some(prompt("Inspect compute"))).is_empty());
+    let read = json!({"session_id":"followup", "cwd":repo, "tool_name":"Read",
+        "tool_input":{"file_path":"compute.rs"}});
+    assert!(!cli(root, &["hook", "pretool"], Some(read.clone())).is_empty());
+    assert!(cli(root, &["hook", "pretool"], Some(read)).is_empty());
+    assert!(cli(root, &["hook", "prompt"], Some(prompt("Inspect compute"))).is_empty());
+    let session = engram::agenthooks::project_sessions(root, "followup")
+        .pop()
+        .unwrap();
+    let initial_run = engram::agenthooks::context_run_id(root, &session.0).unwrap();
+    let updated = cli(root, &["hook", "prompt"], Some(prompt("Inspect auxiliary")));
+    assert!(updated.contains("auxiliary.rs"), "{updated}");
+    assert_ne!(
+        engram::agenthooks::context_run_id(root, &session.0).unwrap(),
+        initial_run
+    );
+    assert_eq!(
+        engram::agenthooks::pending_prompt(root, "followup").as_deref(),
+        Some("Inspect auxiliary")
+    );
+    assert!(cli(root, &["hook", "prompt"], Some(prompt("Inspect auxiliary"))).is_empty());
+    // A non-shell post-tool event must retain the actual file even without PreToolUse.
+    cli(
+        root,
+        &["hook", "bash"],
+        Some(json!({"session_id":"followup", "cwd":repo,
+        "tool_name":"Edit", "tool_use_id":"edit-actual", "tool_input":{"file_path":"actual.rs"}})),
+    );
+    let context = cli(root, &["hook", "prompt"], Some(prompt("continue")));
+    assert!(
+        context.contains("actual.rs"),
+        "recent observed file must affect retrieval: {context}"
+    );
+    assert!(
+        !context.contains("auxiliary.rs"),
+        "prompt terms are not recent tool paths: {context}"
+    );
+    let latest = engram::agenthooks::project_sessions(root, "followup");
+    assert_eq!(latest.len(), 1);
+    assert_eq!(latest[0].1.task_id, session.1.task_id);
+    assert_eq!(
+        engram::agenthooks::recent_paths(root, &session.0),
+        ["actual.rs", "compute.rs"]
+    );
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM tasks", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert!(cli(root, &["hook", "prompt"], Some(prompt("continue"))).is_empty());
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
+fn failed_and_empty_context_attempts_retry_and_keep_the_last_delivered_run() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::write(repo.join("compute.rs"), "pub fn compute() {}\n").unwrap();
+    std::fs::write(repo.join("auxiliary.rs"), "pub fn auxiliary() {}\n").unwrap();
+    // The daemon retains its default 6000-token ceiling while each hook loads
+    // the changed caller config. 7000 deterministically fails compilation.
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let config_dir = root.join(".config/engram");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let budget = |tokens: u32| {
+        std::fs::write(
+            config_dir.join("config.toml"),
+            format!("[context]\nmax_injected_tokens = {tokens}\nstable_prefix_tokens = 0\n"),
+        )
+        .unwrap();
+    };
+    let prompt =
+        |session: &str, text: &str| json!({"session_id":session, "cwd":repo, "prompt":text});
+    for (session, tokens) in [("empty-retry", 1), ("failed-retry", 7000)] {
+        budget(tokens);
+        assert!(
+            cli(
+                root,
+                &["hook", "prompt"],
+                Some(prompt(session, "Inspect compute"))
+            )
+            .is_empty()
+        );
+        budget(6000);
+        assert!(
+            !cli(
+                root,
+                &["hook", "prompt"],
+                Some(prompt(session, "Inspect compute"))
+            )
+            .is_empty()
+        );
+        assert!(
+            cli(
+                root,
+                &["hook", "prompt"],
+                Some(prompt(session, "Inspect compute"))
+            )
+            .is_empty()
+        );
+    }
+    cli(
+        root,
+        &["hook", "pretool"],
+        Some(json!({"session_id":"failed-retry", "cwd":repo,
+        "tool_name":"Read", "tool_input":{"file_path":"compute.rs"}})),
+    );
+    let (scope, session) = engram::agenthooks::project_sessions(root, "failed-retry")
+        .pop()
+        .unwrap();
+    let previous = engram::agenthooks::context_run_id(root, &scope).unwrap();
+    budget(7000);
+    assert!(
+        cli(
+            root,
+            &["hook", "prompt"],
+            Some(prompt("failed-retry", "Inspect auxiliary"))
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        engram::agenthooks::pending_prompt(root, "failed-retry").as_deref(),
+        Some("Inspect auxiliary")
+    );
+    assert_eq!(
+        engram::agenthooks::context_run_id(root, &scope).unwrap(),
+        previous
+    );
+    budget(6000);
+    assert!(
+        !cli(
+            root,
+            &["hook", "prompt"],
+            Some(prompt("failed-retry", "Inspect auxiliary"))
+        )
+        .is_empty()
+    );
+    assert_ne!(
+        engram::agenthooks::context_run_id(root, &scope).unwrap(),
+        previous
+    );
+    assert_eq!(
+        engram::agenthooks::load_session(root, &scope)
+            .unwrap()
+            .task_id,
+        session.task_id
+    );
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
+fn relative_tool_workdirs_route_paths_and_count_multi_repo_tools_once() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let one = root.join("one");
+    let two = root.join("two");
+    for (repo, name) in [(&one, "first_marker"), (&two, "second_marker")] {
+        std::fs::create_dir(repo).unwrap();
+        std::fs::write(repo.join("lib.rs"), format!("pub fn {name}() {{}}\n")).unwrap();
+        std::fs::write(repo.join("actual.rs"), "pub fn actual() {}\n").unwrap();
+        cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    }
+    cli(
+        root,
+        &["hook", "prompt"],
+        Some(json!({"session_id":"relative", "cwd":one, "prompt":"Inspect the implementation"})),
+    );
+    let read = json!({"session_id":"relative", "cwd":one, "tool_name":"Read", "tool_use_id":"relative-read",
+        "tool_input":{"workdir":"../two", "file_path":"lib.rs"}});
+    let output = cli(root, &["hook", "pretool"], Some(read.clone()));
+    assert!(output.contains("second_marker"), "{output}");
+    assert!(!output.contains("first_marker"), "{output}");
+    assert!(output.contains("Indexed reference data") && output.contains("Verify current source"));
+    cli(root, &["hook", "bash"], Some(read));
+    cli(
+        root,
+        &["hook", "bash"],
+        Some(json!({"session_id":"relative", "cwd":one,
+        "tool_name":"Edit", "tool_use_id":"relative-edit", "tool_input":{"cwd":two,"file_path":"actual.rs"}})),
+    );
+    let sessions = engram::agenthooks::project_sessions(root, "relative");
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(
+        engram::agenthooks::recent_paths(root, &sessions[0].0),
+        ["actual.rs", "lib.rs"]
+    );
+    let context = cli(
+        root,
+        &["hook", "prompt"],
+        Some(json!({"session_id":"relative", "cwd":two, "prompt":"continue"})),
+    );
+    assert!(context.contains("actual.rs"), "{context}");
+    let patch = format!(
+        "*** Begin Patch\n*** Update File: {}\n@@\n-old\n+new\n*** Update File: {}\n@@\n-old\n+new\n*** End Patch",
+        one.join("lib.rs").display(),
+        two.join("lib.rs").display()
+    );
+    let tool = json!({"session_id":"relative", "cwd":one,"tool_name":"apply_patch", "tool_use_id":"multi-repo-patch",
+        "tool_input":{"command":patch}});
+    cli(root, &["hook", "bash"], Some(tool.clone()));
+    cli(root, &["hook", "bash"], Some(tool));
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    let totals: (i64, i64) = connection
+        .query_row(
+            "SELECT count(*),sum(tool_calls) FROM resource_usage",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        totals,
+        (3, 3),
+        "one usage sample per real tool, including a multi-repo patch"
+    );
+    assert_eq!(
+        engram::agenthooks::project_sessions(root, "relative").len(),
+        2
+    );
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
+fn changed_paths_with_identical_context_preserve_the_emitted_receipt() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::write(repo.join("compute.rs"), "pub fn compute() {}\n").unwrap();
+    std::fs::write(repo.join("auxiliary.rs"), "pub fn auxiliary() {}\n").unwrap();
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let prompt = json!({"session_id":"same-text", "cwd":repo, "prompt":"Inspect compute"});
+    assert!(!cli(root, &["hook", "prompt"], Some(prompt.clone())).is_empty());
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    let project: String = connection
+        .query_row("SELECT id FROM projects LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    let scope = engram::agenthooks::scoped_session_id(
+        "same-text",
+        &engram::ids::ProjectId::parse(&project).unwrap(),
+    );
+    let run_id = engram::agenthooks::context_run_id(root, &scope).unwrap();
+    let request_id = engram::agenthooks::context_request_id(root, &scope).unwrap();
+    // Newly observed paths without indexed knowledge leave the compiled source
+    // map identical; neither attempt should reemit the previous text.
+    for path in ["new-a.txt", "new-b.txt"] {
+        let tool = json!({"session_id":"same-text", "cwd":repo, "tool_name":"Write",
+            "tool_input":{"file_path":path}});
+        assert!(cli(root, &["hook", "pretool"], Some(tool.clone())).is_empty());
+        assert_eq!(
+            engram::agenthooks::context_run_id(root, &scope).unwrap(),
+            run_id
+        );
+        assert_eq!(
+            engram::agenthooks::context_request_id(root, &scope).unwrap(),
+            request_id
+        );
+        let count: i64 = connection
+            .query_row("SELECT count(*) FROM context_runs", [], |row| row.get(0))
+            .unwrap();
+        assert!(cli(root, &["hook", "pretool"], Some(tool)).is_empty());
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM context_runs", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            count + 1,
+            "unchanged inputs must recheck source revisions and mutable knowledge"
+        );
+    }
+    assert_eq!(
+        engram::agenthooks::recent_paths(root, &scope),
+        ["new-b.txt", "new-a.txt"]
+    );
+    let served = || {
+        connection
+            .query_row(
+                "SELECT count(*) FROM usage_events WHERE usage_kind='context_served'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        served(),
+        1,
+        "suppressed compilations must not create context_served rows"
+    );
+    assert_eq!(connection.query_row(
+        "SELECT count(*) FROM usage_events WHERE usage_kind='context_served' AND context_run_id<>?1",
+        [run_id.as_str()], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    let changed = cli(
+        root,
+        &["hook", "prompt"],
+        Some(json!({"session_id":"same-text", "cwd":repo, "prompt":"Inspect auxiliary"})),
+    );
+    assert!(changed.contains("auxiliary.rs"), "{changed}");
+    let changed_run = engram::agenthooks::context_run_id(root, &scope).unwrap();
+    assert_ne!(changed_run, run_id);
+    assert_eq!(
+        served(),
+        2,
+        "changed context is acknowledged after successful emission"
+    );
+    assert_eq!(connection.query_row(
+        "SELECT count(*) FROM usage_events WHERE usage_kind='context_served' AND context_run_id=?1",
+        [changed_run.as_str()], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
+fn reordered_source_maps_stay_silent_but_source_revisions_and_facts_refresh() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    for name in ["alpha", "beta"] {
+        std::fs::write(
+            repo.join(format!("{name}.rs")),
+            format!("pub fn compute_{name}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let prompt = json!({"session_id":"source-order", "cwd":repo, "prompt":"Inspect compute"});
+    let first = cli(root, &["hook", "prompt"], Some(prompt.clone()));
+    assert!(first.contains("alpha.rs") && first.contains("beta.rs"));
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    let project: String = connection
+        .query_row("SELECT id FROM projects LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    let scope = engram::agenthooks::scoped_session_id(
+        "source-order",
+        &engram::ids::ProjectId::parse(&project).unwrap(),
+    );
+    let first_run = engram::agenthooks::context_run_id(root, &scope).unwrap();
+    let first_dynamic: String = connection
+        .query_row(
+            "SELECT dynamic_context FROM context_runs WHERE id=?1",
+            [first_run.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let first_path =
+        if first_dynamic.find("alpha.rs").unwrap() < first_dynamic.find("beta.rs").unwrap() {
+            "beta.rs"
+        } else {
+            "alpha.rs"
+        };
+    engram::agenthooks::remember_paths(root, &scope, &[first_path.to_owned()]).unwrap();
+    assert!(cli(root, &["hook", "prompt"], Some(prompt.clone())).is_empty());
+    let reordered: String = connection
+        .query_row(
+            "SELECT dynamic_context FROM context_runs ORDER BY rowid DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_ne!(
+        first_dynamic, reordered,
+        "the fixture must exercise an actual ranking-order change"
+    );
+    assert_eq!(
+        engram::agenthooks::context_run_id(root, &scope),
+        Some(first_run)
+    );
+
+    // A source can change while its rendered label/path and hook inputs stay fixed.
+    for (column, value) in [
+        ("current_digest", "new-content"),
+        ("source_ref", "new-revision"),
+    ] {
+        connection
+            .execute(
+                &format!(
+                    "UPDATE nodes SET {column}=?1 WHERE project_id=?2 AND file_path='alpha.rs'"
+                ),
+                [value, project.as_str()],
+            )
+            .unwrap();
+        let refreshed = cli(root, &["hook", "prompt"], Some(prompt.clone()));
+        assert!(
+            refreshed.contains("alpha.rs"),
+            "{column} must refresh: {refreshed}"
+        );
+        assert!(cli(root, &["hook", "prompt"], Some(prompt.clone())).is_empty());
+    }
+    cli(
+        root,
+        &[
+            "fact",
+            "set",
+            "storage",
+            "SQLite",
+            "--path",
+            repo.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert!(cli(root, &["hook", "prompt"], Some(prompt.clone())).contains("SQLite"));
+    assert!(cli(root, &["hook", "prompt"], Some(prompt)).is_empty());
+    assert!(
+        !cli(
+            root,
+            &["hook", "prompt"],
+            Some(
+                json!({"session_id":"another-source-task", "cwd":repo,"prompt":"Inspect compute"})
+            )
+        )
+        .is_empty()
+    );
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
+fn failed_hook_output_keeps_the_last_receipt_and_retries_the_same_pack() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::write(repo.join("lib.rs"), "pub fn compute() {}\n").unwrap();
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let prompt = json!({"session_id":"failed-output", "cwd":repo, "prompt":"Inspect compute"});
+    assert!(!cli(root, &["hook", "prompt"], Some(prompt.clone())).is_empty());
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    let project: String = connection
+        .query_row("SELECT id FROM projects LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    let scope = engram::agenthooks::scoped_session_id(
+        "failed-output",
+        &engram::ids::ProjectId::parse(&project).unwrap(),
+    );
+    let previous = engram::agenthooks::context_run_id(root, &scope).unwrap();
+    cli(
+        root,
+        &[
+            "fact",
+            "set",
+            "storage",
+            "SQLite",
+            "--path",
+            repo.to_str().unwrap(),
+        ],
+        None,
+    );
+    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", root)
+        .args([
+            "--db",
+            root.join("brain.sqlite").to_str().unwrap(),
+            "--socket",
+            root.join("engramd.sock").to_str().unwrap(),
+            "hook",
+            "prompt",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Close the reader before compilation finishes: emitting the complete JSON fails.
+    drop(child.stdout.take());
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(prompt.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "hooks fail open: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        engram::agenthooks::context_run_id(root, &scope),
+        Some(previous.clone())
+    );
+    assert!(cli(root, &["hook", "prompt"], Some(prompt.clone())).contains("SQLite"));
+    assert_ne!(
+        engram::agenthooks::context_run_id(root, &scope),
+        Some(previous)
+    );
+    assert!(cli(root, &["hook", "prompt"], Some(prompt)).is_empty());
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
+fn larger_prompt_budget_refreshes_a_previously_partial_context() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let config_dir = root.join(".config/engram");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let budget = |tokens: u32| {
+        std::fs::write(
+            config_dir.join("config.toml"),
+            format!("[context]\nmax_injected_tokens = {tokens}\nstable_prefix_tokens = 0\n"),
+        )
+        .unwrap();
+    };
+    budget(6000);
+    for index in 0..12 {
+        let filename = format!("needle_{index:02}_{}.rs", "implementation_".repeat(6));
+        std::fs::write(
+            repo.join(filename),
+            format!("pub fn needle_{index}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let prompt = json!({"session_id":"budget-refresh", "cwd":repo, "prompt":"Inspect needle"});
+    budget(256);
+    let partial = cli(root, &["hook", "prompt", "--codex"], Some(prompt.clone()));
+    assert!(!partial.is_empty());
+    assert!(cli(root, &["hook", "prompt", "--codex"], Some(prompt.clone())).is_empty());
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    let project: String = connection
+        .query_row("SELECT id FROM projects LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    let scope = engram::agenthooks::scoped_session_id(
+        "budget-refresh",
+        &engram::ids::ProjectId::parse(&project).unwrap(),
+    );
+    let initial_run = engram::agenthooks::context_run_id(root, &scope).unwrap();
+    budget(6000);
+    let full = cli(root, &["hook", "prompt", "--codex"], Some(prompt.clone()));
+    assert!(
+        full.len() > partial.len(),
+        "larger budget must make the omitted pointers available"
+    );
+    assert_ne!(
+        engram::agenthooks::context_run_id(root, &scope).unwrap(),
+        initial_run
+    );
+    assert!(cli(root, &["hook", "prompt", "--codex"], Some(prompt)).is_empty());
+    cli(root, &["daemon", "stop"], None);
 }

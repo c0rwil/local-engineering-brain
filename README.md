@@ -89,6 +89,7 @@ engram skills add https://github.com/DietrichGebert/ponytail
 # `engram skills update` pulls and re-installs every pack.
 
 # Day-to-day guide: docs/USER_GUIDE.md
+# Effectiveness tracking, automatic evidence review and workspaces: docs/SECOND_BRAIN.md
 # Team/company rollout: docs/COMPANY_ROLLOUT.md (central source of truth
 # from origin/main, CI webhooks, cross-instance sync, incremental freshness).
 ```
@@ -331,10 +332,10 @@ state, rendered Engram context is byte-stable across turn/request IDs and contai
   history, traversal, context tokens, and prepared data are hard-bounded;
 - no repository graph or full memory corpus is retained in process memory;
 - expensive parsing/retrieval runs outside the writer critical section;
-- semantic/vector/remote embeddings, automatic learning, raw transcript retention, and derived
-  caches are explicitly rejected in V1 rather than silently accepting inert settings;
+- unsupported embedding providers and raw transcript retention are explicitly rejected;
+  automatic lesson review is opt-in and preserves the deterministic evidence gates;
 - durable authored text is conservatively secret-redacted, including configurable bounded regexes;
-  evidence artifacts store digests only;
+  evidence retains redacted observations with content digests;
 - Unix socket, database, WAL/SHM sidecars, backups, and exports default to user-only.
 
 ## Release gates

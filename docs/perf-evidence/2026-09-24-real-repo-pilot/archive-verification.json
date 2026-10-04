@@ -1,0 +1,14 @@
+{
+  "sha256": "9b16a1f9d22ddaceb88d5483706116175b7280511880349541e0c439f4d22285",
+  "bytes": 1058413023,
+  "regular_files": 97303,
+  "symlinks": 35,
+  "omitted_entries": 63,
+  "attempts": 24,
+  "filename": "evidence.tar.gz",
+  "inventory_verified": true,
+  "candidate_trees": 24,
+  "frozen_trial_grades": 24,
+  "owner_only_permissions_verified": true,
+  "archive_manifest_entries": 97338
+}

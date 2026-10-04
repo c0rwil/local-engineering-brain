@@ -1,0 +1,21 @@
+--- reference/src/services/guides.rs
++++ incomplete/src/services/guides.rs
+@@ -1055,8 +1055,7 @@
+         // skip task-guide search in API mode; app-guide lookup remains safe.
+         let private_api_search_unsafe =
+             private && !self.settings.agent_data_source.is_direct_postgres();
+-        let task_guides_allowed = request.use_task_guides.unwrap_or(true)
+-            && task_guides_allowed(partner_context)
++        let task_guides_allowed = task_guides_allowed(partner_context)
+             && !private_api_search_unsafe;
+ 
+         // Task-guide short-circuits (app guide is always resolved). Mirrors the
+@@ -1383,7 +1382,7 @@
+         performance::merge_guide_attribution(usage);
+ 
+         ResolvedGuides {
+-            task_guide,
++            task_guide: if request.use_task_guides == Some(false) { None } else { task_guide },
+             app_guide,
+             app_guide_package,
+             task_guide_searched: resolve_task,

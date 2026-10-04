@@ -13,6 +13,9 @@ use engram::mcp::McpServer;
     about = "Engram MCP compatibility adapter"
 )]
 struct Cli {
+    /// Isolated workspace served by this MCP connection.
+    #[arg(long)]
+    workspace: Option<String>,
     /// Override the canonical database path used when auto-starting `engramd`.
     #[arg(long)]
     db: Option<PathBuf>,
@@ -37,13 +40,11 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> engram::Result<()> {
-    let mut config = Config::load_for(
-        None,
-        &ConfigOverrides {
-            db_path: cli.db,
-            local_only: None,
-        },
-    )?;
+    let mut config = Config::load_for_current_dir(&ConfigOverrides {
+        workspace: cli.workspace,
+        db_path: cli.db,
+        local_only: None,
+    })?;
     if let Some(socket) = cli.socket {
         config.daemon.socket_path = socket;
     }

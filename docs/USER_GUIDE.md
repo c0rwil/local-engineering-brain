@@ -138,7 +138,9 @@ call those tools to capture it. Optional local-model proxy injection runs throug
 ## 6. Day to day: what's automatic vs. what you do
 
 **Automatic with active native hooks:** context injection, evidence capture and
-episode bookkeeping. The daemon also handles
+episode bookkeeping, identifiable completed tool calls and available provider usage.
+The **Effectiveness** tab shows measurements and gaps. An enabled evidence judge
+reviews pending lessons automatically. The daemon also handles
 re-indexing on commits and branch switches, origin refresh, guide regen,
 vault export, daily backups (7 kept), link discovery, drift quarantine.
 
@@ -400,6 +402,11 @@ Markdown file. If `vault.enabled` is true, the existing Obsidian export still ru
 The product UI and guide no longer depend on enabling it.
 
 ### Finish work and review lessons
+
+An optional evidence judge can process pending lesson proposals automatically with
+a local model or TypeSafe Jev. Its citations, source checks and usage appear in
+**Effectiveness**. Human review stays available. See [engineering memory and measured
+effectiveness](SECOND_BRAIN.md) for setup, usage capture and isolated workspaces.
 
 Agents can replace the end-of-task sequence with `engram_complete_task`: provide
 the existing task ID, observed outcome, touched files, actual verification output

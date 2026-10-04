@@ -1,0 +1,579 @@
+{
+  "suite_id": "real-repo-v2",
+  "task_id": "r01_guide_hot_path",
+  "base_commit": "bbce775ef3252e4ad882ac43e6564263302f8076",
+  "reference_fix_commit": "ff515c8a0b8fedc4757209ce3291ee61d0f5aa7d",
+  "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]",
+  "fixture_root": "/private/tmp/engram-v2-rust-preflight-lay0g2fh",
+  "grader_sha256": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+  "private_tests_sha256": "4d2c7acc31d9072da28e83903c4ceac702494b400f29c20a20b3b1811bf588e3",
+  "preflight_driver_sha256": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc",
+  "mutations": {
+    "request-mutator-only": "--- reference/src/services/guides.rs\n+++ request-mutator-only/src/services/guides.rs\n@@ -1056,7 +1056,6 @@\n         let private_api_search_unsafe =\n             private && !self.settings.agent_data_source.is_direct_postgres();\n         let task_guides_allowed = request.use_task_guides.unwrap_or(true)\n-            && task_guides_allowed(partner_context)\n             && !private_api_search_unsafe;\n \n         // Task-guide short-circuits (app guide is always resolved). Mirrors the\n",
+    "resolver-only": "--- reference/src/services/partner_runtime.rs\n+++ resolver-only/src/services/partner_runtime.rs\n@@ -642,8 +642,6 @@\n     // include_untagged_guides is AND'd with policy.include_untagged_guides only\n     // (not allow_global_guide_fallback, which is a separate policy concern).\n     request.use_guide = Some(request.use_guide.unwrap_or(true));\n-    request.use_task_guides =\n-        Some(request.use_task_guides.unwrap_or(true) && policy.task_guides_enabled);\n     request.use_app_guides =\n         Some(request.use_app_guides.unwrap_or(true) && policy.app_guides_enabled);\n     request.synthesize_guides = Some(\n",
+    "discard-text-after-retrieval": "--- reference/src/services/guides.rs\n+++ discard-text-after-retrieval/src/services/guides.rs\n@@ -1055,8 +1055,7 @@\n         // skip task-guide search in API mode; app-guide lookup remains safe.\n         let private_api_search_unsafe =\n             private && !self.settings.agent_data_source.is_direct_postgres();\n-        let task_guides_allowed = request.use_task_guides.unwrap_or(true)\n-            && task_guides_allowed(partner_context)\n+        let task_guides_allowed = task_guides_allowed(partner_context)\n             && !private_api_search_unsafe;\n \n         // Task-guide short-circuits (app guide is always resolved). Mirrors the\n@@ -1383,7 +1382,7 @@\n         performance::merge_guide_attribution(usage);\n \n         ResolvedGuides {\n-            task_guide,\n+            task_guide: if request.use_task_guides == Some(false) { None } else { task_guide },\n             app_guide,\n             app_guide_package,\n             task_guide_searched: resolve_task,\n",
+    "ignore-task-policy": "--- reference/src/services/guides.rs\n+++ ignore-task-policy/src/services/guides.rs\n@@ -1056,7 +1056,6 @@\n         let private_api_search_unsafe =\n             private && !self.settings.agent_data_source.is_direct_postgres();\n         let task_guides_allowed = request.use_task_guides.unwrap_or(true)\n-            && task_guides_allowed(partner_context)\n             && !private_api_search_unsafe;\n \n         // Task-guide short-circuits (app guide is always resolved). Mirrors the\n--- reference/src/services/partner_runtime.rs\n+++ ignore-task-policy/src/services/partner_runtime.rs\n@@ -642,8 +642,6 @@\n     // include_untagged_guides is AND'd with policy.include_untagged_guides only\n     // (not allow_global_guide_fallback, which is a separate policy concern).\n     request.use_guide = Some(request.use_guide.unwrap_or(true));\n-    request.use_task_guides =\n-        Some(request.use_task_guides.unwrap_or(true) && policy.task_guides_enabled);\n     request.use_app_guides =\n         Some(request.use_app_guides.unwrap_or(true) && policy.app_guides_enabled);\n     request.synthesize_guides = Some(\n"
+  },
+  "runs": [
+    {
+      "fixture": "base",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "task_opt_out_skips_search"
+      ],
+      "expected_check_count": 15,
+      "exit_code": 1,
+      "calibrated": true,
+      "result": {
+        "task": "r01_guide_hot_path",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "both_families_off",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true,
+            "exit_code": 0
+          }
+        ],
+        "logs": "/private/tmp/engram-v2-rust-preflight-lay0g2fh/base-result.logs",
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 42.465
+      }
+    },
+    {
+      "fixture": "reference",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "expected_check_count": 15,
+      "exit_code": 0,
+      "calibrated": true,
+      "result": {
+        "task": "r01_guide_hot_path",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "both_families_off",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true,
+            "exit_code": 0
+          }
+        ],
+        "logs": "/private/tmp/engram-v2-rust-preflight-lay0g2fh/reference-result.logs",
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 48.418
+      }
+    },
+    {
+      "fixture": "request-mutator-only",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "expected_check_count": 15,
+      "exit_code": 0,
+      "calibrated": true,
+      "result": {
+        "task": "r01_guide_hot_path",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "both_families_off",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true,
+            "exit_code": 0
+          }
+        ],
+        "logs": "/private/tmp/engram-v2-rust-preflight-lay0g2fh/request-mutator-only-result.logs",
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 46.618
+      }
+    },
+    {
+      "fixture": "resolver-only",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "expected_check_count": 15,
+      "exit_code": 0,
+      "calibrated": true,
+      "result": {
+        "task": "r01_guide_hot_path",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "both_families_off",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true,
+            "exit_code": 0
+          }
+        ],
+        "logs": "/private/tmp/engram-v2-rust-preflight-lay0g2fh/resolver-only-result.logs",
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 37.996
+      }
+    },
+    {
+      "fixture": "discard-text-after-retrieval",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "task_opt_out_skips_search",
+        "disabled_task_skips_later_cache_pickup"
+      ],
+      "expected_check_count": 15,
+      "exit_code": 1,
+      "calibrated": true,
+      "result": {
+        "task": "r01_guide_hot_path",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "both_families_off",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true,
+            "exit_code": 0
+          }
+        ],
+        "logs": "/private/tmp/engram-v2-rust-preflight-lay0g2fh/discard-text-after-retrieval-result.logs",
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 39.431
+      }
+    },
+    {
+      "fixture": "ignore-task-policy",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "policy_restricts_task_opt_in"
+      ],
+      "expected_check_count": 15,
+      "exit_code": 1,
+      "calibrated": true,
+      "result": {
+        "task": "r01_guide_hot_path",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "both_families_off",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": false,
+            "exit_code": 101
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true,
+            "exit_code": 0
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true,
+            "exit_code": 0
+          }
+        ],
+        "logs": "/private/tmp/engram-v2-rust-preflight-lay0g2fh/ignore-task-policy-result.logs",
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 41.986
+      }
+    }
+  ],
+  "status": "pass"
+}

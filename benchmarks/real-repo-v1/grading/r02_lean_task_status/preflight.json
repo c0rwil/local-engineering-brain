@@ -1,0 +1,657 @@
+{
+  "task_id": "r02_lean_task_status",
+  "base_commit": "1b5c21e44eda8e68dbbe457f7e98e7a607ff3b1a",
+  "reference_fix_commit": "5b0c08504f191c7f9b96893764c120cb0f85efd0",
+  "python": "3.13.12 (main, Mar 25 2026, 02:48:22) [Clang 22.1.1 ]",
+  "grader_sha256": "88e2146edcc1edd94ac87963899590f41436e16bb58455db09f167422e4894a5",
+  "fixture_manifest_sha256": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef",
+  "exported_paths": [
+    "src/agency/api/services/mcp_tool_handlers.py",
+    "src/agency/api/services/mcp_session_service.py",
+    "scripts/mcp_user_control_integration_test.py",
+    "contract_test_fixtures"
+  ],
+  "fixture_root": "/tmp/engram-python-preflight-kbcxtgrb",
+  "runs": [
+    {
+      "fixture": "base",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "default_uses_count_without_loading_history"
+      ],
+      "exit_code": 1,
+      "result": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "string_false_stays_lean",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "status": "pass"
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "status": "fail",
+            "error": "KeyError: 'step_count'"
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "status": "fail",
+            "error": "KeyError: 'step_count'"
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "status": "fail",
+            "error": "KeyError: 'step_count'"
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "status": "fail",
+            "error": "KeyError: 'step_count'"
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "status": "fail",
+            "error": "KeyError: 'step_count'"
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "status": "fail",
+            "error": "KeyError: 'step_count'"
+          },
+          {
+            "name": "invalid_text_cursor",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "invalid_array_cursor",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "invalid_object_cursor",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "completed_result_preserved",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "user_control_error_preserved",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "status": "fail",
+            "error": "KeyError: 'include_steps'"
+          },
+          {
+            "name": "v1_fixture_bytes_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "v2_device_wire_fixture_bytes_preserved_if_added",
+            "status": "pass"
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "status": "pass"
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "status": "fail",
+            "error": "AssertionError: [{'task_id': 't-private'}]"
+          }
+        ],
+        "metrics": {
+          "default_response_json_bytes": 197160,
+          "default_history_payload_reads": 1,
+          "synthetic_steps": 3,
+          "synthetic_screenshot_characters_per_step": 65536,
+          "measurement_scope": "Synthetic product response bytes, not coding-agent token usage"
+        },
+        "isolation": {
+          "dependencies": "Python standard library only",
+          "real_handler_and_service_executed": true,
+          "development_conftest_loaded": false,
+          "network_and_subprocesses_denied": true,
+          "environment_cleared": true
+        },
+        "task_id": "r02_lean_task_status",
+        "repo": "/private/tmp/engram-python-preflight-kbcxtgrb/base"
+      }
+    },
+    {
+      "fixture": "reference",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "result": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "status": "pass"
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "status": "pass"
+          },
+          {
+            "name": "string_false_stays_lean",
+            "status": "pass"
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "status": "pass"
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "status": "pass"
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "status": "pass"
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "status": "pass"
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "status": "pass"
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "status": "pass"
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "status": "pass"
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "status": "pass"
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_text_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_array_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_object_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "completed_result_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "user_control_error_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "v1_fixture_bytes_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "v2_device_wire_fixture_bytes_preserved_if_added",
+            "status": "pass"
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "status": "pass"
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "status": "pass"
+          }
+        ],
+        "metrics": {
+          "default_response_json_bytes": 87,
+          "explicit_history_response_json_bytes": 197177,
+          "default_history_payload_reads": 0,
+          "synthetic_steps": 3,
+          "synthetic_screenshot_characters_per_step": 65536,
+          "measurement_scope": "Synthetic product response bytes, not coding-agent token usage"
+        },
+        "isolation": {
+          "dependencies": "Python standard library only",
+          "real_handler_and_service_executed": true,
+          "development_conftest_loaded": false,
+          "network_and_subprocesses_denied": true,
+          "environment_cleared": true
+        },
+        "task_id": "r02_lean_task_status",
+        "repo": "/private/tmp/engram-python-preflight-kbcxtgrb/reference"
+      }
+    },
+    {
+      "fixture": "lean-payload-only",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "default_uses_count_without_loading_history"
+      ],
+      "exit_code": 1,
+      "result": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "string_false_stays_lean",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "status": "pass"
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "status": "pass"
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "status": "pass"
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "status": "pass"
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "status": "pass"
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "status": "pass"
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_text_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_array_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_object_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "completed_result_preserved",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "user_control_error_preserved",
+            "status": "fail",
+            "error": "AssertionError: Default polling loaded full Redis step payloads"
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "v1_fixture_bytes_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "v2_device_wire_fixture_bytes_preserved_if_added",
+            "status": "pass"
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "status": "pass"
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "status": "pass"
+          }
+        ],
+        "metrics": {
+          "explicit_history_response_json_bytes": 197177,
+          "default_response_json_bytes": 87,
+          "default_history_payload_reads": 1,
+          "synthetic_steps": 3,
+          "synthetic_screenshot_characters_per_step": 65536,
+          "measurement_scope": "Synthetic product response bytes, not coding-agent token usage"
+        },
+        "isolation": {
+          "dependencies": "Python standard library only",
+          "real_handler_and_service_executed": true,
+          "development_conftest_loaded": false,
+          "network_and_subprocesses_denied": true,
+          "environment_cleared": true
+        },
+        "task_id": "r02_lean_task_status",
+        "repo": "/private/tmp/engram-python-preflight-kbcxtgrb/lean-payload-only"
+      }
+    },
+    {
+      "fixture": "serializer-drops-field",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "runtime_step_serializer_preserves_all_wire_fields"
+      ],
+      "exit_code": 1,
+      "result": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "status": "pass"
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "status": "pass"
+          },
+          {
+            "name": "string_false_stays_lean",
+            "status": "pass"
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "status": "pass"
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "status": "pass"
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "status": "fail",
+            "error": "AssertionError: Runtime Step serialization lost wire fields or their values"
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "status": "pass"
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "status": "pass"
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "status": "pass"
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "status": "pass"
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "status": "pass"
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_text_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_array_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_object_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "completed_result_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "user_control_error_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "v1_fixture_bytes_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "v2_device_wire_fixture_bytes_preserved_if_added",
+            "status": "pass"
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "status": "pass"
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "status": "pass"
+          }
+        ],
+        "metrics": {
+          "default_response_json_bytes": 87,
+          "explicit_history_response_json_bytes": 197177,
+          "default_history_payload_reads": 0,
+          "synthetic_steps": 3,
+          "synthetic_screenshot_characters_per_step": 65536,
+          "measurement_scope": "Synthetic product response bytes, not coding-agent token usage"
+        },
+        "isolation": {
+          "dependencies": "Python standard library only",
+          "real_handler_and_service_executed": true,
+          "development_conftest_loaded": false,
+          "network_and_subprocesses_denied": true,
+          "environment_cleared": true
+        },
+        "task_id": "r02_lean_task_status",
+        "repo": "/private/tmp/engram-python-preflight-kbcxtgrb/serializer-drops-field"
+      }
+    },
+    {
+      "fixture": "history-and-serializer-erase-payload",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "runtime_step_serializer_preserves_all_wire_fields",
+        "explicit_true_returns_full_history"
+      ],
+      "exit_code": 1,
+      "result": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "status": "pass"
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "status": "pass"
+          },
+          {
+            "name": "string_false_stays_lean",
+            "status": "pass"
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "status": "pass"
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "status": "pass"
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "status": "fail",
+            "error": "AssertionError: Runtime Step serialization lost wire fields or their values"
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "status": "fail",
+            "error": "AssertionError: Explicit history lost step fields or their values"
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "status": "fail",
+            "error": "AssertionError: Explicit history lost step fields or their values"
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "status": "fail",
+            "error": "AssertionError: Explicit history lost step fields or their values"
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "status": "fail",
+            "error": "AssertionError: Explicit history lost step fields or their values"
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "status": "fail",
+            "error": "AssertionError: Explicit history lost step fields or their values"
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_text_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_array_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "invalid_object_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "completed_result_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "user_control_error_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "status": "pass"
+          },
+          {
+            "name": "v1_fixture_bytes_preserved",
+            "status": "pass"
+          },
+          {
+            "name": "v2_device_wire_fixture_bytes_preserved_if_added",
+            "status": "pass"
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "status": "pass"
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "status": "pass"
+          }
+        ],
+        "metrics": {
+          "default_response_json_bytes": 87,
+          "default_history_payload_reads": 0,
+          "synthetic_steps": 3,
+          "synthetic_screenshot_characters_per_step": 65536,
+          "measurement_scope": "Synthetic product response bytes, not coding-agent token usage"
+        },
+        "isolation": {
+          "dependencies": "Python standard library only",
+          "real_handler_and_service_executed": true,
+          "development_conftest_loaded": false,
+          "network_and_subprocesses_denied": true,
+          "environment_cleared": true
+        },
+        "task_id": "r02_lean_task_status",
+        "repo": "/private/tmp/engram-python-preflight-kbcxtgrb/history-and-serializer-erase-payload"
+      }
+    }
+  ],
+  "status": "pass"
+}

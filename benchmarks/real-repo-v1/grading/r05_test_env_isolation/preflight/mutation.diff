@@ -1,0 +1,11 @@
+--- reference/src/config.rs
++++ incomplete/src/config.rs
+@@ -414,7 +414,7 @@
+         // re-adds every one of them, so a local file silently changed what the
+         // tests exercised — and only on that machine.
+         if std::env::var("ENVIRONMENT").as_deref() != Ok("test") {
+-            let _ = dotenvy::dotenv();
++            // Incorrect mutation: dotenv disabled for every environment.
+         }
+         let environment = env_string("ENVIRONMENT", "development");
+         // Python parity (_sentry_effective_enabled): Sentry is on by default in

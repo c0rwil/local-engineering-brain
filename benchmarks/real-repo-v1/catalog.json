@@ -1,0 +1,460 @@
+{
+  "schema_version": 1,
+  "created_on": "2026-09-24",
+  "purpose": "Task-level engineering effectiveness and token/tool-call benchmark specifications",
+  "status": "pilot_completed_with_grading_limitations",
+  "executable_runner_config": true,
+  "protocol": "README.md",
+  "pilot_task_ids": [
+    "r01_guide_hot_path",
+    "r02_lean_task_status",
+    "r05_test_env_isolation",
+    "r06_onboarding_outage"
+  ],
+  "pilot_repetitions": 3,
+  "pilot_agent_runs": 24,
+  "tasks": [
+    {
+      "id": "r01_guide_hot_path",
+      "title": "Skip task-guide work in the action hot path",
+      "repository": "agi-backend-rust",
+      "selection": "pilot",
+      "difficulty": "medium",
+      "kind": "historical_replay",
+      "status": "executable_preflight_passed",
+      "prompt_file": "prompts/r01_guide_hot_path.md",
+      "base_commit": "bbce775ef3252e4ad882ac43e6564263302f8076",
+      "reference_fix_commit": "ff515c8a0b8fedc4757209ce3291ee61d0f5aa7d",
+      "evaluator_source_paths": [
+        "src/models/api.rs",
+        "src/services/guides.rs",
+        "src/services/partner_runtime.rs"
+      ],
+      "acceptance": [
+        "Absent switches preserve both guide families.",
+        "use_task_guides:false results in zero mock search requests and no task guide or deferred resolution, while retaining the app guide.",
+        "use_app_guides:false still searches for task guides and omits the app guide.",
+        "use_guide:false overrides both family switches.",
+        "Session action request conversion retains the switches.",
+        "Enforcing partner policy can restrict task guides but cannot override a caller's opt-out."
+      ],
+      "candidate_validation_commands": [
+        "cargo test --offline --locked --no-run"
+      ],
+      "preflight_remaining": [],
+      "environment": [
+        "Preflight used Homebrew Rust 1.96.0; historical package declares a 1.91.1 minimum. Offline locked dependencies are prepared before agent timing. Behavioral grader uses in-process loopback search/cache mocks, no production database or model."
+      ],
+      "engram_hypothesis": "Find the shared resolver, request conversion and policy merge without repeated route-by-route searches.",
+      "provenance": "Narrow historical Git change; larger CHANGELOG 0.58.0 variant adds generate_guides.",
+      "related_variant": {
+        "base": "5f6bcbc228fb486e1fd9aaa1f7c62e17183fe4de",
+        "fix": "e35a07e6112edd3f4a1fede0b51487a44a4300b5",
+        "notes": "Adds generate_guides, server-default preservation, separate opt-out cache partition and fail-closed partner fallback. Not independent of r01; score as a labeled larger variant."
+      },
+      "grader": {
+        "entrypoint": "grading/r01_guide_hot_path/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 14,
+        "preflight_evidence": "grading/r01_guide_hot_path/preflight/",
+        "calibration_controls": [
+          "base_rejected",
+          "reference_passed",
+          "discard_text_after_retrieval_mutant_rejected"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      }
+    },
+    {
+      "id": "r02_lean_task_status",
+      "title": "Make phone-task status polling lean by default",
+      "repository": "agents",
+      "selection": "pilot",
+      "difficulty": "medium",
+      "kind": "historical_replay",
+      "status": "executable_preflight_passed",
+      "prompt_file": "prompts/r02_lean_task_status.md",
+      "base_commit": "1b5c21e44eda8e68dbbe457f7e98e7a607ff3b1a",
+      "reference_fix_commit": "5b0c08504f191c7f9b96893764c120cb0f85efd0",
+      "evaluator_source_paths": [
+        "src/agency/api/services/mcp_tool_handlers.py",
+        "src/agency/api/services/mcp_session_service.py",
+        "contract_test_fixtures/v1",
+        "contract_test_fixtures/v2",
+        "docs/mcp-phone-tools.md"
+      ],
+      "acceptance": [
+        "Default result has the requested summary fields and no steps.",
+        "Default works when list_steps raises, using the count operation instead.",
+        "Explicit steps and since_step return the requested history; count remains total.",
+        "String false does not opt into steps; cursor values that cannot be converted to an integer return -32602.",
+        "Contract v1 and device fixture bytes are preserved.",
+        "Consumers needing user-control steps explicitly request them."
+      ],
+      "candidate_validation_commands": [
+        "python3 -m py_compile src/agency/api/services/mcp_tool_handlers.py src/agency/api/services/mcp_session_service.py scripts/mcp_user_control_integration_test.py"
+      ],
+      "preflight_remaining": [],
+      "environment": [
+        "Python standard-library grader executes actual handler/service and consumer code with isolated external-service doubles. Preflight used Python 3.13.12. No development conftest, database, embeddings, network, or subprocesses; the candidate may add isolated tests."
+      ],
+      "engram_hypothesis": "Find contract versioning obligations, the expensive Redis call and consumers beyond the handler.",
+      "provenance": "Historical Git change.",
+      "grader": {
+        "entrypoint": "grading/r02_lean_task_status/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 23,
+        "preflight_evidence": "grading/r02_lean_task_status/preflight.json",
+        "calibration_controls": [
+          "base_rejected",
+          "reference_passed",
+          "full_history_loading_mutant_rejected",
+          "wire_field_erasure_mutants_rejected"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      },
+      "reference_limitations": [
+        "Numeric strings are accepted. The historical reference coerces fractions and booleans; strict rejection of those values is not scored. Invalid text/list/object conversions are covered.",
+        "Contract v1 bytes are fixed. New v2 fixtures are checked if supplied; adding a v2 directory is not itself required.",
+        "Synthetic API response-byte measurements are product metrics, not coding-agent token savings."
+      ]
+    },
+    {
+      "id": "r03_expired_device_result",
+      "title": "Acknowledge expired device callbacks cleanly",
+      "repository": "agents",
+      "selection": "extension",
+      "difficulty": "small",
+      "kind": "historical_replay",
+      "status": "specified_preflight_pending",
+      "prompt_file": "prompts/r03_expired_device_result.md",
+      "base_commit": "78530a96408f4aee8beaba5b9a80b8a307813b96",
+      "reference_fix_commit": "24ed7de0cc2adaabd3d398ada326364f7f3a3f7e",
+      "evaluator_source_paths": [
+        "src/agency/api/routes/devices.py",
+        "src/agency/api/services/mcp_relay_service.py",
+        "src/tests/unit/routes/test_devices_mcp_result.py"
+      ],
+      "acceptance": [
+        "Pending callback returns 200 and status ok.",
+        "Expired callback returns 202 and status expired.",
+        "Relay delivery is invoked once with unchanged correlation ID/result/error.",
+        "Authentication and ownership restrictions still apply.",
+        "Expired callbacks do not recreate pending state."
+      ],
+      "candidate_validation_commands": [
+        "PYTHONPATH=src uv run --frozen pytest src/tests/unit/routes/test_devices_mcp_result.py"
+      ],
+      "preflight_remaining": [
+        "Adapt reference dependency overrides and mock relay into a private acceptance test.",
+        "Audit parent conftest collection before execution."
+      ],
+      "environment": [
+        "Python/uv dependencies; mocked route dependencies; no developer DB."
+      ],
+      "engram_hypothesis": "Connect the route result to relay expiry semantics quickly; small enough to reveal context overhead.",
+      "provenance": "Historical Git change."
+    },
+    {
+      "id": "r04_honest_cancellation",
+      "title": "Preserve the actual cause of phone-task cancellation",
+      "repository": "agents",
+      "selection": "extension",
+      "difficulty": "medium",
+      "kind": "historical_replay",
+      "status": "specified_preflight_pending",
+      "prompt_file": "prompts/r04_honest_cancellation.md",
+      "base_commit": "6b9da8c61cbc510c4554465e7044721a88459c8d",
+      "reference_fix_commit": "3b23f8c4397c0ba1cc158cd511aceb8fa3dec62e",
+      "evaluator_source_paths": [
+        "src/agency/api/services/mcp_tool_handlers.py",
+        "src/agency/api/services/mcp_session_service.py",
+        "src/agency/api/routes/devices.py",
+        "src/agency/api/services/device_service.py",
+        "docs/mcp-phone-tools.md"
+      ],
+      "acceptance": [
+        "New tasks supersede pending, running and paused predecessors.",
+        "MCP cancellation and session end use cancelled_by_caller.",
+        "Device end uses device_ended; explicit user stop remains stopped_by_user.",
+        "Terminal and error code agree across all paths.",
+        "Remote cancellation still occurs when required.",
+        "Phone-submitted terminal values do not expand to all server-owned values."
+      ],
+      "candidate_validation_commands": [
+        "PYTHONPATH=src uv run --frozen pytest src/tests/unit/services/test_mcp_tool_handlers.py -k 'cancel or session_end'",
+        "PYTHONPATH=src uv run --frozen pytest src/tests/unit/routes/test_mcp_terminal_contract.py"
+      ],
+      "preflight_remaining": [
+        "Replace the reference device-session test's real-DB fixtures with a mock-only grader or disposable database.",
+        "Prove a fix to only the obvious cancel handler fails other lifecycle paths."
+      ],
+      "environment": [
+        "Python/uv dependencies; mocked MCP/session/device services; do not use developer route DB fixtures."
+      ],
+      "engram_hypothesis": "Recover distributed lifecycle paths and the distinction between internal state and device protocol.",
+      "provenance": "Historical Git change."
+    },
+    {
+      "id": "r05_test_env_isolation",
+      "title": "Keep developer environment files out of contract tests",
+      "repository": "agi-backend-rust",
+      "selection": "pilot_control",
+      "difficulty": "small",
+      "kind": "historical_replay",
+      "status": "executable_preflight_passed",
+      "prompt_file": "prompts/r05_test_env_isolation.md",
+      "base_commit": "cae95f3086d7320551ab02ba4ba0fc105dc13342",
+      "reference_fix_commit": "30cc0acfcb7766e8ff0de47119d072b6f46543a8",
+      "evaluator_source_paths": [
+        "src/config.rs",
+        "tests/http_contract.rs"
+      ],
+      "acceptance": [
+        "Test environment does not reload scrubbed values from a synthetic .env.",
+        "Non-test local startup still loads .env.",
+        "A deliberately poisoned shared test lock does not cascade into unrelated lock panics.",
+        "The original failure remains visible."
+      ],
+      "candidate_validation_commands": [
+        "cargo test --offline --locked --no-run"
+      ],
+      "preflight_remaining": [],
+      "environment": [
+        "Preflight used Homebrew Rust 1.96.0 with offline locked dependencies. Private tests use harmless synthetic .env values and fresh subprocesses; no database, Redis, or model is started."
+      ],
+      "engram_hypothesis": "Locate the settings constructor and shared harness together. A small control can show no benefit or negative overhead.",
+      "provenance": "CHANGELOG 0.59.2 and historical Git change.",
+      "grader": {
+        "entrypoint": "grading/r05_test_env_isolation/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 5,
+        "preflight_evidence": "grading/r05_test_env_isolation/preflight/",
+        "calibration_controls": [
+          "base_rejected",
+          "reference_passed",
+          "remove_dotenv_globally_mutant_rejected"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      }
+    },
+    {
+      "id": "r06_onboarding_outage",
+      "title": "Bound onboarding checks without redirect loops",
+      "repository": "platform",
+      "selection": "pilot",
+      "difficulty": "medium",
+      "kind": "historical_replay",
+      "status": "executable_preflight_passed",
+      "prompt_file": "prompts/r06_onboarding_outage.md",
+      "base_commit": "4a2668b9bb198ae7d9108f2cebefb84fa9244b24",
+      "reference_fix_commit": "60cfcd4eda9d776f6cdac8af88f853c9276cb30e",
+      "evaluator_source_paths": [
+        "features/onboarding/actions/_call-backend.ts",
+        "features/onboarding/actions/enforce-onboarding-gate.ts",
+        "features/onboarding/actions/onboarding.test.ts"
+      ],
+      "acceptance": [
+        "500, unreachable, and malformed JSON/non-JSON backend responses do not admit users to gated pages.",
+        "Welcome stays usable on the same failures without redirect loops.",
+        "Completed users pass the gate and leave welcome for a safe destination.",
+        "A hung fetch becomes the established failure result within five seconds.",
+        "Unsafe return URLs remain blocked; safe invite/CLI destinations survive."
+      ],
+      "candidate_validation_commands": [
+        "pnpm test:run features/onboarding/actions/onboarding.test.ts"
+      ],
+      "preflight_remaining": [],
+      "environment": [
+        "Node v26.5.1, Vitest 4.1.5, and MSW 2.13.5 in a private cloned dependency tree; this is not a lockfile-exact historical installation. Identical prepared dependencies are used across arms. No live Clerk or backend; deadline grading uses real timers and fetch aborts."
+      ],
+      "engram_hypothesis": "Reuse server-action/fetch conventions and understand opposite gate and welcome-page redirects.",
+      "provenance": "Historical Git change.",
+      "grader": {
+        "entrypoint": "grading/r06_onboarding_outage/grade.py",
+        "arguments": "--repo DISPOSABLE_GRADING_COPY --output RESULT_JSON",
+        "private_check_count": 26,
+        "preflight_evidence": "grading/r06_onboarding_outage/preflight.json",
+        "calibration_controls": [
+          "base_rejected",
+          "reference_passed",
+          "welcome_loop_mutant_rejected",
+          "missing_deadline_mutant_rejected"
+        ],
+        "scope": "Run after coding, outside the editable agent workspace; calibration is not an agent outcome."
+      },
+      "reference_limitations": [
+        "Malformed response means invalid JSON syntax or a non-JSON body. Schema-invalid but syntactically valid profile objects are outside this reference contract.",
+        "The five-second deadline check allows 500 ms scheduling tolerance and verifies cancellation through profile, gate, and welcome calls.",
+        "The prepared dependency lock differs from the historical source lock. Both hashes are recorded; changing runtimes requires recalibrating all controls before measured trials."
+      ]
+    },
+    {
+      "id": "r07_signout_routine_race",
+      "title": "Make sign-out safe during routine-registration races",
+      "repository": "mobile",
+      "selection": "advanced",
+      "difficulty": "large",
+      "kind": "historical_replay",
+      "status": "specified_preflight_pending",
+      "prompt_file": "prompts/r07_signout_routine_race.md",
+      "base_commit": "4d75f6e1e1c4e60520de168defcf29b2973bb126",
+      "reference_fix_commit": "6de77300bc2c6e49897715f0fe0ab38cf19e74c6",
+      "evaluator_source_paths": [
+        "feature/remote-control/src",
+        "feature/settings/src",
+        "eve-agent/agent/lib/schedule-store.ts",
+        "eve-agent/agent/lib/postgres-schedule-store.ts",
+        "eve-agent/agent/schedules/due_jobs.ts",
+        "eve-agent/tests/phone-routines.test.ts",
+        "eve-agent/tests/phone-routines-postgres.test.ts"
+      ],
+      "acceptance": [
+        "Timed-out/cancelled withdrawal still disconnects exactly once.",
+        "Registration and settings sync cannot overtake disconnect.",
+        "Toggle writes the local preference without registering during sign-out.",
+        "Undelivered occurrence is missed and consumes its slot once; delivered occurrence remains ok.",
+        "Cancellation is propagated according to structured concurrency."
+      ],
+      "candidate_validation_commands": [
+        "./gradlew :feature:remote-control:testDebugUnitTest :feature:settings:testDebugUnitTest",
+        "cd eve-agent && bun run test tests/phone-routines.test.ts tests/phone-routines-postgres.test.ts"
+      ],
+      "preflight_remaining": [
+        "Confirm exact historical Gradle task names and add focused class filters before running.",
+        "Use virtual-time coroutine tests and controlled deferred operations.",
+        "Use private Eve tests with PGlite; prove a single-layer fix fails cross-layer checks."
+      ],
+      "environment": [
+        "Android SDK/JDK/Gradle and Kotlin dependencies; Bun/Vitest/PGlite. Warm toolchain setup outside timed agent runs."
+      ],
+      "engram_hypothesis": "Connect identity lifecycle, lock ownership, local preferences and occurrence persistence across Kotlin and TypeScript.",
+      "provenance": "Historical Git change."
+    },
+    {
+      "id": "r08_direct_phone_context",
+      "title": "Make cancellation and queued direct-phone context durable",
+      "repository": "mobile",
+      "selection": "advanced",
+      "difficulty": "large",
+      "kind": "historical_replay",
+      "status": "specified_preflight_pending",
+      "prompt_file": "prompts/r08_direct_phone_context.md",
+      "base_commit": "9e22d7454162261f5603e56f289e556f97174daa",
+      "reference_fix_commit": "991869c87b56c5d3ebc6646cc6159768d6f162d9",
+      "evaluator_source_paths": [
+        "workers/api/src/routes/agent-chat.ts",
+        "eve-agent/agent/channels/mobile.ts",
+        "eve-agent/agent/lib/input-queue.ts",
+        "eve-agent/agent/lib/direct-phone-context.ts",
+        "eve-agent/agent/instructions/direct_phone_context.ts",
+        "core/data/src",
+        "prompts/golden/eve-direct-phone-context.md"
+      ],
+      "acceptance": [
+        "Pre-aborted request performs no classification/upstream calls; abort during classification returns 499 without starting Eve.",
+        "Upstream cancellation signal is propagated.",
+        "Routing-disabled/context-enabled behavior retains verified history.",
+        "FIFO/dedup preserve original per-turn snapshots, including explicit empty; callbacks/new turns handle the latest snapshot correctly.",
+        "No user/session context leakage.",
+        "Newest whole records fit the 24,000-character JSON limit.",
+        "Permanent rejection removes outbox work; specified transient/auth errors remain retryable; backoff caps at five minutes."
+      ],
+      "candidate_validation_commands": [],
+      "preflight_remaining": [
+        "Select historical Worker Bun tests, Eve input-queue/direct-phone-context/direct-phone-instructions/mobile-memory-consent tests and Kotlin outbox MockWebServer/Robolectric tests.",
+        "Confirm command paths against the fixture; no guessed all-repository test command.",
+        "Use deterministic mocks for routing/classification. Keep real-model prompt compliance in a separate optional tier."
+      ],
+      "environment": [
+        "Bun/Vitest/PGlite and Android SDK/JDK/Kotlin test tooling; no live Jev or model required for grading."
+      ],
+      "engram_hypothesis": "Supply cross-component contracts and prevent a patch that fixes only one cancellation or context layer.",
+      "provenance": "Historical Git change spanning 19 original files."
+    },
+    {
+      "id": "r09_org_runtime_defaults",
+      "title": "Carry organization runtime defaults through API-key creation",
+      "repository": "platform",
+      "selection": "extension",
+      "difficulty": "large",
+      "kind": "historical_replay",
+      "status": "specified_preflight_pending",
+      "prompt_file": "prompts/r09_org_runtime_defaults.md",
+      "base_commit": "2e31f5f070fe53ec9608ce85b4e8aa08415ec109",
+      "reference_fix_commit": "4e0a7270af118b697527f6dad2ab68c1d150145c",
+      "evaluator_source_paths": [
+        "config/endpoints/organizations.ts",
+        "features/org/actions",
+        "features/org/components",
+        "features/org/hooks",
+        "features/org/types",
+        "features/org/utils",
+        "features/org/actions/org-actions.test.ts"
+      ],
+      "acceptance": [
+        "Authenticated profile listing and default PUT/DELETE use the versioned organization contract.",
+        "Explicit selection sends profile_key/profile_version.",
+        "Inheritance and explicit no-profile are distinct.",
+        "Single-profile fallback displays correctly.",
+        "Mutation invalidation/cache updates are organization-scoped.",
+        "JWTs remain server-side; key creation still works with no profiles."
+      ],
+      "candidate_validation_commands": [],
+      "preflight_remaining": [
+        "Supply the same historically compatible backend contract fixture to both arms.",
+        "Adapt focused org MSW action tests and add private component/cache tests.",
+        "If expanded to another repository, pin its contemporary contract revision before indexing."
+      ],
+      "environment": [
+        "Prepared platform Node/pnpm dependencies, MSW and component-test tooling; no deployed backend."
+      ],
+      "engram_hypothesis": "Reuse server-action, component and cache conventions across a substantial multi-file feature.",
+      "provenance": "Historical Git change spanning 15 original files."
+    }
+  ],
+  "runner": "scripts/run_real_repo_pilot.py",
+  "execution_status": "completed_24_runs",
+  "result_claims": "24 attempts complete. Paired outcomes: both pass 1, Brain-only pass 4, Off-only pass 1, unscorable 6. The single both-pass pair used 34.1% fewer processed tokens and 22.7% fewer tool calls with Brain, with 1.3% more agent time. Diagnostic only; no general savings claim.",
+  "runtime": {
+    "model": "claude-opus-4-8[1m]",
+    "effort": "high",
+    "agent_mode": "single_agent",
+    "tools": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep"
+    ],
+    "brain_condition": "isolated_source_only_native_hooks",
+    "mcp_enabled": false,
+    "agent_seconds": 1200,
+    "grader_seconds": 1800,
+    "max_budget_usd_estimate_per_run": 8,
+    "repetitions_interpretation": "Three repetitions are diagnostic, not statistically decisive.",
+    "coding_environment": {
+      "git_configuration": "Global/system config and global exclude rules disabled.",
+      "cargo_home": "Private per-arm registry-only copy; no inherited credentials or Git checkout cache.",
+      "prepared_dependencies": "Identical frozen starting dependencies across arms.",
+      "pnpm_config_pm_on_fail": "ignore",
+      "pnpm_config_verify_deps_before_run": "false",
+      "pnpm_note": "Prevents pnpm 11 automatic package-manager download or dependency reinstall during coding."
+    },
+    "provider_prompt_cache": {
+      "enabled": true,
+      "reset_between_trials": false,
+      "limitation": "The aborted first guide-task Off attempt may have warmed the r01 prompt prefix. Report cache-creation/read tokens separately; this is not a controlled cold-cache comparison. CLI cost is an estimate, not cash billing."
+    }
+  },
+  "infrastructure_attempts": {
+    "evidence_file": "DATA_ROOT/infrastructure_attempts.jsonl",
+    "included_in_scored_24_run_matrix": false,
+    "reason": "First guide-task Off attempt aborted because the sandbox blocked global Git configuration; evidence preserved separately.",
+    "restart": "Scored comparison restarted after full tool preflight with corrected coding environment; prompts and scored limits unchanged.",
+    "reporting": "Report the preserved attempt and its observed resource use separately from records.jsonl matrix aggregates."
+  },
+  "results": "../../docs/perf-evidence/2026-09-24-real-repo-pilot/README.md",
+  "grading_follow_up": "Five attempts have verified grader-contract ambiguities and one has a provider runtime error; raw grades and resource use are preserved. Revise and preflight grader contracts before any new collection, without retroactively rescoring this matrix."
+}

@@ -70,6 +70,7 @@ const API_TASKS_BRIEF: &str = "/api/v1/tasks/brief";
 const API_INDEX_PROJECT: &str = "/api/v1/projects/index";
 const API_WORLD_SEARCH: &str = "/api/v1/world/search";
 const API_CONTEXT_COMPILE: &str = "/api/v1/context/compile";
+const API_CONTEXT_DELIVERED: &str = "/api/v1/context/delivered";
 const API_MEMORY_CREATE: &str = "/api/v1/memories";
 const API_TASKS: &str = "/api/v1/tasks";
 const API_EVIDENCE: &str = "/api/v1/evidence";
@@ -108,6 +109,10 @@ const API_MODULE_MAP: &str = "/api/v1/projects/module-map";
 const API_MODULE_SYMBOLS: &str = "/api/v1/projects/module-symbols";
 const API_ORIGIN_REFRESH: &str = "/api/v1/projects/origin-refresh";
 const API_MEMORY_PROVENANCE: &str = "/api/v1/memories/provenance";
+const API_EFFECTIVENESS: &str = "/api/v1/effectiveness";
+const API_USAGE_RECORD: &str = "/api/v1/effectiveness/usage";
+const API_JUDGE_STATUS: &str = "/api/v1/judge";
+const API_JUDGE_RUN: &str = "/api/v1/judge/run";
 
 /// Language builtins and assertion macros say nothing about what a module
 /// DOES; the module-detail calls list excludes them.
@@ -190,6 +195,8 @@ struct DaemonState {
     scheduler: MutationScheduler,
     blocking_slots: Arc<Semaphore>,
     background_slots: Arc<Semaphore>,
+    judge_slot: Arc<Semaphore>,
+    judge_stopping: Arc<std::sync::atomic::AtomicBool>,
     world_cache: Option<Arc<WorldReadCache>>,
     metrics: Arc<MetricsRegistry>,
     shutdown: Arc<tokio::sync::Notify>,
@@ -297,6 +304,8 @@ pub enum MemoryPressure {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct HealthResponse {
     pub status: String,
+    #[serde(default)]
+    pub workspace: String,
     pub version: String,
     pub build_id: String,
     pub database: PathBuf,
@@ -671,6 +680,13 @@ pub struct ContextExplainRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextDeliveryRequest {
+    pub run_id: ContextRunId,
+    pub task_id: TaskId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TaskStartRequest {
     #[serde(default)]
     pub context_request_id: Option<String>,
@@ -879,6 +895,47 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
+    /// Read durable usage, delivery coverage and knowledge health.
+    /// # Errors
+    /// Returns transport, validation or storage errors.
+    pub async fn effectiveness(
+        &self,
+        request: &crate::effectiveness::EffectivenessRequest,
+    ) -> Result<crate::effectiveness::EffectivenessReport> {
+        self.request(hyper::Method::POST, API_EFFECTIVENESS, Some(request))
+            .await
+    }
+
+    /// Record one idempotent provider usage or hook delivery sample.
+    /// # Errors
+    /// Returns scope, duplicate-content or transport errors.
+    pub async fn record_usage(
+        &self,
+        request: &crate::effectiveness::UsageRecordRequest,
+    ) -> Result<crate::effectiveness::UsageRecordResult> {
+        self.request(hyper::Method::POST, API_USAGE_RECORD, Some(request))
+            .await
+    }
+
+    /// Inspect automatic review configuration and recent decisions.
+    /// # Errors
+    /// Returns transport or storage errors.
+    pub async fn judge_status(&self) -> Result<serde_json::Value> {
+        self.request::<(), _>(hyper::Method::GET, API_JUDGE_STATUS, None)
+            .await
+    }
+
+    /// Queue a bounded review pass. Model calls happen outside the writer.
+    /// # Errors
+    /// Returns disabled-runner or transport errors.
+    pub async fn judge_run(&self) -> Result<serde_json::Value> {
+        self.request(
+            hyper::Method::POST,
+            API_JUDGE_RUN,
+            Some(&serde_json::json!({})),
+        )
+        .await
+    }
     #[must_use]
     pub fn new(socket_path: impl Into<PathBuf>, timeout: Duration) -> Self {
         Self {
@@ -1093,6 +1150,16 @@ impl DaemonClient {
         request: &ContextCompileRequest,
     ) -> Result<CompiledContext> {
         self.request(hyper::Method::POST, API_CONTEXT_COMPILE, Some(request))
+            .await
+    }
+
+    /// Acknowledge successful context delivery to a task, returning whether a
+    /// new receipt was inserted. Repeated acknowledgements return false.
+    ///
+    /// # Errors
+    /// Returns transport, scope, context-mode, overload, or storage errors.
+    pub async fn context_delivered(&self, request: &ContextDeliveryRequest) -> Result<bool> {
+        self.request(hyper::Method::POST, API_CONTEXT_DELIVERED, Some(request))
             .await
     }
 
@@ -1816,6 +1883,8 @@ where
         .checked_add(usize::from(config.daemon.background_concurrency))
         .ok_or_else(|| Error::Config("blocking concurrency exceeds this platform".to_owned()))?;
     let state = DaemonState {
+        judge_slot: Arc::new(Semaphore::new(1)),
+        judge_stopping: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         config: Arc::new(config.clone()),
         database,
         redactor: Redactor::new(&config.security.custom_redaction_patterns)?,
@@ -1867,6 +1936,10 @@ where
         }
     }
     let router = Router::new()
+        .route(API_EFFECTIVENESS, post(effectiveness_report))
+        .route(API_USAGE_RECORD, post(record_usage))
+        .route(API_JUDGE_STATUS, get(judge_status))
+        .route(API_JUDGE_RUN, post(judge_run))
         .route("/api/v1/product/lessons", post(lesson_mutate))
         .route("/api/v1/product/query", post(product_query))
         .route("/api/v1/product/mutate", post(product_mutate))
@@ -1886,6 +1959,7 @@ where
         .route(API_WORLD_SEARCH, post(search_world))
         .route(API_WORLD_NEIGHBORS, post(world_neighbors))
         .route(API_CONTEXT_COMPILE, post(compile_context))
+        .route(API_CONTEXT_DELIVERED, post(context_delivered))
         .route(API_CONTEXT_EXPLAIN, post(explain_context))
         .route(API_MEMORY_CREATE, post(create_memory))
         .route(API_MEMORY_SEARCH, post(list_memories))
@@ -1948,11 +2022,13 @@ where
 
     let (jobs_stop_sender, jobs_handle) = start_job_system(&state, &config).await?;
 
+    let judge_stopping = Arc::clone(&state.judge_stopping);
     let shutdown_signal = async move {
         tokio::select! {
             () = external_shutdown => {}
             () = local_shutdown.notified() => {}
         }
+        judge_stopping.store(true, std::sync::atomic::Ordering::SeqCst);
         let _ = jobs_stop_sender.send(true);
     };
     axum::serve(listener, router)
@@ -1964,6 +2040,13 @@ where
             .await
             .map_err(|error| Error::Daemon(format!("job runner exited abnormally: {error}")))?;
     }
+    // Finish the one in-flight, timeout-bounded inference and persist its audit
+    // before the runtime exits. No further batch items start once stopping.
+    let _judge_finished = state
+        .judge_slot
+        .acquire()
+        .await
+        .map_err(|error| Error::Daemon(format!("judge shutdown wait failed: {error}")))?;
     Ok(())
 }
 
@@ -2042,6 +2125,21 @@ async fn start_job_system(
     }
 
     let (stop_sender, stop_receiver) = tokio::sync::watch::channel(false);
+    if config.judge.enabled {
+        let state = state.clone();
+        let mut stopped = stop_receiver.clone();
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(Duration::from_secs(state.config.judge.interval_seconds));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _=interval.tick()=>{if admit_work(&state,MutationPriority::BackgroundLearning).is_ok(){spawn_judge_pass(state.clone());}},
+                    _=stopped.changed()=>break,
+                }
+            }
+        });
+    }
     let handle = if config.jobs.enabled {
         let executor = JobExecutor::new(
             state.database.clone(),
@@ -2127,6 +2225,7 @@ async fn health(State(state): State<DaemonState>) -> Json<HealthResponse> {
     let hard = mebibytes_to_bytes(state.config.daemon.rss_hard_limit_mb);
     Json(HealthResponse {
         status: "ok".to_owned(),
+        workspace: state.config.workspace.clone(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         build_id: crate::BUILD_ID.to_owned(),
         database: state.config.storage.db_path.clone(),
@@ -2682,6 +2781,9 @@ fn plan_changed_paths(
     let Some(previous) = world.latest_index_status(&project.project.id)? else {
         return Ok(None);
     };
+    if previous.needs_reindex {
+        return Ok(None);
+    }
     let mut changed = requested
         .unwrap_or_default()
         .into_iter()
@@ -2887,6 +2989,21 @@ async fn compile_context(
     Ok(Json(context))
 }
 
+async fn context_delivered(
+    State(state): State<DaemonState>,
+    Json(request): Json<ContextDeliveryRequest>,
+) -> std::result::Result<Json<bool>, ApiError> {
+    admit_work(&state, MutationPriority::Interactive)?;
+    let store = ExperienceStore::new(state.database.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::Interactive, move || {
+            store.record_context_delivery(&request.task_id, &request.run_id)
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
 fn semantic_options(config: &crate::config::SemanticConfig) -> SemanticOptions {
     SemanticOptions {
         max_candidates: usize::try_from(config.max_candidates).unwrap_or(usize::MAX),
@@ -2921,6 +3038,7 @@ fn scoped_config(state: &DaemonState, root: &Path) -> Result<Config> {
     Config::load_for(
         Some(root),
         &ConfigOverrides {
+            workspace: Some(state.config.workspace.clone()),
             db_path: Some(state.config.storage.db_path.clone()),
             local_only: Some(state.config.network.local_only),
         },
@@ -4666,6 +4784,160 @@ async fn product_query(
     ))
 }
 
+async fn effectiveness_report(
+    State(state): State<DaemonState>,
+    Json(request): Json<crate::effectiveness::EffectivenessRequest>,
+) -> std::result::Result<Json<crate::effectiveness::EffectivenessReport>, ApiError> {
+    let store = crate::effectiveness::EffectivenessStore::new(state.database.clone());
+    Ok(Json(
+        run_blocking(&state, move || store.report(&request)).await?,
+    ))
+}
+
+async fn judge_status(
+    State(state): State<DaemonState>,
+) -> std::result::Result<Json<serde_json::Value>, ApiError> {
+    let store =
+        crate::judge::JudgeStore::with_redactor(state.database.clone(), state.redactor.clone());
+    let audits = run_blocking(&state, move || store.audits(50)).await?;
+    Ok(Json(
+        serde_json::json!({"workspace":state.config.workspace,"enabled":state.config.judge.enabled,
+        "model":state.config.judge.model,"endpoint":state.config.judge.endpoint,"provider":state.config.judge.provider,
+        "running":state.judge_slot.available_permits()==0,"audits":audits}),
+    ))
+}
+
+async fn judge_run(
+    State(state): State<DaemonState>,
+) -> std::result::Result<Json<serde_json::Value>, ApiError> {
+    if !state.config.judge.enabled {
+        return Err(ApiError::from_core(&Error::Config(
+            "Automatic review is disabled. Configure [judge] enabled, endpoint and model first."
+                .to_owned(),
+        )));
+    }
+    admit_work(&state, MutationPriority::BackgroundLearning)?;
+    let queued = spawn_judge_pass(state);
+    Ok(Json(
+        serde_json::json!({"queued":queued,"already_running":!queued}),
+    ))
+}
+
+fn spawn_judge_pass(state: DaemonState) -> bool {
+    if state
+        .judge_stopping
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return false;
+    }
+    let Ok(permit) = Arc::clone(&state.judge_slot).try_acquire_owned() else {
+        return false;
+    };
+    if state
+        .judge_stopping
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return false;
+    }
+    tokio::spawn(async move {
+        let _permit = permit;
+        if let Err(error) = run_judge_pass(&state).await {
+            eprintln!("automatic lesson review: {error}");
+        }
+    });
+    true
+}
+
+async fn run_judge_pass(state: &DaemonState) -> Result<()> {
+    let _background = Arc::clone(&state.background_slots)
+        .acquire_owned()
+        .await
+        .map_err(|e| Error::Daemon(e.to_string()))?;
+    let store =
+        crate::judge::JudgeStore::with_redactor(state.database.clone(), state.redactor.clone());
+    let config = state.config.judge.clone();
+    let packets = tokio::task::spawn_blocking(move || store.prepare_pending(&config))
+        .await
+        .map_err(|e| Error::Daemon(e.to_string()))??;
+    for packet in packets {
+        if state
+            .judge_stopping
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            break;
+        }
+        let evaluation = crate::judge::evaluate(&state.config.judge, &packet).await;
+        let database = state.database.clone();
+        let store =
+            crate::judge::JudgeStore::with_redactor(database.clone(), state.redactor.clone());
+        let config = state.config.judge.clone();
+        let handle = state
+            .scheduler
+            .submit(MutationPriority::BackgroundLearning, move || {
+                let audit = store.apply(&config, &packet, &evaluation)?;
+                if evaluation.usage.input_tokens.is_some()
+                    || evaluation.usage.output_tokens.is_some()
+                    || evaluation.usage.reported_cost_usd.is_some()
+                {
+                    crate::effectiveness::EffectivenessStore::new(database).record(
+                        &crate::effectiveness::UsageRecordRequest {
+                            sample_id: audit.id.clone(),
+                            project_id: packet.review.project_id,
+                            task_id: Some(packet.review.task_id),
+                            context_run_id: None,
+                            session_id: None,
+                            source: "internal_judge".to_owned(),
+                            provider: Some(
+                                match config.provider {
+                                    crate::judge::JudgeProvider::Local => "local",
+                                    crate::judge::JudgeProvider::Typesafe => "typesafe",
+                                }
+                                .to_owned(),
+                            ),
+                            model: Some(config.model),
+                            mode: None,
+                            metrics: crate::effectiveness::UsageMetrics {
+                                input_tokens: evaluation
+                                    .usage
+                                    .input_tokens
+                                    .and_then(|n| i64::try_from(n).ok()),
+                                output_tokens: evaluation
+                                    .usage
+                                    .output_tokens
+                                    .and_then(|n| i64::try_from(n).ok()),
+                                cost_usd: evaluation.usage.reported_cost_usd,
+                                ..crate::effectiveness::UsageMetrics::default()
+                            },
+                            observed_at_ms: Some(audit.recorded_at_ms),
+                        },
+                    )?;
+                }
+                Ok(())
+            })?;
+        tokio::task::spawn_blocking(move || handle.wait())
+            .await
+            .map_err(|e| Error::Daemon(e.to_string()))??;
+    }
+    Ok(())
+}
+
+async fn record_usage(
+    State(state): State<DaemonState>,
+    Json(mut request): Json<crate::effectiveness::UsageRecordRequest>,
+) -> std::result::Result<Json<crate::effectiveness::UsageRecordResult>, ApiError> {
+    admit_work(&state, MutationPriority::Analytics)?;
+    // Labels can be provided by external adapters; never persist credentials.
+    request.source = state.redactor.redact_text(&request.source);
+    request.model = request.model.map(|s| state.redactor.redact_text(&s));
+    request.provider = request.provider.map(|s| state.redactor.redact_text(&s));
+    let store = crate::effectiveness::EffectivenessStore::new(state.database.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::Analytics, move || store.record(&request))
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
 async fn product_mutate(
     State(state): State<DaemonState>,
     Json(request): Json<crate::product::Mutation>,
@@ -4968,7 +5240,60 @@ mod tests {
             })
             .await
             .expect("compile context");
-        assert_eq!(compiled.items.len(), 1);
+        assert_eq!(
+            compiled
+                .items
+                .iter()
+                .filter(|item| item.source_type == "memory")
+                .count(),
+            1
+        );
+        assert!(compiled.items.iter().any(|item| item.source_type == "code"));
+        let usage = crate::effectiveness::UsageRecordRequest {
+            sample_id: "fixture-provider-response".to_owned(),
+            project_id: status.resolved.project.id.clone(),
+            task_id: None,
+            context_run_id: Some(compiled.id.clone()),
+            session_id: None,
+            source: "test_harness".to_owned(),
+            provider: None,
+            model: None,
+            mode: Some(crate::effectiveness::UsageMode::Brain),
+            metrics: crate::effectiveness::UsageMetrics {
+                input_tokens: Some(123),
+                ..Default::default()
+            },
+            observed_at_ms: None,
+        };
+        assert!(
+            client
+                .record_usage(&usage)
+                .await
+                .expect("record usage")
+                .inserted
+        );
+        assert!(
+            !client
+                .record_usage(&usage)
+                .await
+                .expect("idempotent usage")
+                .inserted
+        );
+        let report = client
+            .effectiveness(&crate::effectiveness::EffectivenessRequest {
+                project_ids: Some(vec![status.resolved.project.id.clone()]),
+                ..Default::default()
+            })
+            .await
+            .expect("effectiveness");
+        assert_eq!(report.usage.totals.input_tokens, Some(123));
+        assert_eq!(report.usage.totals.cost_usd, None);
+        assert_eq!(report.projects[0].contexts.usage_linked_runs, 1);
+        assert_eq!(
+            client.judge_status().await.expect("judge status")["enabled"],
+            false
+        );
+        assert!(client.judge_run().await.is_err());
         let project_limit = client
             .compile_context(&ContextCompileRequest {
                 request_id: "daemon-context-over-budget".to_owned(),

@@ -1,0 +1,2104 @@
+{
+  "schema_version": 1,
+  "record_classification_revision": "agent-completion-v2",
+  "record_count": 4,
+  "all_attempts": {
+    "off": {
+      "attempts": 2,
+      "grade_counts": {
+        "infra": 2
+      },
+      "behavioral_grade_counts": {
+        "pass": 2
+      },
+      "reported_usage_may_be_partial_attempts": 0,
+      "totals_observed": {
+        "input_tokens": 290,
+        "output_tokens": 94062,
+        "cache_creation_input_tokens": 255693,
+        "cache_read_input_tokens": 10678241,
+        "processed_input_tokens": 10934224,
+        "total_tokens": 11028286,
+        "tool_calls": 143,
+        "agent_wall_seconds": 1305.52,
+        "cost_usd_estimate": 10.249050500000001
+      },
+      "measurement_coverage": {
+        "input_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "output_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "cache_creation_input_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "cache_read_input_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "processed_input_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "total_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "tool_calls": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "agent_wall_seconds": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "cost_usd_estimate": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      }
+    },
+    "brain": {
+      "attempts": 2,
+      "grade_counts": {
+        "infra": 2
+      },
+      "behavioral_grade_counts": {
+        "pass": 2
+      },
+      "reported_usage_may_be_partial_attempts": 0,
+      "totals_observed": {
+        "input_tokens": 220,
+        "output_tokens": 77003,
+        "cache_creation_input_tokens": 218018,
+        "cache_read_input_tokens": 6939218,
+        "processed_input_tokens": 7157456,
+        "total_tokens": 7234459,
+        "tool_calls": 119,
+        "agent_wall_seconds": 1247.696,
+        "cost_usd_estimate": 7.575964000000001
+      },
+      "measurement_coverage": {
+        "input_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "output_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "cache_creation_input_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "cache_read_input_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "processed_input_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "total_tokens": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "tool_calls": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "agent_wall_seconds": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        },
+        "cost_usd_estimate": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      }
+    },
+    "unknown": {
+      "attempts": 0,
+      "grade_counts": {},
+      "behavioral_grade_counts": {},
+      "reported_usage_may_be_partial_attempts": 0,
+      "totals_observed": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "processed_input_tokens": null,
+        "total_tokens": null,
+        "tool_calls": null,
+        "agent_wall_seconds": null,
+        "cost_usd_estimate": null
+      },
+      "measurement_coverage": {
+        "input_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "output_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "cache_creation_input_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "cache_read_input_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "processed_input_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "total_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "tool_calls": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "agent_wall_seconds": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "cost_usd_estimate": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        }
+      }
+    }
+  },
+  "pair_counts": {
+    "observed_pairs": 2,
+    "complete_pairs": 2,
+    "both_pass": 0,
+    "off_only_pass": 0,
+    "brain_only_pass": 0,
+    "neither_pass": 0,
+    "infrastructure": 2,
+    "incomplete": 0,
+    "ambiguous": 0
+  },
+  "pairs": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "infra",
+        "brain": "infra"
+      },
+      "behavioral_grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "status": "infrastructure"
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "infra",
+        "brain": "infra"
+      },
+      "behavioral_grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "status": "infrastructure"
+    }
+  ],
+  "both_pass": {
+    "aggregate": {
+      "pair_count": 0,
+      "metrics": {
+        "input_tokens": {
+          "pair_count": 0,
+          "missing_pair_count": 0,
+          "comparison": null
+        },
+        "output_tokens": {
+          "pair_count": 0,
+          "missing_pair_count": 0,
+          "comparison": null
+        },
+        "cache_creation_input_tokens": {
+          "pair_count": 0,
+          "missing_pair_count": 0,
+          "comparison": null
+        },
+        "cache_read_input_tokens": {
+          "pair_count": 0,
+          "missing_pair_count": 0,
+          "comparison": null
+        },
+        "processed_input_tokens": {
+          "pair_count": 0,
+          "missing_pair_count": 0,
+          "comparison": null
+        },
+        "total_tokens": {
+          "pair_count": 0,
+          "missing_pair_count": 0,
+          "comparison": null
+        },
+        "tool_calls": {
+          "pair_count": 0,
+          "missing_pair_count": 0,
+          "comparison": null
+        },
+        "agent_wall_seconds": {
+          "pair_count": 0,
+          "missing_pair_count": 0,
+          "comparison": null
+        },
+        "cost_usd_estimate": {
+          "pair_count": 0,
+          "missing_pair_count": 0,
+          "comparison": null
+        }
+      }
+    },
+    "per_task": []
+  },
+  "measurement_coverage": {
+    "complete_pairs": 2,
+    "both_pass_pairs": 0,
+    "complete_pairs_with_both_measurements": {
+      "input_tokens": 2,
+      "output_tokens": 2,
+      "cache_creation_input_tokens": 2,
+      "cache_read_input_tokens": 2,
+      "processed_input_tokens": 2,
+      "total_tokens": 2,
+      "tool_calls": 2,
+      "agent_wall_seconds": 2,
+      "cost_usd_estimate": 2
+    },
+    "invalid_record_indices": []
+  },
+  "interpretation": "All-attempt totals include observed failed-run and infrastructure-run costs. Reductions use only both-pass pairs with both measurements present and not marked partial; missing measurements are not zero and failed-run cost reductions are not savings.",
+  "adjudication_counts": {},
+  "progress": {
+    "status": "aborted",
+    "planned_runs": 24,
+    "started_trials": 5,
+    "coding_runs_started": 4,
+    "completed_records": 4,
+    "in_progress_trials": 0,
+    "infrastructure_outcomes": 4,
+    "interrupted_trials": 1
+  },
+  "per_task": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "all_attempts": {
+        "off": {
+          "attempts": 1,
+          "grade_counts": {
+            "infra": 1
+          },
+          "behavioral_grade_counts": {
+            "pass": 1
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 154,
+            "output_tokens": 36698,
+            "cache_creation_input_tokens": 116332,
+            "cache_read_input_tokens": 4896089,
+            "processed_input_tokens": 5012575,
+            "total_tokens": 5049273,
+            "tool_calls": 76,
+            "agent_wall_seconds": 559.169,
+            "cost_usd_estimate": 4.529584500000001
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 1,
+          "grade_counts": {
+            "infra": 1
+          },
+          "behavioral_grade_counts": {
+            "pass": 1
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 98,
+            "output_tokens": 32337,
+            "cache_creation_input_tokens": 117862,
+            "cache_read_input_tokens": 3692177,
+            "processed_input_tokens": 3810137,
+            "total_tokens": 3842474,
+            "tool_calls": 50,
+            "agent_wall_seconds": 518.174,
+            "cost_usd_estimate": 3.8336235000000007
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            }
+          }
+        },
+        "unknown": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "behavioral_grade_counts": {
+        "off": {
+          "pass": 1
+        },
+        "brain": {
+          "pass": 1
+        }
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "all_attempts": {
+        "off": {
+          "attempts": 1,
+          "grade_counts": {
+            "infra": 1
+          },
+          "behavioral_grade_counts": {
+            "pass": 1
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 136,
+            "output_tokens": 57364,
+            "cache_creation_input_tokens": 139361,
+            "cache_read_input_tokens": 5782152,
+            "processed_input_tokens": 5921649,
+            "total_tokens": 5979013,
+            "tool_calls": 67,
+            "agent_wall_seconds": 746.351,
+            "cost_usd_estimate": 5.719466
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 1,
+          "grade_counts": {
+            "infra": 1
+          },
+          "behavioral_grade_counts": {
+            "pass": 1
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 122,
+            "output_tokens": 44666,
+            "cache_creation_input_tokens": 100156,
+            "cache_read_input_tokens": 3247041,
+            "processed_input_tokens": 3347319,
+            "total_tokens": 3391985,
+            "tool_calls": 69,
+            "agent_wall_seconds": 729.522,
+            "cost_usd_estimate": 3.7423405
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 1,
+              "missing": 0,
+              "total": 1,
+              "partial": 0
+            }
+          }
+        },
+        "unknown": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "behavioral_grade_counts": {
+        "off": {
+          "pass": 1
+        },
+        "brain": {
+          "pass": 1
+        }
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "all_attempts": {
+        "off": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        },
+        "unknown": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "behavioral_grade_counts": {
+        "off": {},
+        "brain": {}
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "all_attempts": {
+        "off": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        },
+        "unknown": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "behavioral_grade_counts": {
+        "off": {},
+        "brain": {}
+      }
+    }
+  ],
+  "resource_per_validated_success": {
+    "off": {
+      "input_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 290,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "output_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 94062,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "cache_creation_input_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 255693,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "cache_read_input_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 10678241,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "processed_input_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 10934224,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "total_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 11028286,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "tool_calls": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 143,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "agent_wall_seconds": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 1305.52,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "cost_usd_estimate": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 10.249050500000001,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      }
+    },
+    "brain": {
+      "input_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 220,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "output_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 77003,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "cache_creation_input_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 218018,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "cache_read_input_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 6939218,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "processed_input_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 7157456,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "total_tokens": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 7234459,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "tool_calls": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 119,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "agent_wall_seconds": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 1247.696,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      },
+      "cost_usd_estimate": {
+        "value": null,
+        "validated_successes": 0,
+        "observed_total": 7.575964000000001,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 2,
+          "missing": 0,
+          "total": 2,
+          "partial": 0
+        }
+      }
+    }
+  },
+  "overhead": {
+    "fixtures": {
+      "setup_seconds": {
+        "observed_total": 85.494,
+        "available": 4,
+        "total": 4,
+        "partial": false
+      },
+      "index_seconds": {
+        "observed_total": 18.121,
+        "available": 4,
+        "total": 4,
+        "partial": false
+      },
+      "dependency_seconds": {
+        "observed_total": 0,
+        "available": 4,
+        "total": 4,
+        "partial": false
+      },
+      "inherited_seed_private_dependency_seconds": {
+        "observed_total": 479.9304295829497,
+        "available": 2,
+        "total": 4,
+        "partial": true
+      }
+    },
+    "trials": {
+      "off": {
+        "setup_seconds": {
+          "observed_total": 197.49800000000002,
+          "available": 2,
+          "total": 2,
+          "partial": false
+        },
+        "grading_seconds": {
+          "observed_total": 48.279,
+          "available": 2,
+          "total": 2,
+          "partial": false
+        }
+      },
+      "brain": {
+        "setup_seconds": {
+          "observed_total": 242.241,
+          "available": 2,
+          "total": 2,
+          "partial": false
+        },
+        "grading_seconds": {
+          "observed_total": 30.237000000000002,
+          "available": 2,
+          "total": 2,
+          "partial": false
+        }
+      }
+    }
+  },
+  "delivery": {
+    "off": {
+      "emission_receipts": {
+        "observed_total": 0,
+        "available": 2,
+        "total": 2,
+        "partial": false
+      },
+      "compiled_runs": {
+        "observed_total": 0,
+        "available": 2,
+        "total": 2,
+        "partial": false
+      },
+      "compiled_estimated_tokens": {
+        "observed_total": null,
+        "available": 0,
+        "total": 2,
+        "partial": true
+      },
+      "delivered_compiled_estimated_tokens": {
+        "observed_total": null,
+        "available": 0,
+        "total": 2,
+        "partial": true
+      },
+      "source_items": {
+        "observed_total": null,
+        "available": 0,
+        "total": 2,
+        "partial": true
+      }
+    },
+    "brain": {
+      "emission_receipts": {
+        "observed_total": 2,
+        "available": 2,
+        "total": 2,
+        "partial": false
+      },
+      "compiled_runs": {
+        "observed_total": 81,
+        "available": 2,
+        "total": 2,
+        "partial": false
+      },
+      "compiled_estimated_tokens": {
+        "observed_total": 33414,
+        "available": 2,
+        "total": 2,
+        "partial": false
+      },
+      "delivered_compiled_estimated_tokens": {
+        "observed_total": 818,
+        "available": 2,
+        "total": 2,
+        "partial": false
+      },
+      "source_items": {
+        "observed_total": 972,
+        "available": 2,
+        "total": 2,
+        "partial": false
+      }
+    }
+  },
+  "infrastructure_attempts": {
+    "attempts": 0,
+    "by_arm": {
+      "off": {
+        "attempts": 0,
+        "grade_counts": {},
+        "behavioral_grade_counts": {},
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cache_creation_input_tokens": null,
+          "cache_read_input_tokens": null,
+          "processed_input_tokens": null,
+          "total_tokens": null,
+          "tool_calls": null,
+          "agent_wall_seconds": null,
+          "cost_usd_estimate": null
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          }
+        }
+      },
+      "brain": {
+        "attempts": 0,
+        "grade_counts": {},
+        "behavioral_grade_counts": {},
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cache_creation_input_tokens": null,
+          "cache_read_input_tokens": null,
+          "processed_input_tokens": null,
+          "total_tokens": null,
+          "tool_calls": null,
+          "agent_wall_seconds": null,
+          "cost_usd_estimate": null
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          }
+        }
+      },
+      "unknown": {
+        "attempts": 0,
+        "grade_counts": {},
+        "behavioral_grade_counts": {},
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cache_creation_input_tokens": null,
+          "cache_read_input_tokens": null,
+          "processed_input_tokens": null,
+          "total_tokens": null,
+          "tool_calls": null,
+          "agent_wall_seconds": null,
+          "cost_usd_estimate": null
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          }
+        }
+      }
+    },
+    "excluded_from_matrix": true
+  },
+  "preflight_runs": {
+    "attempts": 0,
+    "by_arm": {
+      "off": {
+        "attempts": 0,
+        "grade_counts": {},
+        "behavioral_grade_counts": {},
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cache_creation_input_tokens": null,
+          "cache_read_input_tokens": null,
+          "processed_input_tokens": null,
+          "total_tokens": null,
+          "tool_calls": null,
+          "agent_wall_seconds": null,
+          "cost_usd_estimate": null
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          }
+        }
+      },
+      "brain": {
+        "attempts": 0,
+        "grade_counts": {},
+        "behavioral_grade_counts": {},
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cache_creation_input_tokens": null,
+          "cache_read_input_tokens": null,
+          "processed_input_tokens": null,
+          "total_tokens": null,
+          "tool_calls": null,
+          "agent_wall_seconds": null,
+          "cost_usd_estimate": null
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          }
+        }
+      },
+      "unknown": {
+        "attempts": 0,
+        "grade_counts": {},
+        "behavioral_grade_counts": {},
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cache_creation_input_tokens": null,
+          "cache_read_input_tokens": null,
+          "processed_input_tokens": null,
+          "total_tokens": null,
+          "tool_calls": null,
+          "agent_wall_seconds": null,
+          "cost_usd_estimate": null
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          }
+        }
+      }
+    },
+    "excluded_from_matrix": true
+  },
+  "input_warnings": [],
+  "analysis_provenance": {
+    "report_real_repo_pilot.py": "7deb253ed2502a061294bbbccb49d2d353a734bd442dcea6eea9faadd2f4005f",
+    "real_repo_metrics.py": "811f990c8f46c5be53252d58383b8aa47e953f78d2976c77f985ed25a3f8499c",
+    "real_repo_diagnostics.py": "b4f51272276c8c50a3a3efe29785ebe7f9ca3742ffc8ceb84975660633c3f4bb",
+    "real_repo_adjudications.py": "88a9cea3ba08315f5f4055ffd6a5d6d48f65bba4edb8994fad3d2d015d221b50"
+  },
+  "generated_at": "2026-09-26T01:57:48.602158+00:00"
+}

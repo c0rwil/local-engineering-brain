@@ -1,0 +1,902 @@
+{
+  "schema_version": 1,
+  "record_classification_revision": "agent-completion-v2",
+  "generated_at": "2026-09-26T01:57:48.602158+00:00",
+  "progress": {
+    "status": "aborted",
+    "planned_runs": 24,
+    "started_trials": 5,
+    "coding_runs_started": 4,
+    "completed_records": 4,
+    "in_progress_trials": 0,
+    "infrastructure_outcomes": 4,
+    "interrupted_trials": 1
+  },
+  "manifest": {
+    "schema_version": 1,
+    "condition": "source-only native hooks; no MCP; no learned memories",
+    "model": "claude-opus-4-8[1m]",
+    "effort": "high",
+    "claude_version": "2.1.212 (Claude Code)",
+    "engram_sha256": "cc7678097ca6747544941d22b3518431db6717f04247812a7f9474a51fc0f195",
+    "daemon_sha256": "c595276569ebf8a62215e52f2c1e4ef4aa64abc19c1a77db71aafa52c736d48c",
+    "runner_sha256": "ae5190ceb7384666421843ff878f3574347815651725363eda049801968838d9",
+    "metrics_sha256": "9da6f96f1861a4b8c3c4389c5357961737f217d226d8acde1fd7a7e38517015c",
+    "repetitions": 3,
+    "agent_limit_seconds": 1200,
+    "grading_limit_seconds": 1800,
+    "cost_cap_usd_estimate": 8,
+    "platform_dependencies": "same frozen pilot base dependencies in both arms; not a historical lock-exact reinstall",
+    "private_dependencies": "Rust registry-only cache; no user Git config; package installation disabled",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+    "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]",
+    "node": "v26.5.1",
+    "pnpm": "11.3.0",
+    "known_scope_limits": [
+      "Development tasks previously used to improve retrieval; not held-out generalization evidence.",
+      "V2 clarifies grading contracts. Compare Off/Brain within this collection; no causal old-versus-new comparison.",
+      "Provider prompt caching remains enabled and is not reset. Report all token categories; estimated USD is not subscription cash billing.",
+      "Single agent, six core tools, source-only hooks. Does not measure learned memories, automatic judging, or MCP tools.",
+      "Three repetitions per task are diagnostic, not statistically decisive."
+    ],
+    "suite": "real-repo-v2",
+    "controls_sha256": "7dc7ae1795915103604bf01ea772ad7f08a4f070a3b70c90a19a0593859e14bf",
+    "runner_library_sha256": "ec7b257850eaa7872de755604d3b2e3c50e330a58039fa5c260f9af922384c91",
+    "claude_sha256": "09ecba2ab2df9b6ee5b0695e26f65dea60fb3b6af3d3542ee09f466838d1e574"
+  },
+  "fixtures": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "base_commit": "bbce775ef3252e4ad882ac43e6564263302f8076",
+      "fixture_head": "4df6a3277eed9cd04324cbf25c9028fce9718c73",
+      "snapshot_sha256": "4ce37a075588b467c5dae3e0626d9ad97389fd174631abfde65b572fbd44512d",
+      "index_seconds": 4.361,
+      "dependency_seconds": 0,
+      "setup_seconds": 19.431,
+      "source_counts": {
+        "nodes": 20924,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "Cargo.lock": "1541524c703b5c636a4dd3ec1ee77e47e302e2fafea61f7eddb252e673651ac4"
+      },
+      "inherited_seed_private_dependency_seconds": 223.6182622499764
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "base_commit": "1b5c21e44eda8e68dbbe457f7e98e7a607ff3b1a",
+      "fixture_head": "94523af6f15f5a339fa3f7efae1b7c4bd8d33302",
+      "snapshot_sha256": "3c0891647281a2046e5628f8cff9793757e798df36b287bbf384f1b280894eac",
+      "index_seconds": 6.253,
+      "dependency_seconds": 0,
+      "setup_seconds": 8.345,
+      "source_counts": {
+        "nodes": 15751,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "uv.lock": "9c3944712eac67da48dd90c41053e533825f411dd9061c2142c146c89f8c0f2d"
+      },
+      "inherited_seed_private_dependency_seconds": null
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "base_commit": "cae95f3086d7320551ab02ba4ba0fc105dc13342",
+      "fixture_head": "13903445734e484ac51a9a61c735dd9c9d6bcc74",
+      "snapshot_sha256": "4a974a13033fde8b37b8a3f345390564d976ebad93f1cd0637df6e22c21e30b3",
+      "index_seconds": 5.037,
+      "dependency_seconds": 0,
+      "setup_seconds": 18.896,
+      "source_counts": {
+        "nodes": 22248,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "Cargo.lock": "fadd33956ad4766fbe68fa17add4f9b58b2f04ee365feadf5aa4d9c9065a5906"
+      },
+      "inherited_seed_private_dependency_seconds": 256.31216733297333
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "base_commit": "4a2668b9bb198ae7d9108f2cebefb84fa9244b24",
+      "fixture_head": "6ac78dfd21df8c49e537ae25eb9bd1fb1610508c",
+      "snapshot_sha256": "1a1ec1bfdae8127006189e613ada4886799b0a2cc8fcb51ed4c35ca0ae31f17a",
+      "index_seconds": 2.47,
+      "dependency_seconds": 0,
+      "setup_seconds": 38.822,
+      "source_counts": {
+        "nodes": 10389,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "pnpm-lock.yaml": "0dba8da86df7b193e5ad123d169b30047a2b9d01b1d88b0c6058454b9b45e512"
+      },
+      "inherited_seed_private_dependency_seconds": null
+    }
+  ],
+  "records": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 154,
+        "output_tokens": 36698,
+        "cache_creation_input_tokens": 116332,
+        "cache_read_input_tokens": 4896089,
+        "processed_input_tokens": 5012575,
+        "total_tokens": 5049273,
+        "tool_calls": 76,
+        "cost_usd_estimate": 4.529584500000001,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 77,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 5,
+          "Edit": 10,
+          "Glob": 3,
+          "Grep": 20,
+          "Read": 38
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 154,
+            "outputTokens": 36698,
+            "cacheReadInputTokens": 4896089,
+            "cacheCreationInputTokens": 116332,
+            "webSearchRequests": 0,
+            "costUSD": 4.529584500000001,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 559.169,
+      "setup_seconds": 195.449,
+      "grading_seconds": 48.085,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T00:52:23.553074+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "5cd0ba53f9b5f63b977b41285104ce4f215d4c0e92aed3f0b859304129600854",
+      "composed_prompt_sha256": "2cf471ed61af06964d409ea2237935af7cf0c9a2aa4bca8083f18763546fae80",
+      "snapshot_sha256": "4ce37a075588b467c5dae3e0626d9ad97389fd174631abfde65b572fbd44512d",
+      "validity_issues": [
+        "shell_spawn_argument_limit"
+      ],
+      "tool_runtime_evidence": {
+        "schema_version": 1,
+        "trace_sha256": "64bec4c8f1ecedd46bd78b3947ecf081730040864a9d7b05ad46c0a7b352c082",
+        "reason": "shell_spawn_argument_limit",
+        "shell_tool_calls": 5,
+        "shell_spawn_failure_count": 5
+      },
+      "behavioral_grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "4d2c7acc31d9072da28e83903c4ceac702494b400f29c20a20b3b1811bf588e3",
+        "grading/r01_guide_hot_path/preflight.json": "fbbbbc93b86c7d6b0aaf6b1cfbcaeb2e288fa971aff1aa99cafa30184e3bbf5c",
+        "grading/r01_guide_hot_path/preflight.py": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 98,
+        "output_tokens": 32337,
+        "cache_creation_input_tokens": 117862,
+        "cache_read_input_tokens": 3692177,
+        "processed_input_tokens": 3810137,
+        "total_tokens": 3842474,
+        "tool_calls": 50,
+        "cost_usd_estimate": 3.8336235000000007,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 51,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 3,
+          "Edit": 10,
+          "Grep": 15,
+          "Read": 22
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 98,
+            "outputTokens": 32337,
+            "cacheReadInputTokens": 3692177,
+            "cacheCreationInputTokens": 117862,
+            "webSearchRequests": 0,
+            "costUSD": 3.8336235000000007,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 33,
+        "compiled_estimated_tokens": 12870,
+        "delivered_compiled_estimated_tokens": 390,
+        "source_items": 396
+      },
+      "agent_wall_seconds": 518.174,
+      "setup_seconds": 237.28,
+      "grading_seconds": 30.05,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T01:05:52.320914+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "5cd0ba53f9b5f63b977b41285104ce4f215d4c0e92aed3f0b859304129600854",
+      "composed_prompt_sha256": "2cf471ed61af06964d409ea2237935af7cf0c9a2aa4bca8083f18763546fae80",
+      "snapshot_sha256": "4ce37a075588b467c5dae3e0626d9ad97389fd174631abfde65b572fbd44512d",
+      "validity_issues": [
+        "shell_spawn_argument_limit"
+      ],
+      "tool_runtime_evidence": {
+        "schema_version": 1,
+        "trace_sha256": "a34b68cade2f4a000c6d1a20e09b1e2cdc8a98807235440ff6b9ac7002638db3",
+        "reason": "shell_spawn_argument_limit",
+        "shell_tool_calls": 3,
+        "shell_spawn_failure_count": 3
+      },
+      "behavioral_grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "4d2c7acc31d9072da28e83903c4ceac702494b400f29c20a20b3b1811bf588e3",
+        "grading/r01_guide_hot_path/preflight.json": "fbbbbc93b86c7d6b0aaf6b1cfbcaeb2e288fa971aff1aa99cafa30184e3bbf5c",
+        "grading/r01_guide_hot_path/preflight.py": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 122,
+        "output_tokens": 44666,
+        "cache_creation_input_tokens": 100156,
+        "cache_read_input_tokens": 3247041,
+        "processed_input_tokens": 3347319,
+        "total_tokens": 3391985,
+        "tool_calls": 69,
+        "cost_usd_estimate": 3.7423405,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 70,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 4,
+          "Edit": 18,
+          "Glob": 5,
+          "Grep": 13,
+          "Read": 28,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 122,
+            "outputTokens": 44666,
+            "cacheReadInputTokens": 3247041,
+            "cacheCreationInputTokens": 100156,
+            "webSearchRequests": 0,
+            "costUSD": 3.7423405,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 48,
+        "compiled_estimated_tokens": 20544,
+        "delivered_compiled_estimated_tokens": 428,
+        "source_items": 576
+      },
+      "agent_wall_seconds": 729.522,
+      "setup_seconds": 4.961,
+      "grading_seconds": 0.187,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T01:20:04.741711+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "e75b8aeee6d8c38d839748b640fd7249c20b323f7ff03074a877e3149af90680",
+      "composed_prompt_sha256": "1392661becae86816303ba26c2c0ca5e731e5ba84e19124233b5b382ba8c4752",
+      "snapshot_sha256": "3c0891647281a2046e5628f8cff9793757e798df36b287bbf384f1b280894eac",
+      "validity_issues": [
+        "shell_spawn_argument_limit"
+      ],
+      "tool_runtime_evidence": {
+        "schema_version": 1,
+        "trace_sha256": "b4aecc2cc68958f5d9b7d0b16fd08b759f4e32b30cf73439f3bcdec7fad5ba7b",
+        "reason": "shell_spawn_argument_limit",
+        "shell_tool_calls": 4,
+        "shell_spawn_failure_count": 4
+      },
+      "behavioral_grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "null_cursor_is_absent_and_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "false_cursor_converts_to_zero_and_implies_history",
+            "passed": true
+          },
+          {
+            "name": "true_cursor_converts_to_one",
+            "passed": true
+          },
+          {
+            "name": "fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "negative_fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "signed_spaced_string_cursor_is_converted",
+            "passed": true
+          },
+          {
+            "name": "negative_integer_cursor_includes_newer_steps",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "false_string_cursor_is_invalid_not_disabled",
+            "passed": true
+          },
+          {
+            "name": "fractional_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "empty_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_existing_json_meaning_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_json_meaning_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "f506d3002d444cb6b606e50deebfbc6b8287a33051ae926b500fa674fca7bea5",
+        "grading/r02_lean_task_status/preflight.json": "22a2ffc1477203117c8041082d23d64c3d06325ab0ce7c716aeeadbef99cd116",
+        "grading/r02_lean_task_status/preflight.py": "c3776e1fcb77e18bc836de649f4c1eee9a112b06dd433c9d4809b34c4eee2505",
+        "grading/r02_lean_task_status/v1_semantic_manifest.json": "97883ac3f442a0b9e6d6db7fbd468b3760eac4fe5f2e3b2a7ddd09c57eeb6d53",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 136,
+        "output_tokens": 57364,
+        "cache_creation_input_tokens": 139361,
+        "cache_read_input_tokens": 5782152,
+        "processed_input_tokens": 5921649,
+        "total_tokens": 5979013,
+        "tool_calls": 67,
+        "cost_usd_estimate": 5.719466,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 68,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 6,
+          "Edit": 19,
+          "Glob": 3,
+          "Grep": 14,
+          "Read": 24,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 136,
+            "outputTokens": 57364,
+            "cacheReadInputTokens": 5782152,
+            "cacheCreationInputTokens": 139361,
+            "webSearchRequests": 0,
+            "costUSD": 5.719466,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 746.351,
+      "setup_seconds": 2.049,
+      "grading_seconds": 0.194,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T01:32:29.508322+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "e75b8aeee6d8c38d839748b640fd7249c20b323f7ff03074a877e3149af90680",
+      "composed_prompt_sha256": "1392661becae86816303ba26c2c0ca5e731e5ba84e19124233b5b382ba8c4752",
+      "snapshot_sha256": "3c0891647281a2046e5628f8cff9793757e798df36b287bbf384f1b280894eac",
+      "validity_issues": [
+        "shell_spawn_argument_limit"
+      ],
+      "tool_runtime_evidence": {
+        "schema_version": 1,
+        "trace_sha256": "8e165c8fabc3449d6d05138d4e4c73cdf0cff5398b5562988c6078e2538e814b",
+        "reason": "shell_spawn_argument_limit",
+        "shell_tool_calls": 6,
+        "shell_spawn_failure_count": 6
+      },
+      "behavioral_grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "null_cursor_is_absent_and_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "false_cursor_converts_to_zero_and_implies_history",
+            "passed": true
+          },
+          {
+            "name": "true_cursor_converts_to_one",
+            "passed": true
+          },
+          {
+            "name": "fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "negative_fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "signed_spaced_string_cursor_is_converted",
+            "passed": true
+          },
+          {
+            "name": "negative_integer_cursor_includes_newer_steps",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "false_string_cursor_is_invalid_not_disabled",
+            "passed": true
+          },
+          {
+            "name": "fractional_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "empty_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_existing_json_meaning_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_json_meaning_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "f506d3002d444cb6b606e50deebfbc6b8287a33051ae926b500fa674fca7bea5",
+        "grading/r02_lean_task_status/preflight.json": "22a2ffc1477203117c8041082d23d64c3d06325ab0ce7c716aeeadbef99cd116",
+        "grading/r02_lean_task_status/preflight.py": "c3776e1fcb77e18bc836de649f4c1eee9a112b06dd433c9d4809b34c4eee2505",
+        "grading/r02_lean_task_status/v1_semantic_manifest.json": "97883ac3f442a0b9e6d6db7fbd468b3760eac4fe5f2e3b2a7ddd09c57eeb6d53",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    }
+  ],
+  "infrastructure_attempts": [],
+  "preflight_runs": [],
+  "analysis_provenance": {
+    "report_real_repo_pilot.py": "7deb253ed2502a061294bbbccb49d2d353a734bd442dcea6eea9faadd2f4005f",
+    "real_repo_metrics.py": "811f990c8f46c5be53252d58383b8aa47e953f78d2976c77f985ed25a3f8499c",
+    "real_repo_diagnostics.py": "b4f51272276c8c50a3a3efe29785ebe7f9ca3742ffc8ceb84975660633c3f4bb",
+    "real_repo_adjudications.py": "88a9cea3ba08315f5f4055ffd6a5d6d48f65bba4edb8994fad3d2d015d221b50"
+  }
+}

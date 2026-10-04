@@ -1,0 +1,15 @@
+
+running 1 test
+test engram_benchmark_environment::development_still_loads_dotenv ... FAILED
+
+failures:
+
+failures:
+    engram_benchmark_environment::development_still_loads_dotenv
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 214 filtered out; finished in 0.00s
+
+
+thread 'engram_benchmark_environment::development_still_loads_dotenv' (80987249) panicked at tests/http_contract.rs:13778:9:
+development must still load its .env
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

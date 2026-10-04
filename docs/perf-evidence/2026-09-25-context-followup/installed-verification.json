@@ -1,0 +1,17 @@
+{
+  "status": "verified",
+  "build_id": "58c2d0182e653f236e7ccd2c99f1dd67e78b2fd3623df66d064a0b2590eec395",
+  "schema_version": 16,
+  "integrity": "ok",
+  "eligible_sources": 69811,
+  "fts_rows": 69811,
+  "owners_with_aliases": 643,
+  "alias_characters": 138851,
+  "config_unchanged": true,
+  "active_validated_memories": 5,
+  "live_field_query": {
+    "correct_owner": true,
+    "selected_tokens": 197,
+    "signature_present": true
+  }
+}

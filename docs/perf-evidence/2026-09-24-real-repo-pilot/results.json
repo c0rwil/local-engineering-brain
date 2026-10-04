@@ -1,0 +1,4930 @@
+{
+  "schema_version": 1,
+  "record_classification_revision": "agent-completion-v2",
+  "generated_at": "2026-09-25T07:16:28.605605+00:00",
+  "progress": {
+    "status": "complete",
+    "planned_runs": 24,
+    "started_trials": 24,
+    "coding_runs_started": 24,
+    "completed_records": 24,
+    "in_progress_trials": 0,
+    "infrastructure_outcomes": 6
+  },
+  "manifest": {
+    "schema_version": 1,
+    "condition": "source-only native hooks; no MCP; no learned memories",
+    "model": "claude-opus-4-8[1m]",
+    "effort": "high",
+    "claude_version": "2.1.212 (Claude Code)",
+    "engram_sha256": "72e692adf1c64422fc017018dd8398ced1c13bd1ef297cdfda5ca3e989b20285",
+    "daemon_sha256": "6ffcf13c6c10339d9a00128b3b9f85b3c2d774b816cc2e955d3363b09193cc51",
+    "runner_sha256": "4b86c67e5ba0f2f0dacd659e251794a9805dd2b0bccf3b7c2334d2c16dfab615",
+    "metrics_sha256": "30edbde6f6baa8cea2c350216c31c582fd7d7020a53bd17ef2793695c761dbd7",
+    "repetitions": 3,
+    "agent_limit_seconds": 1200,
+    "grading_limit_seconds": 1800,
+    "cost_cap_usd_estimate": 8,
+    "platform_dependencies": "frozen installed cache, differs from historical lock; same both arms",
+    "private_dependencies": "Rust registry-only cache; no user Git config; pnpm automatic version selection and installation disabled",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+    "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]",
+    "node": "v26.5.1",
+    "pnpm": "[WARN] The \"pnpm\" field in package.json is no longer read by pnpm. The following keys were ignored: \"pnpm.overrides\". See https://pnpm.io/settings for the new home of each setting.\n11.3.0",
+    "known_scope_limits": [
+      "r02 validates cursor conversion errors, not strict rejection of bool/fractional JSON numbers",
+      "r06 malformed JSON syntax is covered, schema-invalid valid JSON is not",
+      "single agent with six core tools; source-only Engram, not accumulated memory or MCP",
+      "Provider prompt caching is enabled and was not reset; arm order alternates. The aborted first Off attempt may have warmed the r01 prefix. Token categories are reported separately; CLI USD estimates are not subscription cash charges."
+    ]
+  },
+  "fixtures": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "base_commit": "bbce775ef3252e4ad882ac43e6564263302f8076",
+      "fixture_head": "4df6a3277eed9cd04324cbf25c9028fce9718c73",
+      "snapshot_sha256": "64ba0216df69ffc720e64ec7014a8abb9b0f73eddc507505a097be63f42b5bf8",
+      "index_seconds": 2.787,
+      "dependency_seconds": 145.782,
+      "private_dependency_seconds": 223.6182622499764,
+      "setup_seconds": 148.842,
+      "source_counts": {
+        "nodes": 20924,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {}
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "base_commit": "1b5c21e44eda8e68dbbe457f7e98e7a607ff3b1a",
+      "fixture_head": "94523af6f15f5a339fa3f7efae1b7c4bd8d33302",
+      "snapshot_sha256": "b6799a55a00f7250149a1c3c311f8ab128806ff3df68e4dc0b8e559f8e7f2e81",
+      "index_seconds": 3.196,
+      "dependency_seconds": 0.032,
+      "private_dependency_seconds": null,
+      "setup_seconds": 11.278,
+      "source_counts": {
+        "nodes": 15751,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {}
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "base_commit": "cae95f3086d7320551ab02ba4ba0fc105dc13342",
+      "fixture_head": "13903445734e484ac51a9a61c735dd9c9d6bcc74",
+      "snapshot_sha256": "b8f03ee01a77bc4fb99ea5b3eeab12b3ee38dfa5ceaf56e049744f0d11981b08",
+      "index_seconds": 3.17,
+      "dependency_seconds": 150.836,
+      "private_dependency_seconds": 256.31216733297333,
+      "setup_seconds": 154.407,
+      "source_counts": {
+        "nodes": 22248,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {}
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "base_commit": "4a2668b9bb198ae7d9108f2cebefb84fa9244b24",
+      "fixture_head": "6ac78dfd21df8c49e537ae25eb9bd1fb1610508c",
+      "snapshot_sha256": "1d645dee4ce43703014fe590f443952e69fa5afc70ac11a3725e3af800c67e78",
+      "index_seconds": 1.455,
+      "dependency_seconds": 22.357,
+      "private_dependency_seconds": null,
+      "setup_seconds": 24.667,
+      "source_counts": {
+        "nodes": 10389,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {}
+    }
+  ],
+  "records": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 54,
+        "output_tokens": 10124,
+        "cache_creation_input_tokens": 49944,
+        "cache_read_input_tokens": 895493,
+        "processed_input_tokens": 945491,
+        "total_tokens": 955615,
+        "tool_calls": 27,
+        "cost_usd_estimate": 1.2383934999999997,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": true,
+        "num_turns": 28,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 3,
+          "Edit": 6,
+          "Grep": 7,
+          "Read": 11
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 56,
+            "outputTokens": 10129,
+            "cacheReadInputTokens": 945437,
+            "cacheCreationInputTokens": 51217,
+            "webSearchRequests": 0,
+            "costUSD": 1.2383934999999997,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": true,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 250.648,
+      "setup_seconds": 9.316,
+      "grading_seconds": 25.735,
+      "agent_exit_code": 1,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T03:54:00.031678+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "3b7e69685737a4e1113bc76a87b66cd234db86c3c79d0915fceff65f8f555386",
+      "composed_prompt_sha256": "683cf57331665863a1965313b883a6cc3d37d910ae224b4e700febf5a3e85238",
+      "snapshot_sha256": "64ba0216df69ffc720e64ec7014a8abb9b0f73eddc507505a097be63f42b5bf8",
+      "validity_issues": [
+        "agent_runtime_error"
+      ],
+      "behavioral_grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "143263e8a5a35043fcfb21b3ff22af3791f28b887225d81acefe904272236269"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 144,
+        "output_tokens": 41907,
+        "cache_creation_input_tokens": 116961,
+        "cache_read_input_tokens": 5487976,
+        "processed_input_tokens": 5605081,
+        "total_tokens": 5646988,
+        "tool_calls": 74,
+        "cost_usd_estimate": 4.961993000000001,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 75,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 7,
+          "Edit": 12,
+          "Grep": 27,
+          "Read": 28
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 144,
+            "outputTokens": 41907,
+            "cacheReadInputTokens": 5487976,
+            "cacheCreationInputTokens": 116961,
+            "webSearchRequests": 0,
+            "costUSD": 4.961993000000001,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 4,
+        "compiled_runs": 18,
+        "compiled_estimated_tokens": 7290,
+        "delivered_compiled_estimated_tokens": 1620,
+        "source_items": 216
+      },
+      "agent_wall_seconds": 785.035,
+      "setup_seconds": 11.236,
+      "grading_seconds": 22.518,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T03:58:55.713789+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "3b7e69685737a4e1113bc76a87b66cd234db86c3c79d0915fceff65f8f555386",
+      "composed_prompt_sha256": "683cf57331665863a1965313b883a6cc3d37d910ae224b4e700febf5a3e85238",
+      "snapshot_sha256": "64ba0216df69ffc720e64ec7014a8abb9b0f73eddc507505a097be63f42b5bf8",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "143263e8a5a35043fcfb21b3ff22af3791f28b887225d81acefe904272236269"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_bytes_preserved",
+            "passed": false
+          },
+          {
+            "name": "v2_device_wire_fixture_bytes_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 102,
+        "output_tokens": 32378,
+        "cache_creation_input_tokens": 81335,
+        "cache_read_input_tokens": 2679346,
+        "processed_input_tokens": 2760783,
+        "total_tokens": 2793161,
+        "tool_calls": 53,
+        "cost_usd_estimate": 2.962982999999999,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 54,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 16,
+          "Edit": 13,
+          "Grep": 7,
+          "Read": 17
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 102,
+            "outputTokens": 32378,
+            "cacheReadInputTokens": 2679346,
+            "cacheCreationInputTokens": 81335,
+            "webSearchRequests": 0,
+            "costUSD": 2.962982999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 24,
+        "compiled_estimated_tokens": 9552,
+        "delivered_compiled_estimated_tokens": 796,
+        "source_items": 288
+      },
+      "agent_wall_seconds": 475.785,
+      "setup_seconds": 4.341,
+      "grading_seconds": 0.133,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-25T04:13:15.030760+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6f3ad0f29552f178477c6af2bbbe7f1527b67a7fd2441b24d88342db27d4901f",
+      "composed_prompt_sha256": "1c30c3986707c17aaa7e810789ab9adde185721f530427e00414d1b1969c0161",
+      "snapshot_sha256": "b6799a55a00f7250149a1c3c311f8ab128806ff3df68e4dc0b8e559f8e7f2e81",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "88e2146edcc1edd94ac87963899590f41436e16bb58455db09f167422e4894a5",
+        "grading/r02_lean_task_status/preflight.json": "711512415ff41baf55a95789c557ed3be2dab86123cd60533b9f5935c16c3fe2",
+        "grading/r02_lean_task_status/preflight.py": "09b0fd5ad59ecc9415d5aeb42c7b342f632576c3b89de4969f4eceb9a34f9671",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_bytes_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_fixture_bytes_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 124,
+        "output_tokens": 35754,
+        "cache_creation_input_tokens": 66880,
+        "cache_read_input_tokens": 2710724,
+        "processed_input_tokens": 2777728,
+        "total_tokens": 2813482,
+        "tool_calls": 63,
+        "cost_usd_estimate": 2.9186319999999997,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 64,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 29,
+          "Edit": 11,
+          "Grep": 5,
+          "Read": 17,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 124,
+            "outputTokens": 35754,
+            "cacheReadInputTokens": 2710724,
+            "cacheCreationInputTokens": 66880,
+            "webSearchRequests": 0,
+            "costUSD": 2.9186319999999997,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 511.783,
+      "setup_seconds": 1.685,
+      "grading_seconds": 0.186,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T04:21:23.156661+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6f3ad0f29552f178477c6af2bbbe7f1527b67a7fd2441b24d88342db27d4901f",
+      "composed_prompt_sha256": "1c30c3986707c17aaa7e810789ab9adde185721f530427e00414d1b1969c0161",
+      "snapshot_sha256": "b6799a55a00f7250149a1c3c311f8ab128806ff3df68e4dc0b8e559f8e7f2e81",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "88e2146edcc1edd94ac87963899590f41436e16bb58455db09f167422e4894a5",
+        "grading/r02_lean_task_status/preflight.json": "711512415ff41baf55a95789c557ed3be2dab86123cd60533b9f5935c16c3fe2",
+        "grading/r02_lean_task_status/preflight.py": "09b0fd5ad59ecc9415d5aeb42c7b342f632576c3b89de4969f4eceb9a34f9671",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": false
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 46,
+        "output_tokens": 18328,
+        "cache_creation_input_tokens": 75949,
+        "cache_read_input_tokens": 1281891,
+        "processed_input_tokens": 1357886,
+        "total_tokens": 1376214,
+        "tool_calls": 24,
+        "cost_usd_estimate": 1.8588654999999998,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 25,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 11,
+          "Edit": 5,
+          "Grep": 3,
+          "Read": 5
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 46,
+            "outputTokens": 18328,
+            "cacheReadInputTokens": 1281891,
+            "cacheCreationInputTokens": 75949,
+            "webSearchRequests": 0,
+            "costUSD": 1.8588654999999998,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 338.058,
+      "setup_seconds": 12.586,
+      "grading_seconds": 39.653,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-25T04:30:01.548484+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "b8f03ee01a77bc4fb99ea5b3eeab12b3ee38dfa5ceaf56e049744f0d11981b08",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 68,
+        "output_tokens": 22445,
+        "cache_creation_input_tokens": 49551,
+        "cache_read_input_tokens": 1149781,
+        "processed_input_tokens": 1199400,
+        "total_tokens": 1221845,
+        "tool_calls": 35,
+        "cost_usd_estimate": 1.6318655000000002,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 36,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 11,
+          "Edit": 7,
+          "Grep": 6,
+          "Read": 11
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 68,
+            "outputTokens": 22445,
+            "cacheReadInputTokens": 1149781,
+            "cacheCreationInputTokens": 49551,
+            "webSearchRequests": 0,
+            "costUSD": 1.6318655000000002,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 10,
+        "compiled_estimated_tokens": 3858,
+        "delivered_compiled_estimated_tokens": 768,
+        "source_items": 120
+      },
+      "agent_wall_seconds": 395.57,
+      "setup_seconds": 13.059,
+      "grading_seconds": 14.19,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T04:36:37.437166+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "b8f03ee01a77bc4fb99ea5b3eeab12b3ee38dfa5ceaf56e049744f0d11981b08",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior hung fetch aborts by five seconds and gate/welcome settle safely",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 46,
+        "output_tokens": 22263,
+        "cache_creation_input_tokens": 54068,
+        "cache_read_input_tokens": 833852,
+        "processed_input_tokens": 887966,
+        "total_tokens": 910229,
+        "tool_calls": 33,
+        "cost_usd_estimate": 1.5144109999999995,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 34,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 13,
+          "Edit": 5,
+          "Grep": 2,
+          "Read": 11,
+          "Write": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 46,
+            "outputTokens": 22263,
+            "cacheReadInputTokens": 833852,
+            "cacheCreationInputTokens": 54068,
+            "webSearchRequests": 0,
+            "costUSD": 1.5144109999999995,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 4,
+        "compiled_runs": 18,
+        "compiled_estimated_tokens": 5498,
+        "delivered_compiled_estimated_tokens": 1224,
+        "source_items": 216
+      },
+      "agent_wall_seconds": 321.325,
+      "setup_seconds": 29.704,
+      "grading_seconds": 6.826,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T04:43:49.099195+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "715f9dd5d9afaa8625099f23a3ad6ec0951c398d2dfaa6149ecc6834b6c9a018",
+      "composed_prompt_sha256": "b77536002a489478be97d4ea3788857ee9d78a0928b2ceb8228cda4f1b511482",
+      "snapshot_sha256": "1d645dee4ce43703014fe590f443952e69fa5afc70ac11a3725e3af800c67e78",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "ddb5ac0a303f26909164ccd91ad391723e2fafba961b050e95c5bc5ca6f28eab",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "75b89b943b9ca63bbbaa2d304b2aa8aa24cb88fae84c8c1e473dc8367f96080b",
+        "grading/r06_onboarding_outage/preflight.json": "e894df48e12a0fc46af9c20b0c831540c0e2eaeb6ef3e4e73e3b2eb45772a850"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 64,
+        "output_tokens": 17331,
+        "cache_creation_input_tokens": 36191,
+        "cache_read_input_tokens": 824830,
+        "processed_input_tokens": 861085,
+        "total_tokens": 878416,
+        "tool_calls": 31,
+        "cost_usd_estimate": 1.20792,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 32,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 9,
+          "Edit": 5,
+          "Grep": 2,
+          "Read": 14,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 64,
+            "outputTokens": 17331,
+            "cacheReadInputTokens": 824830,
+            "cacheCreationInputTokens": 36191,
+            "webSearchRequests": 0,
+            "costUSD": 1.20792,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 256.447,
+      "setup_seconds": 27.753,
+      "grading_seconds": 6.571,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-25T04:50:46.385262+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "715f9dd5d9afaa8625099f23a3ad6ec0951c398d2dfaa6149ecc6834b6c9a018",
+      "composed_prompt_sha256": "b77536002a489478be97d4ea3788857ee9d78a0928b2ceb8228cda4f1b511482",
+      "snapshot_sha256": "1d645dee4ce43703014fe590f443952e69fa5afc70ac11a3725e3af800c67e78",
+      "validity_issues": [
+        "ambiguous_grader_contract"
+      ],
+      "adjudication": {
+        "schema_version": 1,
+        "trial_id": "r06_onboarding_outage-r1-off",
+        "reason": "ambiguous_grader_contract",
+        "grade_sha256": "4fc73d2fc915505e3f9077c6205d2de4e562248073e946e5ab7b415c6963b1d3",
+        "failed_check_sha256": "f54830d5846571d92f0379100501b358c30f40ca9860c7a00a9d097dd55327f8"
+      },
+      "behavioral_grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior hung fetch aborts by five seconds and gate/welcome settle safely",
+            "passed": false
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "ddb5ac0a303f26909164ccd91ad391723e2fafba961b050e95c5bc5ca6f28eab",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "75b89b943b9ca63bbbaa2d304b2aa8aa24cb88fae84c8c1e473dc8367f96080b",
+        "grading/r06_onboarding_outage/preflight.json": "e894df48e12a0fc46af9c20b0c831540c0e2eaeb6ef3e4e73e3b2eb45772a850"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 114,
+        "output_tokens": 29191,
+        "cache_creation_input_tokens": 90417,
+        "cache_read_input_tokens": 3303527,
+        "processed_input_tokens": 3394058,
+        "total_tokens": 3423249,
+        "tool_calls": 58,
+        "cost_usd_estimate": 3.2862785000000003,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 59,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 15,
+          "Edit": 10,
+          "Grep": 11,
+          "Read": 22
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 114,
+            "outputTokens": 29191,
+            "cacheReadInputTokens": 3303527,
+            "cacheCreationInputTokens": 90417,
+            "webSearchRequests": 0,
+            "costUSD": 3.2862785000000003,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 3,
+        "compiled_runs": 17,
+        "compiled_estimated_tokens": 6857,
+        "delivered_compiled_estimated_tokens": 1201,
+        "source_items": 204
+      },
+      "agent_wall_seconds": 573.584,
+      "setup_seconds": 10.872,
+      "grading_seconds": 18.447,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T04:56:39.285966+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "3b7e69685737a4e1113bc76a87b66cd234db86c3c79d0915fceff65f8f555386",
+      "composed_prompt_sha256": "683cf57331665863a1965313b883a6cc3d37d910ae224b4e700febf5a3e85238",
+      "snapshot_sha256": "64ba0216df69ffc720e64ec7014a8abb9b0f73eddc507505a097be63f42b5bf8",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "143263e8a5a35043fcfb21b3ff22af3791f28b887225d81acefe904272236269"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 150,
+        "output_tokens": 35468,
+        "cache_creation_input_tokens": 106607,
+        "cache_read_input_tokens": 5055297,
+        "processed_input_tokens": 5162054,
+        "total_tokens": 5197522,
+        "tool_calls": 75,
+        "cost_usd_estimate": 4.481168500000001,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 76,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 34,
+          "Edit": 7,
+          "Grep": 6,
+          "Read": 28
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 150,
+            "outputTokens": 35468,
+            "cacheReadInputTokens": 5055297,
+            "cacheCreationInputTokens": 106607,
+            "webSearchRequests": 0,
+            "costUSD": 4.481168500000001,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 566.385,
+      "setup_seconds": 9.673,
+      "grading_seconds": 15.897,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T05:07:00.451876+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "3b7e69685737a4e1113bc76a87b66cd234db86c3c79d0915fceff65f8f555386",
+      "composed_prompt_sha256": "683cf57331665863a1965313b883a6cc3d37d910ae224b4e700febf5a3e85238",
+      "snapshot_sha256": "64ba0216df69ffc720e64ec7014a8abb9b0f73eddc507505a097be63f42b5bf8",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "143263e8a5a35043fcfb21b3ff22af3791f28b887225d81acefe904272236269"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 148,
+        "output_tokens": 39869,
+        "cache_creation_input_tokens": 83774,
+        "cache_read_input_tokens": 3868840,
+        "processed_input_tokens": 3952762,
+        "total_tokens": 3992631,
+        "tool_calls": 74,
+        "cost_usd_estimate": 3.7696250000000004,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 75,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 13,
+          "Edit": 18,
+          "Grep": 15,
+          "Read": 27,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 148,
+            "outputTokens": 39869,
+            "cacheReadInputTokens": 3868840,
+            "cacheCreationInputTokens": 83774,
+            "webSearchRequests": 0,
+            "costUSD": 3.7696250000000004,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 573.355,
+      "setup_seconds": 1.456,
+      "grading_seconds": 0.134,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-25T05:16:58.872472+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6f3ad0f29552f178477c6af2bbbe7f1527b67a7fd2441b24d88342db27d4901f",
+      "composed_prompt_sha256": "1c30c3986707c17aaa7e810789ab9adde185721f530427e00414d1b1969c0161",
+      "snapshot_sha256": "b6799a55a00f7250149a1c3c311f8ab128806ff3df68e4dc0b8e559f8e7f2e81",
+      "validity_issues": [
+        "ambiguous_grader_contract"
+      ],
+      "adjudication": {
+        "schema_version": 1,
+        "trial_id": "r02_lean_task_status-r2-off",
+        "reason": "ambiguous_grader_contract",
+        "grade_sha256": "0557cd34fb5fbcf39a17d683e45eb2d2acf40a71e1d3acc2866197fb4c67c095",
+        "failed_check_sha256": "dec6591a4f655520be8d5aff4a3717562423a5d7d40854a71217b667a1351154"
+      },
+      "behavioral_grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_bytes_preserved",
+            "passed": false
+          },
+          {
+            "name": "v2_device_wire_fixture_bytes_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "88e2146edcc1edd94ac87963899590f41436e16bb58455db09f167422e4894a5",
+        "grading/r02_lean_task_status/preflight.json": "711512415ff41baf55a95789c557ed3be2dab86123cd60533b9f5935c16c3fe2",
+        "grading/r02_lean_task_status/preflight.py": "09b0fd5ad59ecc9415d5aeb42c7b342f632576c3b89de4969f4eceb9a34f9671",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_bytes_preserved",
+            "passed": false
+          },
+          {
+            "name": "v2_device_wire_fixture_bytes_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 92,
+        "output_tokens": 35223,
+        "cache_creation_input_tokens": 99496,
+        "cache_read_input_tokens": 3249338,
+        "processed_input_tokens": 3348926,
+        "total_tokens": 3384149,
+        "tool_calls": 48,
+        "cost_usd_estimate": 3.500664,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 49,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 20,
+          "Edit": 10,
+          "Grep": 4,
+          "Read": 14
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 92,
+            "outputTokens": 35223,
+            "cacheReadInputTokens": 3249338,
+            "cacheCreationInputTokens": 99496,
+            "webSearchRequests": 0,
+            "costUSD": 3.500664,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 21,
+        "compiled_estimated_tokens": 8358,
+        "delivered_compiled_estimated_tokens": 796,
+        "source_items": 252
+      },
+      "agent_wall_seconds": 522.77,
+      "setup_seconds": 3.985,
+      "grading_seconds": 0.135,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-25T05:26:39.968415+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6f3ad0f29552f178477c6af2bbbe7f1527b67a7fd2441b24d88342db27d4901f",
+      "composed_prompt_sha256": "1c30c3986707c17aaa7e810789ab9adde185721f530427e00414d1b1969c0161",
+      "snapshot_sha256": "b6799a55a00f7250149a1c3c311f8ab128806ff3df68e4dc0b8e559f8e7f2e81",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "88e2146edcc1edd94ac87963899590f41436e16bb58455db09f167422e4894a5",
+        "grading/r02_lean_task_status/preflight.json": "711512415ff41baf55a95789c557ed3be2dab86123cd60533b9f5935c16c3fe2",
+        "grading/r02_lean_task_status/preflight.py": "09b0fd5ad59ecc9415d5aeb42c7b342f632576c3b89de4969f4eceb9a34f9671",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 52,
+        "output_tokens": 19416,
+        "cache_creation_input_tokens": 54227,
+        "cache_read_input_tokens": 1079908,
+        "processed_input_tokens": 1134187,
+        "total_tokens": 1153603,
+        "tool_calls": 26,
+        "cost_usd_estimate": 1.5678839999999998,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 27,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 10,
+          "Edit": 5,
+          "Grep": 5,
+          "Read": 6
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 52,
+            "outputTokens": 19416,
+            "cacheReadInputTokens": 1079908,
+            "cacheCreationInputTokens": 54227,
+            "webSearchRequests": 0,
+            "costUSD": 1.5678839999999998,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 7,
+        "compiled_estimated_tokens": 2697,
+        "delivered_compiled_estimated_tokens": 768,
+        "source_items": 84
+      },
+      "agent_wall_seconds": 385.909,
+      "setup_seconds": 12.169,
+      "grading_seconds": 14.599,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T05:35:31.044554+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "b8f03ee01a77bc4fb99ea5b3eeab12b3ee38dfa5ceaf56e049744f0d11981b08",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": false
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 46,
+        "output_tokens": 18241,
+        "cache_creation_input_tokens": 67505,
+        "cache_read_input_tokens": 1278708,
+        "processed_input_tokens": 1346259,
+        "total_tokens": 1364500,
+        "tool_calls": 24,
+        "cost_usd_estimate": 1.7706589999999998,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 25,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 10,
+          "Edit": 5,
+          "Grep": 3,
+          "Read": 6
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 46,
+            "outputTokens": 18241,
+            "cacheReadInputTokens": 1278708,
+            "cacheCreationInputTokens": 67505,
+            "webSearchRequests": 0,
+            "costUSD": 1.7706589999999998,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 326.351,
+      "setup_seconds": 11.433,
+      "grading_seconds": 13.653,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-25T05:42:28.712417+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "b8f03ee01a77bc4fb99ea5b3eeab12b3ee38dfa5ceaf56e049744f0d11981b08",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior hung fetch aborts by five seconds and gate/welcome settle safely",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 64,
+        "output_tokens": 18018,
+        "cache_creation_input_tokens": 37221,
+        "cache_read_input_tokens": 922652,
+        "processed_input_tokens": 959937,
+        "total_tokens": 977955,
+        "tool_calls": 31,
+        "cost_usd_estimate": 1.284306,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 32,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 10,
+          "Edit": 6,
+          "Grep": 2,
+          "Read": 12,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 64,
+            "outputTokens": 18018,
+            "cacheReadInputTokens": 922652,
+            "cacheCreationInputTokens": 37221,
+            "webSearchRequests": 0,
+            "costUSD": 1.284306,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 271.623,
+      "setup_seconds": 27.673,
+      "grading_seconds": 6.828,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T05:48:28.286315+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "715f9dd5d9afaa8625099f23a3ad6ec0951c398d2dfaa6149ecc6834b6c9a018",
+      "composed_prompt_sha256": "b77536002a489478be97d4ea3788857ee9d78a0928b2ceb8228cda4f1b511482",
+      "snapshot_sha256": "1d645dee4ce43703014fe590f443952e69fa5afc70ac11a3725e3af800c67e78",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "ddb5ac0a303f26909164ccd91ad391723e2fafba961b050e95c5bc5ca6f28eab",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "75b89b943b9ca63bbbaa2d304b2aa8aa24cb88fae84c8c1e473dc8367f96080b",
+        "grading/r06_onboarding_outage/preflight.json": "e894df48e12a0fc46af9c20b0c831540c0e2eaeb6ef3e4e73e3b2eb45772a850"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 34,
+        "output_tokens": 20247,
+        "cache_creation_input_tokens": 47197,
+        "cache_read_input_tokens": 599967,
+        "processed_input_tokens": 647198,
+        "total_tokens": 667445,
+        "tool_calls": 29,
+        "cost_usd_estimate": 1.2782984999999998,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 30,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 9,
+          "Edit": 5,
+          "Grep": 1,
+          "Read": 14
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 34,
+            "outputTokens": 20247,
+            "cacheReadInputTokens": 599967,
+            "cacheCreationInputTokens": 47197,
+            "webSearchRequests": 0,
+            "costUSD": 1.2782984999999998,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 5,
+        "compiled_runs": 18,
+        "compiled_estimated_tokens": 5461,
+        "delivered_compiled_estimated_tokens": 1517,
+        "source_items": 216
+      },
+      "agent_wall_seconds": 291.737,
+      "setup_seconds": 26.537,
+      "grading_seconds": 6.655,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-25T05:54:31.591061+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "715f9dd5d9afaa8625099f23a3ad6ec0951c398d2dfaa6149ecc6834b6c9a018",
+      "composed_prompt_sha256": "b77536002a489478be97d4ea3788857ee9d78a0928b2ceb8228cda4f1b511482",
+      "snapshot_sha256": "1d645dee4ce43703014fe590f443952e69fa5afc70ac11a3725e3af800c67e78",
+      "validity_issues": [
+        "ambiguous_grader_contract"
+      ],
+      "adjudication": {
+        "schema_version": 1,
+        "trial_id": "r06_onboarding_outage-r2-brain",
+        "reason": "ambiguous_grader_contract",
+        "grade_sha256": "c9f6011d61ae38a3887093e90543076e22bef36731f7632bcf47192303f8cf9f",
+        "failed_check_sha256": "f54830d5846571d92f0379100501b358c30f40ca9860c7a00a9d097dd55327f8"
+      },
+      "behavioral_grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior hung fetch aborts by five seconds and gate/welcome settle safely",
+            "passed": false
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "ddb5ac0a303f26909164ccd91ad391723e2fafba961b050e95c5bc5ca6f28eab",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "75b89b943b9ca63bbbaa2d304b2aa8aa24cb88fae84c8c1e473dc8367f96080b",
+        "grading/r06_onboarding_outage/preflight.json": "e894df48e12a0fc46af9c20b0c831540c0e2eaeb6ef3e4e73e3b2eb45772a850"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 162,
+        "output_tokens": 38333,
+        "cache_creation_input_tokens": 136819,
+        "cache_read_input_tokens": 6708061,
+        "processed_input_tokens": 6845042,
+        "total_tokens": 6883375,
+        "tool_calls": 81,
+        "cost_usd_estimate": 5.6813555,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 82,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 16,
+          "Edit": 9,
+          "Grep": 24,
+          "Read": 32
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 162,
+            "outputTokens": 38333,
+            "cacheReadInputTokens": 6708061,
+            "cacheCreationInputTokens": 136819,
+            "webSearchRequests": 0,
+            "costUSD": 5.6813555,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 712.519,
+      "setup_seconds": 11.965,
+      "grading_seconds": 22.573,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T06:01:05.834358+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "3b7e69685737a4e1113bc76a87b66cd234db86c3c79d0915fceff65f8f555386",
+      "composed_prompt_sha256": "683cf57331665863a1965313b883a6cc3d37d910ae224b4e700febf5a3e85238",
+      "snapshot_sha256": "64ba0216df69ffc720e64ec7014a8abb9b0f73eddc507505a097be63f42b5bf8",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "143263e8a5a35043fcfb21b3ff22af3791f28b887225d81acefe904272236269"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 122,
+        "output_tokens": 27745,
+        "cache_creation_input_tokens": 89945,
+        "cache_read_input_tokens": 3664434,
+        "processed_input_tokens": 3754501,
+        "total_tokens": 3782246,
+        "tool_calls": 62,
+        "cost_usd_estimate": 3.4259020000000002,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 63,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 20,
+          "Edit": 7,
+          "Grep": 13,
+          "Read": 22
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 122,
+            "outputTokens": 27745,
+            "cacheReadInputTokens": 3664434,
+            "cacheCreationInputTokens": 89945,
+            "webSearchRequests": 0,
+            "costUSD": 3.4259020000000002,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 4,
+        "compiled_runs": 15,
+        "compiled_estimated_tokens": 6061,
+        "delivered_compiled_estimated_tokens": 1606,
+        "source_items": 180
+      },
+      "agent_wall_seconds": 617.282,
+      "setup_seconds": 12.178,
+      "grading_seconds": 21.401,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-25T06:13:54.342456+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "3b7e69685737a4e1113bc76a87b66cd234db86c3c79d0915fceff65f8f555386",
+      "composed_prompt_sha256": "683cf57331665863a1965313b883a6cc3d37d910ae224b4e700febf5a3e85238",
+      "snapshot_sha256": "64ba0216df69ffc720e64ec7014a8abb9b0f73eddc507505a097be63f42b5bf8",
+      "validity_issues": [
+        "ambiguous_grader_contract"
+      ],
+      "adjudication": {
+        "schema_version": 1,
+        "trial_id": "r01_guide_hot_path-r3-brain",
+        "reason": "ambiguous_grader_contract",
+        "grade_sha256": "9042347168b6496e055d5fb01bb907fb2ff962390815e8519e33c59065972643",
+        "failed_check_sha256": "9002e45e94d4768befa37abbd369e1a2ef9a0008f9d6e043576b97bb76cecf89"
+      },
+      "behavioral_grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": false
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "143263e8a5a35043fcfb21b3ff22af3791f28b887225d81acefe904272236269"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_bytes_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_fixture_bytes_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 96,
+        "output_tokens": 33475,
+        "cache_creation_input_tokens": 121994,
+        "cache_read_input_tokens": 4049764,
+        "processed_input_tokens": 4171854,
+        "total_tokens": 4205329,
+        "tool_calls": 51,
+        "cost_usd_estimate": 4.082177,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 52,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 17,
+          "Edit": 11,
+          "Grep": 6,
+          "Read": 17
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 96,
+            "outputTokens": 33475,
+            "cacheReadInputTokens": 4049764,
+            "cacheCreationInputTokens": 121994,
+            "webSearchRequests": 0,
+            "costUSD": 4.082177,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 21,
+        "compiled_estimated_tokens": 8358,
+        "delivered_compiled_estimated_tokens": 796,
+        "source_items": 252
+      },
+      "agent_wall_seconds": 504.793,
+      "setup_seconds": 4.05,
+      "grading_seconds": 0.126,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T06:24:54.479891+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6f3ad0f29552f178477c6af2bbbe7f1527b67a7fd2441b24d88342db27d4901f",
+      "composed_prompt_sha256": "1c30c3986707c17aaa7e810789ab9adde185721f530427e00414d1b1969c0161",
+      "snapshot_sha256": "b6799a55a00f7250149a1c3c311f8ab128806ff3df68e4dc0b8e559f8e7f2e81",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "88e2146edcc1edd94ac87963899590f41436e16bb58455db09f167422e4894a5",
+        "grading/r02_lean_task_status/preflight.json": "711512415ff41baf55a95789c557ed3be2dab86123cd60533b9f5935c16c3fe2",
+        "grading/r02_lean_task_status/preflight.py": "09b0fd5ad59ecc9415d5aeb42c7b342f632576c3b89de4969f4eceb9a34f9671",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_bytes_preserved",
+            "passed": false
+          },
+          {
+            "name": "v2_device_wire_fixture_bytes_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 158,
+        "output_tokens": 45569,
+        "cache_creation_input_tokens": 82892,
+        "cache_read_input_tokens": 3836865,
+        "processed_input_tokens": 3919915,
+        "total_tokens": 3965484,
+        "tool_calls": 78,
+        "cost_usd_estimate": 3.8873675,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 79,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 47,
+          "Edit": 13,
+          "Grep": 2,
+          "Read": 15,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 158,
+            "outputTokens": 45569,
+            "cacheReadInputTokens": 3836865,
+            "cacheCreationInputTokens": 82892,
+            "webSearchRequests": 0,
+            "costUSD": 3.8873675,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 670.296,
+      "setup_seconds": 1.501,
+      "grading_seconds": 0.142,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-25T06:33:31.205033+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6f3ad0f29552f178477c6af2bbbe7f1527b67a7fd2441b24d88342db27d4901f",
+      "composed_prompt_sha256": "1c30c3986707c17aaa7e810789ab9adde185721f530427e00414d1b1969c0161",
+      "snapshot_sha256": "b6799a55a00f7250149a1c3c311f8ab128806ff3df68e4dc0b8e559f8e7f2e81",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "88e2146edcc1edd94ac87963899590f41436e16bb58455db09f167422e4894a5",
+        "grading/r02_lean_task_status/preflight.json": "711512415ff41baf55a95789c557ed3be2dab86123cd60533b9f5935c16c3fe2",
+        "grading/r02_lean_task_status/preflight.py": "09b0fd5ad59ecc9415d5aeb42c7b342f632576c3b89de4969f4eceb9a34f9671",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": false
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 60,
+        "output_tokens": 23707,
+        "cache_creation_input_tokens": 58137,
+        "cache_read_input_tokens": 1039447,
+        "processed_input_tokens": 1097644,
+        "total_tokens": 1121351,
+        "tool_calls": 30,
+        "cost_usd_estimate": 1.6940685,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 31,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 11,
+          "Edit": 5,
+          "Grep": 5,
+          "Read": 9
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 60,
+            "outputTokens": 23707,
+            "cacheReadInputTokens": 1039447,
+            "cacheCreationInputTokens": 58137,
+            "webSearchRequests": 0,
+            "costUSD": 1.6940685,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 417.601,
+      "setup_seconds": 13.345,
+      "grading_seconds": 11.235,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-25T06:44:47.084163+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "b8f03ee01a77bc4fb99ea5b3eeab12b3ee38dfa5ceaf56e049744f0d11981b08",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 44,
+        "output_tokens": 16832,
+        "cache_creation_input_tokens": 41281,
+        "cache_read_input_tokens": 691398,
+        "processed_input_tokens": 732723,
+        "total_tokens": 749555,
+        "tool_calls": 23,
+        "cost_usd_estimate": 1.1795290000000003,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 24,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 9,
+          "Edit": 3,
+          "Grep": 4,
+          "Read": 7
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 44,
+            "outputTokens": 16832,
+            "cacheReadInputTokens": 691398,
+            "cacheCreationInputTokens": 41281,
+            "webSearchRequests": 0,
+            "costUSD": 1.1795290000000003,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 5,
+        "compiled_estimated_tokens": 1923,
+        "delivered_compiled_estimated_tokens": 768,
+        "source_items": 60
+      },
+      "agent_wall_seconds": 279.864,
+      "setup_seconds": 11.012,
+      "grading_seconds": 17.68,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T06:52:14.192923+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "b8f03ee01a77bc4fb99ea5b3eeab12b3ee38dfa5ceaf56e049744f0d11981b08",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 74,
+        "output_tokens": 35092,
+        "cache_creation_input_tokens": 82329,
+        "cache_read_input_tokens": 2004657,
+        "processed_input_tokens": 2087060,
+        "total_tokens": 2122152,
+        "tool_calls": 50,
+        "cost_usd_estimate": 2.7032885,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 51,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 23,
+          "Edit": 9,
+          "Grep": 1,
+          "Read": 17
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 74,
+            "outputTokens": 35092,
+            "cacheReadInputTokens": 2004657,
+            "cacheCreationInputTokens": 82329,
+            "webSearchRequests": 0,
+            "costUSD": 2.7032885,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 4,
+        "compiled_runs": 25,
+        "compiled_estimated_tokens": 7540,
+        "delivered_compiled_estimated_tokens": 1220,
+        "source_items": 300
+      },
+      "agent_wall_seconds": 525.775,
+      "setup_seconds": 28.229,
+      "grading_seconds": 6.594,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-25T06:57:30.015563+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "715f9dd5d9afaa8625099f23a3ad6ec0951c398d2dfaa6149ecc6834b6c9a018",
+      "composed_prompt_sha256": "b77536002a489478be97d4ea3788857ee9d78a0928b2ceb8228cda4f1b511482",
+      "snapshot_sha256": "1d645dee4ce43703014fe590f443952e69fa5afc70ac11a3725e3af800c67e78",
+      "validity_issues": [
+        "ambiguous_grader_contract"
+      ],
+      "adjudication": {
+        "schema_version": 1,
+        "trial_id": "r06_onboarding_outage-r3-brain",
+        "reason": "ambiguous_grader_contract",
+        "grade_sha256": "6c74a6e9191e6b9571947de78f569a87a2295ecf80461866f36956d61d6af196",
+        "failed_check_sha256": "f54830d5846571d92f0379100501b358c30f40ca9860c7a00a9d097dd55327f8"
+      },
+      "behavioral_grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior hung fetch aborts by five seconds and gate/welcome settle safely",
+            "passed": false
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "ddb5ac0a303f26909164ccd91ad391723e2fafba961b050e95c5bc5ca6f28eab",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "75b89b943b9ca63bbbaa2d304b2aa8aa24cb88fae84c8c1e473dc8367f96080b",
+        "grading/r06_onboarding_outage/preflight.json": "e894df48e12a0fc46af9c20b0c831540c0e2eaeb6ef3e4e73e3b2eb45772a850"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior hung fetch aborts by five seconds and gate/welcome settle safely",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 48,
+        "output_tokens": 16670,
+        "cache_creation_input_tokens": 34438,
+        "cache_read_input_tokens": 663191,
+        "processed_input_tokens": 697677,
+        "total_tokens": 714347,
+        "tool_calls": 23,
+        "cost_usd_estimate": 1.0929655,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 24,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 9,
+          "Edit": 6,
+          "Grep": 1,
+          "Read": 6,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 48,
+            "outputTokens": 16670,
+            "cacheReadInputTokens": 663191,
+            "cacheCreationInputTokens": 34438,
+            "webSearchRequests": 0,
+            "costUSD": 1.0929655,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 243.719,
+      "setup_seconds": 25.307,
+      "grading_seconds": 6.775,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-25T07:07:46.653265+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "715f9dd5d9afaa8625099f23a3ad6ec0951c398d2dfaa6149ecc6834b6c9a018",
+      "composed_prompt_sha256": "b77536002a489478be97d4ea3788857ee9d78a0928b2ceb8228cda4f1b511482",
+      "snapshot_sha256": "1d645dee4ce43703014fe590f443952e69fa5afc70ac11a3725e3af800c67e78",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "ddb5ac0a303f26909164ccd91ad391723e2fafba961b050e95c5bc5ca6f28eab",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "75b89b943b9ca63bbbaa2d304b2aa8aa24cb88fae84c8c1e473dc8367f96080b",
+        "grading/r06_onboarding_outage/preflight.json": "e894df48e12a0fc46af9c20b0c831540c0e2eaeb6ef3e4e73e3b2eb45772a850"
+      }
+    }
+  ],
+  "infrastructure_attempts": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "processed_input_tokens": null,
+        "total_tokens": null,
+        "tool_calls": 36,
+        "cost_usd_estimate": null,
+        "trace_complete": false,
+        "usage_complete": false,
+        "tool_calls_complete": false,
+        "is_error": null,
+        "num_turns": null,
+        "result_subtype": null,
+        "counts_by_tool": {
+          "Bash": 10,
+          "Edit": 9,
+          "Grep": 7,
+          "Read": 10
+        },
+        "model_usage": {},
+        "models": [],
+        "permission_denial_count": null,
+        "diagnostics": {
+          "result_count": 0,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": null,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    }
+  ],
+  "preflight_runs": [
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 4,
+        "output_tokens": 324,
+        "cache_creation_input_tokens": 7642,
+        "cache_read_input_tokens": 7382,
+        "processed_input_tokens": 15028,
+        "total_tokens": 15352,
+        "tool_calls": 1,
+        "cost_usd_estimate": 0.088231,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 2,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 4,
+            "outputTokens": 324,
+            "cacheReadInputTokens": 7382,
+            "cacheCreationInputTokens": 7642,
+            "webSearchRequests": 0,
+            "costUSD": 0.088231,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": null,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 2,
+        "output_tokens": 5,
+        "cache_creation_input_tokens": 2807,
+        "cache_read_input_tokens": 0,
+        "processed_input_tokens": 2809,
+        "total_tokens": 2814,
+        "tool_calls": 0,
+        "cost_usd_estimate": 0.01767875,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 1,
+        "result_subtype": "success",
+        "counts_by_tool": {},
+        "model_usage": {
+          "claude-opus-4-8": {
+            "inputTokens": 2,
+            "outputTokens": 5,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 2807,
+            "webSearchRequests": 0,
+            "costUSD": 0.01767875,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": null,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 12,
+        "output_tokens": 1163,
+        "cache_creation_input_tokens": 8641,
+        "cache_read_input_tokens": 39661,
+        "processed_input_tokens": 48314,
+        "total_tokens": 49477,
+        "tool_calls": 6,
+        "cost_usd_estimate": 0.1353755,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 7,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 4,
+          "Read": 1,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 12,
+            "outputTokens": 1163,
+            "cacheReadInputTokens": 39661,
+            "cacheCreationInputTokens": 8641,
+            "webSearchRequests": 0,
+            "costUSD": 0.1353755,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": null,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 4,
+        "output_tokens": 642,
+        "cache_creation_input_tokens": 9138,
+        "cache_read_input_tokens": 8799,
+        "processed_input_tokens": 17941,
+        "total_tokens": 18583,
+        "tool_calls": 1,
+        "cost_usd_estimate": 0.1118495,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 2,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 4,
+            "outputTokens": 642,
+            "cacheReadInputTokens": 8799,
+            "cacheCreationInputTokens": 9138,
+            "webSearchRequests": 0,
+            "costUSD": 0.1118495,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 80.7,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 4,
+        "output_tokens": 722,
+        "cache_creation_input_tokens": 9818,
+        "cache_read_input_tokens": 8799,
+        "processed_input_tokens": 18621,
+        "total_tokens": 19343,
+        "tool_calls": 1,
+        "cost_usd_estimate": 0.12064949999999999,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 2,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 4,
+            "outputTokens": 722,
+            "cacheReadInputTokens": 8799,
+            "cacheCreationInputTokens": 9818,
+            "webSearchRequests": 0,
+            "costUSD": 0.12064949999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 12.487,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 10,
+        "output_tokens": 1396,
+        "cache_creation_input_tokens": 10444,
+        "cache_read_input_tokens": 38344,
+        "processed_input_tokens": 48798,
+        "total_tokens": 50194,
+        "tool_calls": 7,
+        "cost_usd_estimate": 0.158562,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 8,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 4,
+          "Read": 1,
+          "Write": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 10,
+            "outputTokens": 1396,
+            "cacheReadInputTokens": 38344,
+            "cacheCreationInputTokens": 10444,
+            "webSearchRequests": 0,
+            "costUSD": 0.158562,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 22.983,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 6,
+        "output_tokens": 1402,
+        "cache_creation_input_tokens": 10277,
+        "cache_read_input_tokens": 18689,
+        "processed_input_tokens": 28972,
+        "total_tokens": 30374,
+        "tool_calls": 5,
+        "cost_usd_estimate": 0.14719449999999998,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 6,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 4,
+          "Read": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 6,
+            "outputTokens": 1402,
+            "cacheReadInputTokens": 18689,
+            "cacheCreationInputTokens": 10277,
+            "webSearchRequests": 0,
+            "costUSD": 0.14719449999999998,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 18.756,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "brain",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 4,
+        "output_tokens": 611,
+        "cache_creation_input_tokens": 16733,
+        "cache_read_input_tokens": 9444,
+        "processed_input_tokens": 26181,
+        "total_tokens": 26792,
+        "tool_calls": 3,
+        "cost_usd_estimate": 0.187347,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 4,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 4,
+            "outputTokens": 611,
+            "cacheReadInputTokens": 9444,
+            "cacheCreationInputTokens": 16733,
+            "webSearchRequests": 0,
+            "costUSD": 0.187347,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 11.757,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 4,
+        "output_tokens": 824,
+        "cache_creation_input_tokens": 15914,
+        "cache_read_input_tokens": 8747,
+        "processed_input_tokens": 24665,
+        "total_tokens": 25489,
+        "tool_calls": 3,
+        "cost_usd_estimate": 0.1841335,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 4,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 4,
+            "outputTokens": 824,
+            "cacheReadInputTokens": 8747,
+            "cacheCreationInputTokens": 15914,
+            "webSearchRequests": 0,
+            "costUSD": 0.1841335,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 14.3,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "brain",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 4,
+        "output_tokens": 725,
+        "cache_creation_input_tokens": 16890,
+        "cache_read_input_tokens": 9537,
+        "processed_input_tokens": 26431,
+        "total_tokens": 27156,
+        "tool_calls": 3,
+        "cost_usd_estimate": 0.1918135,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 4,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 4,
+            "outputTokens": 725,
+            "cacheReadInputTokens": 9537,
+            "cacheCreationInputTokens": 16890,
+            "webSearchRequests": 0,
+            "costUSD": 0.1918135,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 14.473,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 6,
+        "output_tokens": 821,
+        "cache_creation_input_tokens": 16049,
+        "cache_read_input_tokens": 24630,
+        "processed_input_tokens": 40685,
+        "total_tokens": 41506,
+        "tool_calls": 3,
+        "cost_usd_estimate": 0.19336,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 4,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 6,
+            "outputTokens": 821,
+            "cacheReadInputTokens": 24630,
+            "cacheCreationInputTokens": 16049,
+            "webSearchRequests": 0,
+            "costUSD": 0.19336,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 15.291,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "brain",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 4,
+        "output_tokens": 683,
+        "cache_creation_input_tokens": 16871,
+        "cache_read_input_tokens": 9537,
+        "processed_input_tokens": 26412,
+        "total_tokens": 27095,
+        "tool_calls": 3,
+        "cost_usd_estimate": 0.1905735,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 4,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 4,
+            "outputTokens": 683,
+            "cacheReadInputTokens": 9537,
+            "cacheCreationInputTokens": 16871,
+            "webSearchRequests": 0,
+            "costUSD": 0.1905735,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 12.021,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 4,
+        "output_tokens": 898,
+        "cache_creation_input_tokens": 16027,
+        "cache_read_input_tokens": 8839,
+        "processed_input_tokens": 24870,
+        "total_tokens": 25768,
+        "tool_calls": 3,
+        "cost_usd_estimate": 0.18715949999999998,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 4,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 4,
+            "outputTokens": 898,
+            "cacheReadInputTokens": 8839,
+            "cacheCreationInputTokens": 16027,
+            "webSearchRequests": 0,
+            "costUSD": 0.18715949999999998,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 14.719,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "brain",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 6,
+        "output_tokens": 766,
+        "cache_creation_input_tokens": 16997,
+        "cache_read_input_tokens": 26338,
+        "processed_input_tokens": 43341,
+        "total_tokens": 44107,
+        "tool_calls": 3,
+        "cost_usd_estimate": 0.20231900000000003,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 4,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 6,
+            "outputTokens": 766,
+            "cacheReadInputTokens": 26338,
+            "cacheCreationInputTokens": 16997,
+            "webSearchRequests": 0,
+            "costUSD": 0.20231900000000003,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 14.523,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 4,
+        "output_tokens": 864,
+        "cache_creation_input_tokens": 16007,
+        "cache_read_input_tokens": 8839,
+        "processed_input_tokens": 24850,
+        "total_tokens": 25714,
+        "tool_calls": 3,
+        "cost_usd_estimate": 0.18610949999999998,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 4,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 4,
+            "outputTokens": 864,
+            "cacheReadInputTokens": 8839,
+            "cacheCreationInputTokens": 16007,
+            "webSearchRequests": 0,
+            "costUSD": 0.18610949999999998,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 16.111,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 4,
+        "output_tokens": 676,
+        "cache_creation_input_tokens": 16872,
+        "cache_read_input_tokens": 9579,
+        "processed_input_tokens": 26455,
+        "total_tokens": 27131,
+        "tool_calls": 3,
+        "cost_usd_estimate": 0.1904295,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 4,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 4,
+            "outputTokens": 676,
+            "cacheReadInputTokens": 9579,
+            "cacheCreationInputTokens": 16872,
+            "webSearchRequests": 0,
+            "costUSD": 0.1904295,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 12.179,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    },
+    {
+      "task_id": "environment_preflight",
+      "repetition": null,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 4,
+        "output_tokens": 689,
+        "cache_creation_input_tokens": 16010,
+        "cache_read_input_tokens": 8881,
+        "processed_input_tokens": 24895,
+        "total_tokens": 25584,
+        "tool_calls": 3,
+        "cost_usd_estimate": 0.1817855,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 4,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 1,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 4,
+            "outputTokens": 689,
+            "cacheReadInputTokens": 8881,
+            "cacheCreationInputTokens": 16010,
+            "webSearchRequests": 0,
+            "costUSD": 0.1817855,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": null,
+        "compiled_runs": null,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 11.371,
+      "setup_seconds": null,
+      "grading_seconds": null,
+      "validity_issues": [],
+      "grader_manifest": {}
+    }
+  ],
+  "analysis_provenance": {
+    "report_real_repo_pilot.py": "b5d45cfa63329a5170bef3e05b942dcd00165aabd4eeafa2368e8a66125b3880",
+    "real_repo_metrics.py": "9da6f96f1861a4b8c3c4389c5357961737f217d226d8acde1fd7a7e38517015c",
+    "real_repo_diagnostics.py": "b4f51272276c8c50a3a3efe29785ebe7f9ca3742ffc8ceb84975660633c3f4bb",
+    "real_repo_adjudications.py": "88a9cea3ba08315f5f4055ffd6a5d6d48f65bba4edb8994fad3d2d015d221b50"
+  }
+}

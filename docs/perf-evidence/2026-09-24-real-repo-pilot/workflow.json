@@ -1,0 +1,1895 @@
+{
+  "trials": [
+    {
+      "trial_id": "r01_guide_hot_path-r1-off",
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 27,
+        "tool_calls_by_name": {
+          "Bash": 3,
+          "Edit": 6,
+          "Grep": 7,
+          "Read": 11
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 18,
+        "search_read_calls_before_first_edit": 16,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 19,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 102.331
+        },
+        "tool_error_responses": 0,
+        "tool_results_observed": 27,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 3,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": true,
+          "provider_error": true,
+          "classification": "provider_error",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r01_guide_hot_path-r1-brain",
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 74,
+        "tool_calls_by_name": {
+          "Bash": 7,
+          "Edit": 12,
+          "Grep": 27,
+          "Read": 28
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 55,
+        "search_read_calls_before_first_edit": 39,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 42,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 346.377
+        },
+        "tool_error_responses": 2,
+        "tool_results_observed": 74,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 3,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r02_lean_task_status-r1-brain",
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 53,
+        "tool_calls_by_name": {
+          "Bash": 16,
+          "Edit": 13,
+          "Grep": 7,
+          "Read": 17
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 24,
+        "search_read_calls_before_first_edit": 20,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 25,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 158.632
+        },
+        "tool_error_responses": 2,
+        "tool_results_observed": 53,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 8,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r02_lean_task_status-r1-off",
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 63,
+        "tool_calls_by_name": {
+          "Bash": 29,
+          "Edit": 11,
+          "Grep": 5,
+          "Read": 17,
+          "Write": 1
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 22,
+        "search_read_calls_before_first_edit": 14,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 25,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 165.341
+        },
+        "tool_error_responses": 0,
+        "tool_results_observed": 63,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 9,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r05_test_env_isolation-r1-off",
+      "task_id": "r05_test_env_isolation",
+      "repetition": 1,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 24,
+        "tool_calls_by_name": {
+          "Bash": 11,
+          "Edit": 5,
+          "Grep": 3,
+          "Read": 5
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 8,
+        "search_read_calls_before_first_edit": 8,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 13,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 220.526
+        },
+        "tool_error_responses": 1,
+        "tool_results_observed": 24,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 2,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r05_test_env_isolation-r1-brain",
+      "task_id": "r05_test_env_isolation",
+      "repetition": 1,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 35,
+        "tool_calls_by_name": {
+          "Bash": 11,
+          "Edit": 7,
+          "Grep": 6,
+          "Read": 11
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 17,
+        "search_read_calls_before_first_edit": 11,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 14,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 190.89
+        },
+        "tool_error_responses": 1,
+        "tool_results_observed": 35,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 2,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r06_onboarding_outage-r1-brain",
+      "task_id": "r06_onboarding_outage",
+      "repetition": 1,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 33,
+        "tool_calls_by_name": {
+          "Bash": 13,
+          "Edit": 5,
+          "Grep": 2,
+          "Read": 11,
+          "Write": 2
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 13,
+        "search_read_calls_before_first_edit": 13,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 21,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 196.507
+        },
+        "tool_error_responses": 0,
+        "tool_results_observed": 33,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 4,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r06_onboarding_outage-r1-off",
+      "task_id": "r06_onboarding_outage",
+      "repetition": 1,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 31,
+        "tool_calls_by_name": {
+          "Bash": 9,
+          "Edit": 5,
+          "Grep": 2,
+          "Read": 14,
+          "Write": 1
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 16,
+        "search_read_calls_before_first_edit": 15,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 21,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 142.387
+        },
+        "tool_error_responses": 0,
+        "tool_results_observed": 31,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 3,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r01_guide_hot_path-r2-brain",
+      "task_id": "r01_guide_hot_path",
+      "repetition": 2,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 58,
+        "tool_calls_by_name": {
+          "Bash": 15,
+          "Edit": 10,
+          "Grep": 11,
+          "Read": 22
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 33,
+        "search_read_calls_before_first_edit": 14,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 16,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 125.376
+        },
+        "tool_error_responses": 1,
+        "tool_results_observed": 58,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 4,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r01_guide_hot_path-r2-off",
+      "task_id": "r01_guide_hot_path",
+      "repetition": 2,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 75,
+        "tool_calls_by_name": {
+          "Bash": 34,
+          "Edit": 7,
+          "Grep": 6,
+          "Read": 28
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 34,
+        "search_read_calls_before_first_edit": 12,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 15,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 83.15
+        },
+        "tool_error_responses": 0,
+        "tool_results_observed": 75,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 3,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r02_lean_task_status-r2-off",
+      "task_id": "r02_lean_task_status",
+      "repetition": 2,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 74,
+        "tool_calls_by_name": {
+          "Bash": 13,
+          "Edit": 18,
+          "Grep": 15,
+          "Read": 27,
+          "Write": 1
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 42,
+        "search_read_calls_before_first_edit": 28,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 36,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 226.156
+        },
+        "tool_error_responses": 0,
+        "tool_results_observed": 74,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 11,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r02_lean_task_status-r2-brain",
+      "task_id": "r02_lean_task_status",
+      "repetition": 2,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 48,
+        "tool_calls_by_name": {
+          "Bash": 20,
+          "Edit": 10,
+          "Grep": 4,
+          "Read": 14
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 18,
+        "search_read_calls_before_first_edit": 18,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 32,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 294.667
+        },
+        "tool_error_responses": 1,
+        "tool_results_observed": 48,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 7,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r05_test_env_isolation-r2-brain",
+      "task_id": "r05_test_env_isolation",
+      "repetition": 2,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 26,
+        "tool_calls_by_name": {
+          "Bash": 10,
+          "Edit": 5,
+          "Grep": 5,
+          "Read": 6
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 11,
+        "search_read_calls_before_first_edit": 11,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 16,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 250.391
+        },
+        "tool_error_responses": 1,
+        "tool_results_observed": 26,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 2,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r05_test_env_isolation-r2-off",
+      "task_id": "r05_test_env_isolation",
+      "repetition": 2,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 24,
+        "tool_calls_by_name": {
+          "Bash": 10,
+          "Edit": 5,
+          "Grep": 3,
+          "Read": 6
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 9,
+        "search_read_calls_before_first_edit": 7,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 12,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 205.294
+        },
+        "tool_error_responses": 1,
+        "tool_results_observed": 24,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 2,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r06_onboarding_outage-r2-off",
+      "task_id": "r06_onboarding_outage",
+      "repetition": 2,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 31,
+        "tool_calls_by_name": {
+          "Bash": 10,
+          "Edit": 6,
+          "Grep": 2,
+          "Read": 12,
+          "Write": 1
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 14,
+        "search_read_calls_before_first_edit": 14,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 21,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 148.015
+        },
+        "tool_error_responses": 0,
+        "tool_results_observed": 31,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 3,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r06_onboarding_outage-r2-brain",
+      "task_id": "r06_onboarding_outage",
+      "repetition": 2,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 29,
+        "tool_calls_by_name": {
+          "Bash": 9,
+          "Edit": 5,
+          "Grep": 1,
+          "Read": 14
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 15,
+        "search_read_calls_before_first_edit": 15,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 19,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 169.653
+        },
+        "tool_error_responses": 0,
+        "tool_results_observed": 29,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 4,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r01_guide_hot_path-r3-off",
+      "task_id": "r01_guide_hot_path",
+      "repetition": 3,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 81,
+        "tool_calls_by_name": {
+          "Bash": 16,
+          "Edit": 9,
+          "Grep": 24,
+          "Read": 32
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 56,
+        "search_read_calls_before_first_edit": 40,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 44,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 328.725
+        },
+        "tool_error_responses": 1,
+        "tool_results_observed": 81,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 3,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r01_guide_hot_path-r3-brain",
+      "task_id": "r01_guide_hot_path",
+      "repetition": 3,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 62,
+        "tool_calls_by_name": {
+          "Bash": 20,
+          "Edit": 7,
+          "Grep": 13,
+          "Read": 22
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 35,
+        "search_read_calls_before_first_edit": 21,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 25,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 167.344
+        },
+        "tool_error_responses": 1,
+        "tool_results_observed": 62,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 3,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r02_lean_task_status-r3-brain",
+      "task_id": "r02_lean_task_status",
+      "repetition": 3,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 51,
+        "tool_calls_by_name": {
+          "Bash": 17,
+          "Edit": 11,
+          "Grep": 6,
+          "Read": 17
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 23,
+        "search_read_calls_before_first_edit": 14,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 28,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 243.332
+        },
+        "tool_error_responses": 1,
+        "tool_results_observed": 51,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 8,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r02_lean_task_status-r3-off",
+      "task_id": "r02_lean_task_status",
+      "repetition": 3,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 78,
+        "tool_calls_by_name": {
+          "Bash": 47,
+          "Edit": 13,
+          "Grep": 2,
+          "Read": 15,
+          "Write": 1
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 17,
+        "search_read_calls_before_first_edit": 11,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 45,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 334.548
+        },
+        "tool_error_responses": 2,
+        "tool_results_observed": 78,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 9,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r05_test_env_isolation-r3-off",
+      "task_id": "r05_test_env_isolation",
+      "repetition": 3,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 30,
+        "tool_calls_by_name": {
+          "Bash": 11,
+          "Edit": 5,
+          "Grep": 5,
+          "Read": 9
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 14,
+        "search_read_calls_before_first_edit": 13,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 19,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 236.493
+        },
+        "tool_error_responses": 2,
+        "tool_results_observed": 30,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 2,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r05_test_env_isolation-r3-brain",
+      "task_id": "r05_test_env_isolation",
+      "repetition": 3,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 23,
+        "tool_calls_by_name": {
+          "Bash": 9,
+          "Edit": 3,
+          "Grep": 4,
+          "Read": 7
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 11,
+        "search_read_calls_before_first_edit": 7,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 10,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 71.822
+        },
+        "tool_error_responses": 1,
+        "tool_results_observed": 23,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 2,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r06_onboarding_outage-r3-brain",
+      "task_id": "r06_onboarding_outage",
+      "repetition": 3,
+      "arm": "brain",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 50,
+        "tool_calls_by_name": {
+          "Bash": 23,
+          "Edit": 9,
+          "Grep": 1,
+          "Read": 17
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 18,
+        "search_read_calls_before_first_edit": 17,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 25,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 148.278
+        },
+        "tool_error_responses": 0,
+        "tool_results_observed": 50,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 4,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    },
+    {
+      "trial_id": "r06_onboarding_outage-r3-off",
+      "task_id": "r06_onboarding_outage",
+      "repetition": 3,
+      "arm": "off",
+      "workflow": {
+        "schema_version": 1,
+        "scope": "explanatory_native_tool_workflow_only",
+        "tool_calls": 23,
+        "tool_calls_by_name": {
+          "Bash": 9,
+          "Edit": 6,
+          "Grep": 1,
+          "Read": 6,
+          "Write": 1
+        },
+        "tool_calls_complete": true,
+        "search_read_calls_total": 7,
+        "search_read_calls_before_first_edit": 6,
+        "first_edit": {
+          "observed": true,
+          "tool_ordinal": 13,
+          "elapsed_seconds": null,
+          "elapsed_basis": null,
+          "since_first_timestamped_event_seconds": 128.651
+        },
+        "tool_error_responses": 0,
+        "tool_results_observed": 23,
+        "tool_errors_complete": true,
+        "edited_unique_file_count": 3,
+        "edited_file_count_complete": true,
+        "final_result": {
+          "present": true,
+          "result_count": 1,
+          "is_error": false,
+          "provider_error": false,
+          "classification": "successful_result",
+          "api_error_status": null
+        },
+        "coverage": {
+          "malformed_lines": 0,
+          "tool_blocks_without_ids": 0,
+          "tool_name_conflicts": 0,
+          "edit_path_conflicts": 0,
+          "relative_edit_paths_without_cwd": 0,
+          "tool_results_without_ids": 0,
+          "unidentified_tool_error_responses": 0,
+          "unmatched_tool_result_ids": 0,
+          "conflicting_tool_results": 0,
+          "unknown_tool_result_statuses": 0,
+          "edit_requests_without_result": 0,
+          "edit_requests_without_path": 0,
+          "invalid_timestamps": 0,
+          "backwards_timestamps": 0,
+          "dispatch_timestamp_available": false,
+          "invalid_supplied_dispatch_timestamp": false
+        }
+      }
+    }
+  ],
+  "summary": {
+    "schema_version": 1,
+    "scope": "explanatory_diagnostics_not_correctness_or_token_outcomes",
+    "by_arm": {
+      "brain": {
+        "trials": 12,
+        "traces_available": 12,
+        "tool_calls_by_name_observed": {
+          "Bash": 170,
+          "Edit": 97,
+          "Grep": 87,
+          "Read": 186,
+          "Write": 2
+        },
+        "tool_calls_observed": 542,
+        "complete_tool_count_traces": 12,
+        "tool_error_responses_observed": 11,
+        "complete_tool_error_traces": 12,
+        "edited_unique_files_per_trial_sum": 51,
+        "complete_edited_file_count_traces": 12,
+        "final_result_classifications": {
+          "successful_result": 12
+        },
+        "distributions": {
+          "search_read_calls_before_first_edit": {
+            "available": 12,
+            "missing": 0,
+            "mean": 16.666666666666668,
+            "median": 14.5
+          },
+          "first_edit_tool_ordinal": {
+            "available": 12,
+            "missing": 0,
+            "mean": 22.75,
+            "median": 23.0
+          },
+          "first_edit_elapsed_seconds": {
+            "available": 0,
+            "missing": 12,
+            "mean": null,
+            "median": null
+          },
+          "first_edit_since_first_timestamped_event_seconds": {
+            "available": 12,
+            "missing": 0,
+            "mean": 196.93908333333331,
+            "median": 180.2715
+          }
+        }
+      },
+      "off": {
+        "trials": 12,
+        "traces_available": 12,
+        "tool_calls_by_name_observed": {
+          "Bash": 202,
+          "Edit": 96,
+          "Grep": 75,
+          "Read": 182,
+          "Write": 6
+        },
+        "tool_calls_observed": 561,
+        "complete_tool_count_traces": 12,
+        "tool_error_responses_observed": 7,
+        "complete_tool_error_traces": 12,
+        "edited_unique_files_per_trial_sum": 53,
+        "complete_edited_file_count_traces": 12,
+        "final_result_classifications": {
+          "provider_error": 1,
+          "successful_result": 11
+        },
+        "distributions": {
+          "search_read_calls_before_first_edit": {
+            "available": 12,
+            "missing": 0,
+            "mean": 15.333333333333334,
+            "median": 13.5
+          },
+          "first_edit_tool_ordinal": {
+            "available": 12,
+            "missing": 0,
+            "mean": 23.583333333333332,
+            "median": 20.0
+          },
+          "first_edit_elapsed_seconds": {
+            "available": 0,
+            "missing": 12,
+            "mean": null,
+            "median": null
+          },
+          "first_edit_since_first_timestamped_event_seconds": {
+            "available": 12,
+            "missing": 0,
+            "mean": 193.46808333333334,
+            "median": 185.3175
+          }
+        }
+      }
+    },
+    "by_task": [
+      {
+        "task_id": "r01_guide_hot_path",
+        "by_arm": {
+          "brain": {
+            "trials": 3,
+            "traces_available": 3,
+            "tool_calls_by_name_observed": {
+              "Bash": 42,
+              "Edit": 29,
+              "Grep": 51,
+              "Read": 72
+            },
+            "tool_calls_observed": 194,
+            "complete_tool_count_traces": 3,
+            "tool_error_responses_observed": 4,
+            "complete_tool_error_traces": 3,
+            "edited_unique_files_per_trial_sum": 10,
+            "complete_edited_file_count_traces": 3,
+            "final_result_classifications": {
+              "successful_result": 3
+            },
+            "distributions": {
+              "search_read_calls_before_first_edit": {
+                "available": 3,
+                "missing": 0,
+                "mean": 24.666666666666668,
+                "median": 21
+              },
+              "first_edit_tool_ordinal": {
+                "available": 3,
+                "missing": 0,
+                "mean": 27.666666666666668,
+                "median": 25
+              },
+              "first_edit_elapsed_seconds": {
+                "available": 0,
+                "missing": 3,
+                "mean": null,
+                "median": null
+              },
+              "first_edit_since_first_timestamped_event_seconds": {
+                "available": 3,
+                "missing": 0,
+                "mean": 213.03233333333333,
+                "median": 167.344
+              }
+            }
+          },
+          "off": {
+            "trials": 3,
+            "traces_available": 3,
+            "tool_calls_by_name_observed": {
+              "Bash": 53,
+              "Edit": 22,
+              "Grep": 37,
+              "Read": 71
+            },
+            "tool_calls_observed": 183,
+            "complete_tool_count_traces": 3,
+            "tool_error_responses_observed": 1,
+            "complete_tool_error_traces": 3,
+            "edited_unique_files_per_trial_sum": 9,
+            "complete_edited_file_count_traces": 3,
+            "final_result_classifications": {
+              "provider_error": 1,
+              "successful_result": 2
+            },
+            "distributions": {
+              "search_read_calls_before_first_edit": {
+                "available": 3,
+                "missing": 0,
+                "mean": 22.666666666666668,
+                "median": 16
+              },
+              "first_edit_tool_ordinal": {
+                "available": 3,
+                "missing": 0,
+                "mean": 26,
+                "median": 19
+              },
+              "first_edit_elapsed_seconds": {
+                "available": 0,
+                "missing": 3,
+                "mean": null,
+                "median": null
+              },
+              "first_edit_since_first_timestamped_event_seconds": {
+                "available": 3,
+                "missing": 0,
+                "mean": 171.40200000000002,
+                "median": 102.331
+              }
+            }
+          }
+        }
+      },
+      {
+        "task_id": "r02_lean_task_status",
+        "by_arm": {
+          "brain": {
+            "trials": 3,
+            "traces_available": 3,
+            "tool_calls_by_name_observed": {
+              "Bash": 53,
+              "Edit": 34,
+              "Grep": 17,
+              "Read": 48
+            },
+            "tool_calls_observed": 152,
+            "complete_tool_count_traces": 3,
+            "tool_error_responses_observed": 4,
+            "complete_tool_error_traces": 3,
+            "edited_unique_files_per_trial_sum": 23,
+            "complete_edited_file_count_traces": 3,
+            "final_result_classifications": {
+              "successful_result": 3
+            },
+            "distributions": {
+              "search_read_calls_before_first_edit": {
+                "available": 3,
+                "missing": 0,
+                "mean": 17.333333333333332,
+                "median": 18
+              },
+              "first_edit_tool_ordinal": {
+                "available": 3,
+                "missing": 0,
+                "mean": 28.333333333333332,
+                "median": 28
+              },
+              "first_edit_elapsed_seconds": {
+                "available": 0,
+                "missing": 3,
+                "mean": null,
+                "median": null
+              },
+              "first_edit_since_first_timestamped_event_seconds": {
+                "available": 3,
+                "missing": 0,
+                "mean": 232.21033333333332,
+                "median": 243.332
+              }
+            }
+          },
+          "off": {
+            "trials": 3,
+            "traces_available": 3,
+            "tool_calls_by_name_observed": {
+              "Bash": 89,
+              "Edit": 42,
+              "Grep": 22,
+              "Read": 59,
+              "Write": 3
+            },
+            "tool_calls_observed": 215,
+            "complete_tool_count_traces": 3,
+            "tool_error_responses_observed": 2,
+            "complete_tool_error_traces": 3,
+            "edited_unique_files_per_trial_sum": 29,
+            "complete_edited_file_count_traces": 3,
+            "final_result_classifications": {
+              "successful_result": 3
+            },
+            "distributions": {
+              "search_read_calls_before_first_edit": {
+                "available": 3,
+                "missing": 0,
+                "mean": 17.666666666666668,
+                "median": 14
+              },
+              "first_edit_tool_ordinal": {
+                "available": 3,
+                "missing": 0,
+                "mean": 35.333333333333336,
+                "median": 36
+              },
+              "first_edit_elapsed_seconds": {
+                "available": 0,
+                "missing": 3,
+                "mean": null,
+                "median": null
+              },
+              "first_edit_since_first_timestamped_event_seconds": {
+                "available": 3,
+                "missing": 0,
+                "mean": 242.01500000000001,
+                "median": 226.156
+              }
+            }
+          }
+        }
+      },
+      {
+        "task_id": "r05_test_env_isolation",
+        "by_arm": {
+          "brain": {
+            "trials": 3,
+            "traces_available": 3,
+            "tool_calls_by_name_observed": {
+              "Bash": 30,
+              "Edit": 15,
+              "Grep": 15,
+              "Read": 24
+            },
+            "tool_calls_observed": 84,
+            "complete_tool_count_traces": 3,
+            "tool_error_responses_observed": 3,
+            "complete_tool_error_traces": 3,
+            "edited_unique_files_per_trial_sum": 6,
+            "complete_edited_file_count_traces": 3,
+            "final_result_classifications": {
+              "successful_result": 3
+            },
+            "distributions": {
+              "search_read_calls_before_first_edit": {
+                "available": 3,
+                "missing": 0,
+                "mean": 9.666666666666666,
+                "median": 11
+              },
+              "first_edit_tool_ordinal": {
+                "available": 3,
+                "missing": 0,
+                "mean": 13.333333333333334,
+                "median": 14
+              },
+              "first_edit_elapsed_seconds": {
+                "available": 0,
+                "missing": 3,
+                "mean": null,
+                "median": null
+              },
+              "first_edit_since_first_timestamped_event_seconds": {
+                "available": 3,
+                "missing": 0,
+                "mean": 171.03433333333334,
+                "median": 190.89
+              }
+            }
+          },
+          "off": {
+            "trials": 3,
+            "traces_available": 3,
+            "tool_calls_by_name_observed": {
+              "Bash": 32,
+              "Edit": 15,
+              "Grep": 11,
+              "Read": 20
+            },
+            "tool_calls_observed": 78,
+            "complete_tool_count_traces": 3,
+            "tool_error_responses_observed": 4,
+            "complete_tool_error_traces": 3,
+            "edited_unique_files_per_trial_sum": 6,
+            "complete_edited_file_count_traces": 3,
+            "final_result_classifications": {
+              "successful_result": 3
+            },
+            "distributions": {
+              "search_read_calls_before_first_edit": {
+                "available": 3,
+                "missing": 0,
+                "mean": 9.333333333333334,
+                "median": 8
+              },
+              "first_edit_tool_ordinal": {
+                "available": 3,
+                "missing": 0,
+                "mean": 14.666666666666666,
+                "median": 13
+              },
+              "first_edit_elapsed_seconds": {
+                "available": 0,
+                "missing": 3,
+                "mean": null,
+                "median": null
+              },
+              "first_edit_since_first_timestamped_event_seconds": {
+                "available": 3,
+                "missing": 0,
+                "mean": 220.77100000000002,
+                "median": 220.526
+              }
+            }
+          }
+        }
+      },
+      {
+        "task_id": "r06_onboarding_outage",
+        "by_arm": {
+          "brain": {
+            "trials": 3,
+            "traces_available": 3,
+            "tool_calls_by_name_observed": {
+              "Bash": 45,
+              "Edit": 19,
+              "Grep": 4,
+              "Read": 42,
+              "Write": 2
+            },
+            "tool_calls_observed": 112,
+            "complete_tool_count_traces": 3,
+            "tool_error_responses_observed": 0,
+            "complete_tool_error_traces": 3,
+            "edited_unique_files_per_trial_sum": 12,
+            "complete_edited_file_count_traces": 3,
+            "final_result_classifications": {
+              "successful_result": 3
+            },
+            "distributions": {
+              "search_read_calls_before_first_edit": {
+                "available": 3,
+                "missing": 0,
+                "mean": 15,
+                "median": 15
+              },
+              "first_edit_tool_ordinal": {
+                "available": 3,
+                "missing": 0,
+                "mean": 21.666666666666668,
+                "median": 21
+              },
+              "first_edit_elapsed_seconds": {
+                "available": 0,
+                "missing": 3,
+                "mean": null,
+                "median": null
+              },
+              "first_edit_since_first_timestamped_event_seconds": {
+                "available": 3,
+                "missing": 0,
+                "mean": 171.47933333333333,
+                "median": 169.653
+              }
+            }
+          },
+          "off": {
+            "trials": 3,
+            "traces_available": 3,
+            "tool_calls_by_name_observed": {
+              "Bash": 28,
+              "Edit": 17,
+              "Grep": 5,
+              "Read": 32,
+              "Write": 3
+            },
+            "tool_calls_observed": 85,
+            "complete_tool_count_traces": 3,
+            "tool_error_responses_observed": 0,
+            "complete_tool_error_traces": 3,
+            "edited_unique_files_per_trial_sum": 9,
+            "complete_edited_file_count_traces": 3,
+            "final_result_classifications": {
+              "successful_result": 3
+            },
+            "distributions": {
+              "search_read_calls_before_first_edit": {
+                "available": 3,
+                "missing": 0,
+                "mean": 11.666666666666666,
+                "median": 14
+              },
+              "first_edit_tool_ordinal": {
+                "available": 3,
+                "missing": 0,
+                "mean": 18.333333333333332,
+                "median": 21
+              },
+              "first_edit_elapsed_seconds": {
+                "available": 0,
+                "missing": 3,
+                "mean": null,
+                "median": null
+              },
+              "first_edit_since_first_timestamped_event_seconds": {
+                "available": 3,
+                "missing": 0,
+                "mean": 139.68433333333334,
+                "median": 142.387
+              }
+            }
+          }
+        }
+      }
+    ],
+    "limitations": [
+      "Bash searches and edits are opaque; native tool names define these categories.",
+      "First edit is the first edit request, which can fail; edited file counts require non-error results.",
+      "First observed timestamp excludes unobserved dispatch/initial response time and is labeled separately.",
+      "File identities are normalized lexically, without symlink resolution; only counts are emitted.",
+      "Errors count explicit tool-result error flags, not exit codes inferred from arbitrary output."
+    ]
+  }
+}

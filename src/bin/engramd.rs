@@ -7,6 +7,11 @@ use engram::config::{Config, ConfigOverrides};
 #[derive(Debug, Parser)]
 #[command(name = "engramd", version, about = "Engram daemon")]
 struct Cli {
+    #[arg(long)]
+    workspace: Option<String>,
+    /// Private resolved configuration snapshot supplied by a sibling client.
+    #[arg(long, hide = true, conflicts_with = "config")]
+    resolved_config: Option<PathBuf>,
     /// Use this configuration file instead of the user configuration.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
@@ -32,10 +37,13 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> engram::Result<()> {
     let overrides = ConfigOverrides {
+        workspace: cli.workspace,
         db_path: cli.db,
         local_only: None,
     };
-    let mut config = if let Some(path) = cli.config {
+    let mut config = if let Some(path) = cli.resolved_config {
+        Config::load_resolved(&path)?
+    } else if let Some(path) = cli.config {
         Config::load_layers(
             Some(&path),
             None,

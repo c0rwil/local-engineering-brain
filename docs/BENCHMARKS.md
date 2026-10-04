@@ -8,6 +8,29 @@ date-and-commit filenames; the synthetic `conveyor` fixture and its
 fairness audit live in the benchmark target repo. Capture measurements and
 historical recovery replay are reported separately from paired agent trials.
 
+## Real-repository task pilot
+
+The [real-repository task catalog](../benchmarks/real-repo-v1/README.md) specifies
+nine historical engineering replays with verified parent/fix commits, separate
+agent prompts and grading contracts. The first pilot is four tasks × three
+repetitions × Off/Brain, or 24 agent runs. Fixture preparation and hidden-test
+calibration passed, and all 24 isolated Claude Max attempts are complete. The
+[pilot report](perf-evidence/2026-09-24-real-repo-pilot/README.md) records completed
+attempts, delivery receipts, correctness, provider tokens, tool calls and timing.
+Paired outcomes are four Brain-only passes, one Off-only pass, one both-pass pair,
+and six unscorable pairs. That single both-pass pair shows 34.1% fewer processed
+tokens and 22.7% fewer tool calls with Brain, with 1.3% more agent time. It does not
+establish general savings. Five grader-contract ambiguities and one provider
+runtime error are retained; the grading audit explains the exclusions.
+The protocol separates coding-agent savings from improvements to the products
+being edited, and retains failed and interrupted attempts.
+
+The [context follow-up](perf-evidence/2026-09-25-context-followup/README.md) tests
+the resulting identifier, field-owner and delivery-suppression fixes. It compares
+the previous and updated binaries on frozen navigation probes and full historical
+task descriptions, including reordered requirements. These are local retrieval
+diagnostics; the original 24 agent attempts remain unchanged.
+
 ## Headline results
 
 | Axis | Control | With Engram | Evidence |

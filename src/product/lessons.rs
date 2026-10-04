@@ -259,7 +259,7 @@ impl ProductStore {
             .into_iter()
             .filter(|r| r.task_id == task.id)
             .collect();
-        Ok(CompletionResult { task,evidence_ids,reviews,next_step:"Review proposed lessons in Knowledge. Edit, accept or reject; acceptance of a lesson is separate from user acceptance of the task. Unsupported proposals cannot become validated memories.".to_owned() })
+        Ok(CompletionResult { task,evidence_ids,reviews,next_step:"Proposed lessons await evidence review. An enabled judge reviews them automatically; Knowledge also supports human review. Lesson approval is separate from user acceptance of the task. Unsupported proposals cannot become validated memories.".to_owned() })
     }
 
     fn propose(&self, task: &TaskRecord, lesson: &LessonDraft) -> Result<()> {
@@ -308,6 +308,55 @@ impl ProductStore {
         })
     }
 
+    /// Read one proposal by identity, independently of the bounded UI inbox.
+    /// # Errors
+    /// Returns storage or persisted-data errors.
+    pub fn review_by_id(&self, id: &str) -> Result<Option<LessonReview>> {
+        let raw = self.database.with_reader(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT json_object('id',id,'task_id',task_id,'project_id',project_id,
+                 'claim',claim,'rationale',rationale,'evidence_ids',json(evidence_ids_json),
+                 'status',status,'memory_id',memory_id,'expires_at_ms',expires_at_ms,
+                 'updated_at_ms',updated_at_ms,'related_memories',json('[]'))
+                 FROM lesson_reviews WHERE id=?1",
+                    [id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?)
+        })?;
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        let mut review: LessonReview = serde_json::from_str(&raw)?;
+        review.related_memories = self.related_memories(&review.project_id, &review.claim)?;
+        Ok(Some(review))
+    }
+
+    /// Read one bounded page of pending identities in stable oldest-first order.
+    /// The caller may continue after the last `(updated_at_ms, id)` key.
+    /// # Errors
+    /// Returns storage errors.
+    pub(crate) fn pending_review_page(
+        &self,
+        after: Option<(i64, &str)>,
+        as_of_ms: i64,
+    ) -> Result<Vec<(i64, String)>> {
+        self.database.with_reader(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT updated_at_ms,id FROM lesson_reviews WHERE status='pending'
+                 AND (?1 IS NULL OR (updated_at_ms,id)>(?1,?2)) AND updated_at_ms<=?3
+                 ORDER BY updated_at_ms,id LIMIT 64",
+            )?;
+            Ok(statement
+                .query_map(
+                    params![after.map(|key| key.0), after.map(|key| key.1), as_of_ms],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?)
+        })
+    }
+
     fn related_memories(&self, project_id: &ProjectId, claim: &str) -> Result<Vec<RelatedMemory>> {
         self.database.with_reader(|c| {
             let mut s=c.prepare("SELECT id,claim FROM memories WHERE project_id=?1 AND status IN ('active','suspect') ORDER BY updated_at_ms DESC LIMIT 500")?;
@@ -319,18 +368,36 @@ impl ProductStore {
     /// Apply an explicit decision; accepting uses normal evidence gates.
     /// # Errors
     /// Returns stale-review, unsupported-claim, scope or storage errors.
-    #[allow(clippy::too_many_lines)]
     pub fn review(&self, request: &ReviewRequest) -> Result<LessonReview> {
+        self.review_with_evidence(request, None)
+    }
+
+    /// Apply a review using only the cited subset of the original source evidence.
+    /// The judge cannot add evidence; normal distillation and promotion still gate it.
+    /// # Errors
+    /// Returns invalid citations, stale review, or normal review validation errors.
+    #[allow(clippy::too_many_lines)]
+    pub(crate) fn review_with_evidence(
+        &self,
+        request: &ReviewRequest,
+        cited_evidence: Option<&[EvidenceId]>,
+    ) -> Result<LessonReview> {
         let mut review = self
-            .reviews()?
-            .into_iter()
-            .find(|r| r.id == request.id)
-            .ok_or_else(|| invalid("review not found in the current inbox"))?;
+            .review_by_id(&request.id)?
+            .ok_or_else(|| invalid("review not found"))?;
         if review.status != "pending" {
             return Ok(review);
         }
         if review.updated_at_ms != request.expected_updated_at_ms {
             return Err(invalid("review changed; reload before deciding"));
+        }
+        if let Some(cited) = cited_evidence {
+            if cited.is_empty() || cited.iter().any(|id| !review.evidence_ids.contains(id)) {
+                return Err(invalid(
+                    "a review can cite only a nonempty subset of its source evidence",
+                ));
+            }
+            review.evidence_ids = cited.to_vec();
         }
         if let Some(claim) = &request.claim {
             review.claim = self.redactor.redact_text(claim);
@@ -354,8 +421,21 @@ impl ProductStore {
                 ));
             }
             if request.claim.is_some() {
-                review.related_memories =
-                    self.related_memories(&review.project_id, &review.claim)?;
+                let related = self.related_memories(&review.project_id, &review.claim)?;
+                if cited_evidence.is_some()
+                    && related.iter().any(|memory| {
+                        !memory.exact
+                            && !review
+                                .related_memories
+                                .iter()
+                                .any(|old| old.id == memory.id)
+                    })
+                {
+                    return Err(invalid(
+                        "narrowed automatic claim overlaps additional memories; re-review the proposal",
+                    ));
+                }
+                review.related_memories = related;
             }
             if !request.reviewed_related && review.related_memories.iter().any(|m| !m.exact) {
                 return Err(invalid(
@@ -430,7 +510,7 @@ impl ProductStore {
         };
         let now = now_ms().max(review.updated_at_ms.saturating_add(1));
         self.database.write_immediate(|tx| {
-            tx.execute("UPDATE lesson_reviews SET status=?2,claim=?3,rationale=?4,memory_id=?5,updated_at_ms=?6 WHERE id=?1 AND status='pending'",params![review.id,if memory.is_some(){"accepted"}else{"rejected"},review.claim,review.rationale,memory.as_ref().map(MemoryId::as_str),now])?;
+            tx.execute("UPDATE lesson_reviews SET status=?2,claim=?3,rationale=?4,memory_id=?5,updated_at_ms=?6,evidence_ids_json=?7 WHERE id=?1 AND status='pending'",params![review.id,if memory.is_some(){"accepted"}else{"rejected"},review.claim,review.rationale,memory.as_ref().map(MemoryId::as_str),now,serde_json::to_string(&review.evidence_ids)?])?;
             if let (Some(id),Some(expiry))=(&memory,review.expires_at_ms) { tx.execute("INSERT INTO memory_expiry(memory_id,expires_at_ms) VALUES(?1,?2) ON CONFLICT(memory_id) DO UPDATE SET expires_at_ms=excluded.expires_at_ms",params![id.as_str(),expiry])?; }
             Ok(())
         })?;

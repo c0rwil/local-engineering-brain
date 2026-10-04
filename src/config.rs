@@ -7,9 +7,11 @@ use sha2::{Digest as _, Sha256};
 use crate::error::{Error, Result, io_error};
 
 /// Fully resolved runtime configuration.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    /// Active isolated knowledge workspace. `default` preserves existing paths.
+    pub workspace: String,
     pub brain: BrainConfig,
     pub cache: CacheConfig,
     pub context: ContextConfig,
@@ -31,6 +33,37 @@ pub struct Config {
     pub web: WebConfig,
     pub watch: WatchConfig,
     pub sync: SyncConfig,
+    pub judge: crate::judge::JudgeConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            workspace: crate::workspaces::DEFAULT_WORKSPACE.to_owned(),
+            brain: BrainConfig::default(),
+            cache: CacheConfig::default(),
+            context: ContextConfig::default(),
+            daemon: DaemonConfig::default(),
+            jobs: JobsConfig::default(),
+            semantic: SemanticConfig::default(),
+            storage: StorageConfig::default(),
+            structural: StructuralConfig::default(),
+            embeddings: EmbeddingsConfig::default(),
+            policy: PolicyConfig::default(),
+            proxy: ProxyConfig::default(),
+            security: SecurityConfig::default(),
+            network: NetworkConfig::default(),
+            evaluation: EvaluationConfig::default(),
+            synthesis: SynthesisConfig::default(),
+            vault: VaultConfig::default(),
+            links: LinksConfig::default(),
+            architect: ArchitectConfig::default(),
+            web: WebConfig::default(),
+            watch: WatchConfig::default(),
+            sync: SyncConfig::default(),
+            judge: crate::judge::JudgeConfig::default(),
+        }
+    }
 }
 
 /// Cross-instance knowledge sync (`src/sync.rs`). Down-sync replicates the
@@ -443,6 +476,7 @@ pub struct EvaluationConfig {
 /// Command-line overrides, which have the highest configuration priority.
 #[derive(Clone, Debug, Default)]
 pub struct ConfigOverrides {
+    pub workspace: Option<String>,
     pub db_path: Option<PathBuf>,
     pub local_only: Option<bool>,
 }
@@ -551,6 +585,18 @@ impl Default for ProxyConfig {
 }
 
 impl Config {
+    /// Load a client's current repository/workspace selection without indexing
+    /// or registering anything. Git roots are discovered read-only; non-Git
+    /// directories use their nearest ancestor carrying a project config.
+    ///
+    /// # Errors
+    /// Returns working-directory, path resolution, or configuration errors.
+    pub fn load_for_current_dir(overrides: &ConfigOverrides) -> Result<Self> {
+        let current = std::env::current_dir().map_err(|source| io_error(".", source))?;
+        let root = configuration_root(&current)?;
+        Self::load_for(Some(&root), overrides)
+    }
+
     /// Load defaults, user config, project config, then CLI overrides.
     ///
     /// # Errors
@@ -609,14 +655,26 @@ impl Config {
         home: Option<&Path>,
         apply_environment: bool,
     ) -> Result<Self> {
-        let mut merged = toml::Value::try_from(Self::default())?;
-        for path in [user_config, project_config].into_iter().flatten() {
-            if path.exists() {
-                let raw = fs::read_to_string(path).map_err(|source| io_error(path, source))?;
-                let layer = toml::from_str::<toml::Value>(&raw).map_err(Error::TomlDeserialize)?;
-                merge_toml(&mut merged, layer);
+        let environment_workspace = if apply_environment {
+            match std::env::var("ENGRAM_WORKSPACE") {
+                Ok(value) => Some(value),
+                Err(std::env::VarError::NotPresent) => None,
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    return Err(Error::Config(
+                        "ENGRAM_WORKSPACE must be valid UTF-8".to_owned(),
+                    ));
+                }
             }
-        }
+        } else {
+            None
+        };
+        let (merged, workspace_root) = workspace_layers(
+            user_config,
+            project_config,
+            overrides,
+            home,
+            environment_workspace.as_deref(),
+        )?;
 
         let mut config: Self = merged.try_into().map_err(Error::TomlDeserialize)?;
         let default_socket = DaemonConfig::default().socket_path;
@@ -624,7 +682,10 @@ impl Config {
             || (apply_environment && std::env::var_os("ENGRAM_DB_PATH").is_some());
         let socket_overridden =
             apply_environment && std::env::var_os("ENGRAM_SOCKET_PATH").is_some();
-        let socket_was_default = config.daemon.socket_path == default_socket;
+        let socket_was_default = config.daemon.socket_path == default_socket
+            || workspace_root
+                .as_ref()
+                .is_some_and(|root| config.daemon.socket_path == root.join("engramd.sock"));
         if apply_environment {
             if let Some(path) = std::env::var_os("ENGRAM_DB_PATH") {
                 config.storage.db_path = PathBuf::from(path);
@@ -640,7 +701,7 @@ impl Config {
             config.network.local_only = local_only;
         }
         config.storage.db_path = expand_home(&config.storage.db_path, home)?;
-        if config.vault.enabled {
+        if config.vault.enabled || workspace_root.is_some() {
             config.vault.root = expand_home(&config.vault.root, home)?;
         }
         config.daemon.socket_path =
@@ -657,6 +718,23 @@ impl Config {
             } else {
                 expand_home(&config.daemon.socket_path, home)?
             };
+        if let Some(root) = workspace_root {
+            crate::workspaces::validate_paths(&config, &root)?;
+        }
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Read a complete resolved configuration snapshot used by daemon startup.
+    /// The private snapshot already contains all user, profile, project, and
+    /// command-line settings; loading more layers would change its scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unreadable, malformed, or invalid snapshots.
+    pub fn load_resolved(path: &Path) -> Result<Self> {
+        let raw = fs::read_to_string(path).map_err(|source| io_error(path, source))?;
+        let config: Self = toml::from_str(&raw)?;
         config.validate()?;
         Ok(config)
     }
@@ -687,6 +765,17 @@ impl Config {
     ///
     /// Returns an error when token budgets conflict or a remote provider lacks explicit opt-in.
     pub fn validate(&self) -> Result<()> {
+        crate::workspaces::validate_name(&self.workspace)?;
+        crate::workspaces::validate_config(self)?;
+        self.judge.validate()?;
+        if self.judge.enabled
+            && self.judge.provider == crate::judge::JudgeProvider::Typesafe
+            && self.network.local_only
+        {
+            return Err(Error::Config(
+                "TypeSafe judge requires network.local_only = false".to_owned(),
+            ));
+        }
         if self.context.max_injected_tokens == 0 {
             return Err(Error::Config(
                 "context.max_injected_tokens must be greater than zero".to_owned(),
@@ -779,6 +868,29 @@ impl Config {
         validate_proxy_network(self)?;
         Ok(())
     }
+}
+
+fn configuration_root(directory: &Path) -> Result<PathBuf> {
+    let directory = directory
+        .canonicalize()
+        .map_err(|source| io_error(directory, source))?;
+    // A worktree's .git is a file; a primary checkout's .git is a directory.
+    // Configuration selection needs only this boundary, not a full GitState
+    // scan (which computes content fingerprints of dirty worktrees).
+    if let Some(root) = directory
+        .ancestors()
+        .find(|parent| parent.join(".git").exists())
+    {
+        return Ok(root.to_path_buf());
+    }
+    Ok(directory
+        .ancestors()
+        .find(|parent| {
+            parent.join(".engram/config.toml").is_file()
+                || parent.join(".leb/config.toml").is_file()
+        })
+        .unwrap_or(&directory)
+        .to_path_buf())
 }
 
 fn validate_supported_v1_features(config: &Config) -> Result<()> {
@@ -904,6 +1016,92 @@ fn validate_proxy_network(config: &Config) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn workspace_layers(
+    user_config: Option<&Path>,
+    project_config: Option<&Path>,
+    overrides: &ConfigOverrides,
+    home: Option<&Path>,
+    environment: Option<&str>,
+) -> Result<(toml::Value, Option<PathBuf>)> {
+    let user_layer = read_layer(user_config)?;
+    let project_layer = read_layer(project_config)?;
+    let mut merged = toml::Value::try_from(Config::default())?;
+    if let Some(layer) = &user_layer {
+        merge_toml(&mut merged, layer.clone());
+    }
+    let mut selection = merged.clone();
+    if let Some(layer) = &project_layer {
+        merge_toml(&mut selection, layer.clone());
+    }
+    // Reject malformed tables before assigning isolated paths below.
+    let _: Config = selection
+        .clone()
+        .try_into()
+        .map_err(Error::TomlDeserialize)?;
+    let workspace = selected_workspace(&selection, overrides, environment)?;
+    let workspace_root = if workspace == crate::workspaces::DEFAULT_WORKSPACE {
+        None
+    } else {
+        let home =
+            home.ok_or_else(|| Error::Config("HOME is required for named workspaces".to_owned()))?;
+        let root = crate::workspaces::root(home, &workspace)?;
+        // Global tuning is inherited, but global knowledge paths and sync
+        // destinations must never silently point a new workspace at the
+        // default workspace's data or central instance.
+        merged["storage"]["db_path"] = path_value(&root.join("brain.sqlite"));
+        merged["daemon"]["socket_path"] = path_value(&root.join("engramd.sock"));
+        merged["vault"]["root"] = path_value(&root.join("vault"));
+        merged["web"]["enabled"] = toml::Value::Boolean(false);
+        merged["web"]["port"] = toml::Value::Integer(i64::from(WebConfig::default().port));
+        merged["sync"] = toml::Value::try_from(SyncConfig::default())?;
+        if let Some(layer) = read_layer(Some(&root.join("config.toml")))? {
+            if layer.get("workspace").is_some() {
+                return Err(Error::Config(
+                    "a named workspace profile cannot select a different workspace; select it with --workspace, ENGRAM_WORKSPACE, or project config".to_owned(),
+                ));
+            }
+            merge_toml(&mut merged, layer);
+        }
+        Some(root)
+    };
+    if let Some(layer) = project_layer {
+        merge_toml(&mut merged, layer);
+    }
+    merged["workspace"] = toml::Value::String(workspace);
+
+    Ok((merged, workspace_root))
+}
+
+fn read_layer(path: Option<&Path>) -> Result<Option<toml::Value>> {
+    let Some(path) = path.filter(|path| path.exists()) else {
+        return Ok(None);
+    };
+    let raw = fs::read_to_string(path).map_err(|source| io_error(path, source))?;
+    Ok(Some(toml::from_str(&raw)?))
+}
+
+fn path_value(path: &Path) -> toml::Value {
+    toml::Value::String(path.to_string_lossy().into_owned())
+}
+
+fn selected_workspace(
+    merged: &toml::Value,
+    overrides: &ConfigOverrides,
+    environment: Option<&str>,
+) -> Result<String> {
+    let configured = merged
+        .get("workspace")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| Error::Config("workspace must be a string".to_owned()))?;
+    let selected = overrides
+        .workspace
+        .as_deref()
+        .or(environment)
+        .unwrap_or(configured);
+    crate::workspaces::validate_name(selected)?;
+    Ok(selected.to_owned())
 }
 
 fn merge_toml(base: &mut toml::Value, overlay: toml::Value) {
@@ -1034,6 +1232,7 @@ mod tests {
             &ConfigOverrides {
                 db_path: Some(cli_db.clone()),
                 local_only: None,
+                workspace: None,
             },
             temp.path(),
         )
@@ -1223,6 +1422,235 @@ mod tests {
             config.storage.db_path,
             temp.path().join(".engram/brain.sqlite")
         );
+        assert_eq!(config.workspace, "default");
+        assert_eq!(
+            config.daemon.socket_path,
+            temp.path().join(".engram/engramd.sock")
+        );
+        assert!(config.web.enabled);
+    }
+
+    #[test]
+    fn named_workspaces_isolate_paths_and_inherit_tuning_without_default_sync() {
+        let temp = TempDir::new().expect("temp");
+        let user = temp.path().join("user.toml");
+        fs::write(
+            &user,
+            r#"
+[storage]
+db_path = "/a/custom/default.sqlite"
+[daemon]
+socket_path = "/a/custom/default.sock"
+[vault]
+enabled = true
+root = "/a/custom/vault"
+[context]
+max_injected_tokens = 4200
+[sync]
+central_url = "https://default.example.com"
+"#,
+        )
+        .expect("user config");
+        let resolve = |name: &str| {
+            Config::load_layers(
+                Some(&user),
+                None,
+                &ConfigOverrides {
+                    workspace: Some(name.to_owned()),
+                    ..ConfigOverrides::default()
+                },
+                temp.path(),
+            )
+            .expect("workspace")
+        };
+        let first = resolve("first");
+        let second = resolve("second");
+        assert_eq!(
+            first.storage.db_path,
+            temp.path().join(".engram/workspaces/first/brain.sqlite")
+        );
+        assert_ne!(first.storage.db_path, second.storage.db_path);
+        assert_ne!(first.daemon.socket_path, second.daemon.socket_path);
+        assert_ne!(first.vault.root, second.vault.root);
+        assert_eq!(first.context.max_injected_tokens, 4200);
+        assert!(!first.web.enabled);
+        assert!(first.sync.central_url.is_empty());
+    }
+
+    #[test]
+    fn workspace_profile_and_project_layers_have_defined_precedence() {
+        let temp = TempDir::new().expect("temp");
+        let user = temp.path().join("user.toml");
+        let project = temp.path().join("project.toml");
+        let profile = temp.path().join(".engram/workspaces/team/config.toml");
+        fs::create_dir_all(profile.parent().expect("parent")).expect("profile directory");
+        fs::write(
+            &user,
+            "workspace = \"personal\"\n[context]\nmax_injected_tokens = 3000\n",
+        )
+        .expect("user");
+        fs::write(&profile, "[context]\nmax_injected_tokens = 4000\nstable_prefix_tokens = 2000\n[web]\nenabled = true\nport = 12436\n").expect("profile");
+        fs::write(
+            &project,
+            "workspace = \"team\"\n[context]\nmax_injected_tokens = 5000\n",
+        )
+        .expect("project");
+        let config = Config::load_layers(
+            Some(&user),
+            Some(&project),
+            &ConfigOverrides::default(),
+            temp.path(),
+        )
+        .expect("config");
+        assert_eq!(config.workspace, "team");
+        assert_eq!(config.context.max_injected_tokens, 5000);
+        assert_eq!(config.context.stable_prefix_tokens, 2000);
+        assert!(config.web.enabled);
+        assert_eq!(config.web.port, 12436);
+        let overridden = Config::load_layers(
+            Some(&user),
+            Some(&project),
+            &ConfigOverrides {
+                workspace: Some("default".to_owned()),
+                ..ConfigOverrides::default()
+            },
+            temp.path(),
+        )
+        .expect("explicit default");
+        assert_eq!(overridden.workspace, "default");
+        assert_eq!(
+            overridden.storage.db_path,
+            temp.path().join(".engram/brain.sqlite")
+        );
+        assert_eq!(overridden.context.stable_prefix_tokens, 1800);
+    }
+
+    #[test]
+    fn cli_workspace_overrides_environment_overrides_config() {
+        let merged = toml::from_str("workspace = \"project\"").expect("toml");
+        assert_eq!(
+            selected_workspace(&merged, &ConfigOverrides::default(), None).expect("project"),
+            "project"
+        );
+        assert_eq!(
+            selected_workspace(&merged, &ConfigOverrides::default(), Some("environment"))
+                .expect("env"),
+            "environment"
+        );
+        assert_eq!(
+            selected_workspace(
+                &merged,
+                &ConfigOverrides {
+                    workspace: Some("cli".to_owned()),
+                    ..ConfigOverrides::default()
+                },
+                Some("environment")
+            )
+            .expect("cli"),
+            "cli"
+        );
+    }
+
+    #[test]
+    fn client_configuration_root_finds_parent_config_without_registering_repo() {
+        let temp = TempDir::new().expect("temp");
+        let root = temp.path().join("project");
+        let nested = root.join("src/module");
+        fs::create_dir_all(root.join(".engram")).expect("config directory");
+        fs::create_dir_all(&nested).expect("nested directory");
+        fs::write(root.join(".engram/config.toml"), "workspace = \"team\"\n")
+            .expect("project config");
+        assert_eq!(
+            configuration_root(&nested).expect("read-only discovery"),
+            root.canonicalize().expect("canonical root")
+        );
+        assert!(!root.join(".engram/project.toml").exists());
+    }
+
+    #[test]
+    fn client_configuration_root_stops_at_worktree_boundary() {
+        let temp = TempDir::new().expect("temp");
+        let root = temp.path().join("worktree");
+        let nested = root.join("src");
+        fs::create_dir_all(temp.path().join(".engram")).expect("outer config directory");
+        fs::write(
+            temp.path().join(".engram/config.toml"),
+            "workspace = \"unrelated\"\n",
+        )
+        .expect("outer config");
+        fs::create_dir_all(&nested).expect("nested directory");
+        fs::write(
+            root.join(".git"),
+            "gitdir: /unused/parent/.git/worktrees/tree\n",
+        )
+        .expect("worktree marker");
+        assert_eq!(
+            configuration_root(&nested).expect("read-only discovery"),
+            root.canonicalize().expect("canonical root")
+        );
+    }
+
+    #[test]
+    fn named_workspace_cannot_override_paths_into_another_workspace() {
+        let temp = TempDir::new().expect("temp");
+        let error = Config::load_layers(
+            None,
+            None,
+            &ConfigOverrides {
+                workspace: Some("team".to_owned()),
+                db_path: Some(temp.path().join(".engram/brain.sqlite")),
+                ..ConfigOverrides::default()
+            },
+            temp.path(),
+        )
+        .expect_err("default database must not leak");
+        assert!(error.to_string().contains("must stay inside"));
+    }
+
+    #[test]
+    fn named_workspace_web_cannot_take_default_port() {
+        let temp = TempDir::new().expect("temp");
+        let project = temp.path().join("project.toml");
+        fs::write(&project, "workspace = \"team\"\n[web]\nenabled = true\n").expect("project");
+        let error = Config::load_layers(
+            None,
+            Some(&project),
+            &ConfigOverrides::default(),
+            temp.path(),
+        )
+        .expect_err("port conflict");
+        assert!(error.to_string().contains("own explicit web.port"));
+    }
+
+    #[test]
+    fn named_workspace_validation_rejects_subsequent_socket_override() {
+        let temp = TempDir::new().expect("temp");
+        let mut config = Config::load_layers(
+            None,
+            None,
+            &ConfigOverrides {
+                workspace: Some("team".to_owned()),
+                ..ConfigOverrides::default()
+            },
+            temp.path(),
+        )
+        .expect("workspace");
+        config.daemon.socket_path = temp.path().join(".engram/engramd.sock");
+        assert!(
+            config
+                .validate()
+                .expect_err("socket outside workspace")
+                .to_string()
+                .contains("must stay inside")
+        );
+        config.storage.db_path = temp.path().join(".engram/brain.sqlite");
+        assert!(
+            config
+                .validate()
+                .expect_err("database outside workspace")
+                .to_string()
+                .contains("must use its own")
+        );
     }
 
     #[test]
@@ -1233,6 +1661,7 @@ mod tests {
             &ConfigOverrides {
                 db_path: Some(PathBuf::from("/tmp/engram-absolute.sqlite")),
                 local_only: None,
+                workspace: None,
             },
             None,
             false,

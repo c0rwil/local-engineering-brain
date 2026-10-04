@@ -68,9 +68,29 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "product_knowledge",
         include_str!("migrations/0012_product_knowledge.sql"),
     ),
+    (
+        13,
+        "effectiveness",
+        include_str!("migrations/0013_effectiveness.sql"),
+    ),
+    (
+        14,
+        "lesson_judgments",
+        include_str!("migrations/0014_lesson_judgments.sql"),
+    ),
+    (
+        15,
+        "source_search",
+        include_str!("migrations/0015_source_search.sql"),
+    ),
+    (
+        16,
+        "source_aliases_delivery",
+        include_str!("migrations/0016_source_aliases_delivery.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 12;
+pub const LATEST_MIGRATION_VERSION: i64 = 16;
 
 /// Reopenable handle to the canonical database.
 ///
@@ -696,6 +716,77 @@ mod tests {
     fn test_foreign_keys_enabled() {
         let (_temp, db) = database();
         assert!(db.integrity_report().expect("report").foreign_keys);
+    }
+
+    #[test]
+    fn migration_16_preserves_old_contexts_and_synchronizes_owner_aliases() {
+        let connection = Connection::open_in_memory().unwrap();
+        for (_, _, sql) in &MIGRATIONS[..15] {
+            connection.execute_batch(sql).unwrap();
+        }
+        connection.execute_batch(
+            "INSERT INTO projects(id,name,created_at_ms) VALUES ('prj_one','one',0),('prj_two','two',0);
+             INSERT INTO nodes(id,project_id,kind,stable_key,label,file_path,current_digest,source_kind,source_ref,extractor_version,observed_at_ms)
+             VALUES ('owner','prj_one','Type','owner','Options','src/options.rs','d','native','head','v1',0);
+             INSERT INTO context_runs(id,request_id,project_id,request_fingerprint,mode,task_text_digest,token_budget,selected_tokens,candidate_count,stable_prefix_hash,stable_prefix,dynamic_context,compile_ms,created_at_ms)
+             VALUES ('old','old','prj_one','legacy','brain','d',100,1,1,'h','unchanged','saved output',0,0);"
+        ).unwrap();
+        connection.execute_batch(MIGRATIONS[15].2).unwrap();
+        let old: (String, String, Option<String>) = connection.query_row(
+            "SELECT stable_prefix,dynamic_context,delivery_digest FROM context_runs WHERE id='old'", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(old, ("unchanged".into(), "saved output".into(), None));
+        let count = |query: &str| -> i64 {
+            connection
+                .query_row(
+                    "SELECT count(*) FROM source_node_fts WHERE source_node_fts MATCH ?1",
+                    [query],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(count("label:Options"), 1);
+        connection.execute("UPDATE nodes SET search_aliases='enable_cache\nOptions::enable_cache' WHERE id='owner'", []).unwrap();
+        assert_eq!(
+            count("project_id:prjone AND search_aliases:\"enable_cache\""),
+            1
+        );
+        connection.execute("UPDATE nodes SET search_aliases='disable_cache',project_id='prj_two' WHERE id='owner'", []).unwrap();
+        assert_eq!(count("search_aliases:\"enable_cache\""), 0);
+        assert_eq!(
+            count("project_id:prjone AND search_aliases:\"disable_cache\""),
+            0
+        );
+        assert_eq!(
+            count("project_id:prjtwo AND search_aliases:\"disable_cache\""),
+            1
+        );
+        for update in [
+            "kind='ExternalReference'",
+            "kind='Type',tombstoned_at_ms=1",
+            "tombstoned_at_ms=NULL,file_path=NULL",
+        ] {
+            connection
+                .execute(&format!("UPDATE nodes SET {update} WHERE id='owner'"), [])
+                .unwrap();
+            assert_eq!(count("search_aliases:\"disable_cache\""), 0);
+        }
+        connection
+            .execute(
+                "UPDATE nodes SET file_path='src/new.rs' WHERE id='owner'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(count("search_aliases:\"disable_cache\""), 1);
+        connection
+            .execute("UPDATE nodes SET search_aliases='' WHERE id='owner'", [])
+            .unwrap();
+        assert_eq!(count("search_aliases:\"disable_cache\""), 0);
+        connection
+            .execute("DELETE FROM nodes WHERE id='owner'", [])
+            .unwrap();
+        assert_eq!(count("label:Options"), 0);
     }
 
     #[test]

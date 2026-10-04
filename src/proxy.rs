@@ -321,6 +321,7 @@ fn resolve_token_budget(
             Config::load_for(
                 Some(root),
                 &ConfigOverrides {
+                    workspace: Some(state.config.workspace.clone()),
                     db_path: Some(state.config.storage.db_path.clone()),
                     local_only: Some(state.config.network.local_only),
                 },
@@ -529,7 +530,10 @@ fn index_freshness_mismatch(
     let Some(index) = index else {
         return true;
     };
-    git.is_some_and(|git| index.head != git.head || index.diff_fingerprint != git.diff_fingerprint)
+    index.needs_reindex
+        || git.is_some_and(|git| {
+            index.head != git.head || index.diff_fingerprint != git.diff_fingerprint
+        })
 }
 
 /// Extract the task text from the MOST RECENT user message that carries any.
@@ -757,6 +761,22 @@ mod tests {
     use super::*;
     use crate::daemon::{MemoryCreateRequest, MemoryPromoteRequest};
     use crate::memory::{EpistemicState, MemoryDraft};
+
+    #[test]
+    fn extractor_upgrade_requires_refresh_even_without_git_changes() {
+        let mut status = crate::world::StructuralIndexStatus {
+            scan_id: "scan".to_owned(),
+            provider: "tree_sitter".to_owned(),
+            head: None,
+            diff_fingerprint: "no-git".to_owned(),
+            completed_at_ms: 0,
+            changed_paths: Some(Vec::new()),
+            needs_reindex: true,
+        };
+        assert!(index_freshness_mismatch(Some(&status), None));
+        status.needs_reindex = false;
+        assert!(!index_freshness_mismatch(Some(&status), None));
+    }
 
     fn git(path: &std::path::Path, arguments: &[&str]) {
         let output = Command::new("git")

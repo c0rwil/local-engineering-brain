@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "description": "Authored source-navigation probes against a frozen real repository index. Expected paths were confirmed from active indexed definitions; no existing task text is used.",
+  "default_token_budget": 1600,
+  "cases": [
+    {"id":"engram-judge-exact","project":"engram","query":"Find the validate_verdict definition","expected_path":"src/judge.rs","definition_label":"validate_verdict"},
+    {"id":"engram-transcript-concepts","project":"engram","query":"usage transcript capture","expected_path":"src/usage_capture.rs","definition_label":"parse_transcript"},
+    {"id":"engram-workspace-isolation","project":"engram","query":"workspace isolation paths","expected_path":"src/workspaces.rs","definition_label":"validate_paths"},
+    {"id":"engram-request-identity","project":"engram","query":"request identity fingerprint","expected_path":"src/context.rs","definition_label":"request_fingerprint"},
+    {"id":"engram-transcript-snake-case","project":"engram","query":"parse_transcript","expected_path":"src/usage_capture.rs","definition_label":"parse_transcript"},
+    {"id":"engram-missing-exact-path","project":"engram","query":"src/never_exists_context_probe.rs","expected_no_source":true},
+    {"id":"engram-unmatched-token","project":"engram","query":"quuxzorbpf1049","expected_no_source":true},
+    {"id":"engram-judge-unrelated-current-path","project":"engram","query":"Find the validate_verdict definition","current_paths":["README.md"],"expected_path":"src/judge.rs","definition_label":"validate_verdict"},
+    {"id":"agents-base-agent","project":"agents","query":"Find the BaseAgent definition","expected_path":"src/arena/agent.py","definition_label":"BaseAgent"},
+    {"id":"agents-strict-schema","project":"agents","query":"_strict_json_schema","expected_path":"src/agency/api/services/llm_runner.py","definition_label":"_strict_json_schema"},
+    {"id":"agents-cancel-handler","project":"agents","query":"handle_phone_task_cancel","expected_path":"src/agency/api/services/mcp_tool_handlers.py","definition_label":"handle_phone_task_cancel"},
+    {"id":"platform-authed-http","project":"platform","query":"sendAuthed","expected_path":"lib/api-queries/api/http.ts","definition_label":"sendAuthed"},
+    {"id":"platform-auth-card","project":"platform","query":"AuthCard","expected_path":"features/auth/components/auth-card.tsx","definition_label":"AuthCard"},
+    {"id":"mobile-auth-state","project":"mobile","query":"AuthState","expected_path":"core/common/src/main/kotlin/com/agiinc/androidagent/common/AuthState.kt","definition_label":"AuthState"},
+    {"id":"mobile-bridge-authorize","project":"mobile","query":"authorize","expected_path":"workers/api/src/routes/bridge.ts","definition_label":"authorize"},
+    {"id":"backend-token-kid","project":"agi-backend-rust","query":"token_kid","expected_path":"src/auth/clerk.rs","definition_label":"token_kid"},
+    {"id":"backend-cancelled","project":"agi-backend-rust","query":"cancelled","expected_path":"src/services/loopguard_enforcer.rs","definition_label":"cancelled"},
+    {"id":"backend-enforcer-snake-case","project":"agi-backend-rust","query":"loopguard_enforcer","expected_path":"src/services/loopguard_enforcer.rs","definition_label":"cancelled"}
+  ]
+}

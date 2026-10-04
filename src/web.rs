@@ -119,6 +119,9 @@ pub fn router(config: &Config) -> Router {
             }),
         )
         .route("/api/product/lessons", post(lesson_mutate))
+        .route("/api/effectiveness", post(effectiveness))
+        .route("/api/judge", get(judge_status))
+        .route("/api/judge/run", post(judge_run))
         .route("/api/product/query", post(product_query))
         .route("/api/product/mutate", post(product_mutate))
         .route("/api/workspace", get(workspace))
@@ -624,6 +627,25 @@ async fn product_query(
 ) -> std::result::Result<Json<serde_json::Value>, WebError> {
     Ok(Json(state.client().product_query(&request).await?))
 }
+
+async fn effectiveness(
+    State(state): State<WebState>,
+    Json(request): Json<crate::effectiveness::EffectivenessRequest>,
+) -> std::result::Result<Json<crate::effectiveness::EffectivenessReport>, WebError> {
+    Ok(Json(state.client().effectiveness(&request).await?))
+}
+
+async fn judge_status(
+    State(state): State<WebState>,
+) -> std::result::Result<Json<serde_json::Value>, WebError> {
+    Ok(Json(state.client().judge_status().await?))
+}
+
+async fn judge_run(
+    State(state): State<WebState>,
+) -> std::result::Result<Json<serde_json::Value>, WebError> {
+    Ok(Json(state.client().judge_run().await?))
+}
 async fn product_mutate(
     State(state): State<WebState>,
     Json(request): Json<crate::product::Mutation>,
@@ -646,15 +668,18 @@ mod tests {
     async fn product_data_routes_obey_the_existing_token_gate() {
         let mut config = Config::default();
         config.web.token = Some("test-token".to_owned());
-        for path in [
-            "/api/product/query",
-            "/api/product/mutate",
-            "/api/product/lessons",
+        for (method, path) in [
+            ("POST", "/api/product/query"),
+            ("POST", "/api/product/mutate"),
+            ("POST", "/api/product/lessons"),
+            ("POST", "/api/effectiveness"),
+            ("GET", "/api/judge"),
+            ("POST", "/api/judge/run"),
         ] {
             let response = tower::ServiceExt::oneshot(
                 router(&config),
                 axum::http::Request::builder()
-                    .method("POST")
+                    .method(method)
                     .uri(path)
                     .header("content-type", "application/json")
                     .body(axum::body::Body::from("{}"))

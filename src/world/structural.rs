@@ -16,7 +16,7 @@ use crate::ids::{EdgeId, NodeId, ProjectId};
 use crate::projects::ResolvedProject;
 use crate::storage::Database;
 
-const EXTRACTOR_VERSION: &str = "tree-sitter-v1";
+const EXTRACTOR_VERSION: &str = "tree-sitter-v2";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GraphNode {
@@ -81,6 +81,9 @@ pub struct StructuralIndexStatus {
     /// Working-tree paths that were dirty when this scan committed. `None`
     /// means the set is unknown and freshness planning must rescan fully.
     pub changed_paths: Option<Vec<PathBuf>>,
+    /// Native files from an older extractor require one full candidate scan.
+    #[serde(default)]
+    pub needs_reindex: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -94,6 +97,8 @@ pub struct ScannedNode {
     pub stable_key: String,
     pub kind: String,
     pub label: String,
+    /// Sorted identifier aliases, separated by newlines; never source bodies.
+    pub search_aliases: String,
     pub file_path: String,
     pub language: String,
     pub start_byte: u64,
@@ -272,6 +277,7 @@ pub(super) fn file_scan_heap_bytes(file: &FileScan) -> u64 {
             .saturating_add(node.stable_key.len())
             .saturating_add(node.kind.len())
             .saturating_add(node.label.len())
+            .saturating_add(node.search_aliases.len())
             .saturating_add(node.file_path.len())
             .saturating_add(node.language.len())
             .saturating_add(node.digest.len())
@@ -322,10 +328,16 @@ impl WorldModel {
             connection
                 .query_row(
                     "SELECT id, provider, head, diff_fingerprint, completed_at_ms,
-                            changed_paths_json
+                            changed_paths_json,
+                            provider = 'tree_sitter' AND EXISTS (
+                                SELECT 1 FROM indexed_files f
+                                JOIN structural_scans s ON s.id = f.scan_id
+                                WHERE f.project_id = ?1
+                                  AND (s.provider <> 'tree_sitter' OR s.provider_version <> ?2)
+                            )
                      FROM structural_scans WHERE project_id = ?1
                      ORDER BY completed_at_ms DESC, rowid DESC LIMIT 1",
-                    [project_id.as_str()],
+                    params![project_id.as_str(), EXTRACTOR_VERSION],
                     |row| {
                         let changed_paths_json: Option<String> = row.get(5)?;
                         Ok(StructuralIndexStatus {
@@ -337,6 +349,7 @@ impl WorldModel {
                             changed_paths: changed_paths_json
                                 .as_deref()
                                 .and_then(parse_changed_paths_json),
+                            needs_reindex: row.get(6)?,
                         })
                     },
                 )
@@ -374,7 +387,8 @@ impl WorldModel {
         project: &ResolvedProject,
         changed_paths: Option<&[PathBuf]>,
     ) -> Result<PreparedIndex> {
-        let known = self.known_digests(&project.project.id)?;
+        let (known, needs_reindex) = self.known_digests(&project.project.id, provider)?;
+        let changed_paths = if needs_reindex { None } else { changed_paths };
         let scan = provider.scan(&project.root, changed_paths, &known)?;
         Ok(PreparedIndex {
             project_id: project.project.id.clone(),
@@ -501,15 +515,40 @@ impl WorldModel {
         })
     }
 
-    fn known_digests(&self, project_id: &ProjectId) -> Result<BTreeMap<String, String>> {
+    fn known_digests(
+        &self,
+        project_id: &ProjectId,
+        provider: &dyn StructuralProvider,
+    ) -> Result<(BTreeMap<String, String>, bool)> {
         self.database.with_reader(|connection| {
-            let mut statement = connection
-                .prepare("SELECT path, content_digest FROM indexed_files WHERE project_id = ?1")?;
+            let mut statement = connection.prepare(
+                "SELECT f.path, f.content_digest, s.provider, s.provider_version
+                 FROM indexed_files f JOIN structural_scans s ON s.id = f.scan_id
+                 WHERE f.project_id = ?1",
+            )?;
             let rows = statement.query_map([project_id.as_str()], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
             })?;
-            rows.collect::<std::result::Result<_, _>>()
-                .map_err(Error::from)
+            let mut known = BTreeMap::new();
+            let mut needs_reindex = false;
+            for row in rows {
+                let (path, digest, name, version) = row?;
+                // Graphify versions may come from the external exporter. Its
+                // own normalized digest remains the cache contract.
+                if provider.name() == "tree_sitter"
+                    && (name != provider.name() || version != provider.version())
+                {
+                    needs_reindex = true;
+                } else {
+                    known.insert(path, digest);
+                }
+            }
+            Ok((known, needs_reindex))
         })
     }
 
@@ -563,6 +602,9 @@ impl WorldModel {
                 tombstone_file(transaction, &project.project.id, path, now)?;
             }
             for file in &scan.files {
+                if scan.provider == "tree_sitter" && scan.provider_version == "tree-sitter-v2" {
+                    preserve_native_upgrade_identities(transaction, &project.project.id, file)?;
+                }
                 tombstone_file(transaction, &project.project.id, &file.path, now)?;
                 upsert_indexed_file(transaction, &project.project.id, &scan_id, file, now)?;
             }
@@ -891,6 +933,7 @@ fn parse_markdown(relative: &str, source: &[u8], digest: String) -> FileScan {
             stable_key: file_key.clone(),
             kind: "File".to_owned(),
             label: relative.to_owned(),
+            search_aliases: String::new(),
             file_path: relative.to_owned(),
             language: "markdown".to_owned(),
             start_byte: 0,
@@ -927,6 +970,7 @@ fn parse_markdown(relative: &str, source: &[u8], digest: String) -> FileScan {
                         stable_key: target_key.clone(),
                         kind: "ExternalReference".to_owned(),
                         label,
+                        search_aliases: String::new(),
                         file_path: relative.to_owned(),
                         language: "markdown".to_owned(),
                         start_byte: start,
@@ -961,6 +1005,7 @@ fn parse_markdown(relative: &str, source: &[u8], digest: String) -> FileScan {
                         stable_key: stable_key.clone(),
                         kind: "Section".to_owned(),
                         label,
+                        search_aliases: String::new(),
                         file_path: relative.to_owned(),
                         language: "markdown".to_owned(),
                         start_byte: usize_to_u64(offset),
@@ -1007,6 +1052,7 @@ fn parse_file(
             stable_key: file_key.clone(),
             kind: "File".to_owned(),
             label: relative.to_owned(),
+            search_aliases: String::new(),
             file_path: relative.to_owned(),
             language: language.name().to_owned(),
             start_byte: 0,
@@ -1025,6 +1071,9 @@ fn parse_file(
         &mut nodes,
         &mut edges,
     );
+    if matches!(language, SupportedLanguage::Rust) {
+        repair_rust_ownership(relative, &nodes, &mut edges);
+    }
     Ok(FileScan {
         path: relative.to_owned(),
         language: language.name().to_owned(),
@@ -1108,7 +1157,127 @@ fn named_identifier_child(node: Node<'_>) -> Option<Node<'_>> {
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Only direct named Rust struct fields become owner aliases. Initializers,
+/// method locals, tuple positions, and field-use expressions are excluded.
+fn rust_field_aliases(node: Node<'_>, source: &[u8], owner: &str) -> String {
+    const MAX_FIELDS: usize = 128;
+    const MAX_BYTES: usize = 16 * 1024;
+    if node.kind() != "struct_item" {
+        return String::new();
+    }
+    let Some(body) = node.child_by_field_name("body") else {
+        return String::new();
+    };
+    let mut aliases = BTreeSet::new();
+    let mut bytes = 0_usize;
+    let mut cursor = body.walk();
+    for field in body
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "field_declaration")
+        .take(MAX_FIELDS)
+    {
+        let Some(name) = field
+            .child_by_field_name("name")
+            .and_then(|name| name.utf8_text(source).ok())
+        else {
+            continue;
+        };
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        if name.len() > 256 || owner.len() > 512 {
+            continue;
+        }
+        let qualified = format!("{owner}::{name}");
+        bytes = bytes.saturating_add(name.len() + qualified.len() + 2);
+        if bytes > MAX_BYTES {
+            break;
+        }
+        aliases.insert(name.to_owned());
+        aliases.insert(qualified);
+    }
+    aliases.into_iter().collect::<Vec<_>>().join("\n")
+}
+
+/// Keep type paths and discard generic arguments, never an arbitrary type body.
+fn rust_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "generic_type" => rust_type_name(node.child_by_field_name("type")?, source),
+        "scoped_type_identifier" | "scoped_identifier" => {
+            let name = rust_type_name(node.child_by_field_name("name")?, source)?;
+            node.child_by_field_name("path").map_or_else(
+                || Some(name.clone()),
+                |path| Some(format!("{}::{name}", rust_type_name(path, source)?)),
+            )
+        }
+        "identifier" | "type_identifier" | "crate" | "self" | "super" => {
+            let name = node.utf8_text(source).ok()?;
+            (name.len() <= 256).then(|| name.to_owned())
+        }
+        _ => None,
+    }
+}
+
+fn rust_receiver_scope(scope: &str, receiver: &str) -> String {
+    if let Some(rooted) = receiver.strip_prefix("crate::") {
+        return rooted.to_owned();
+    }
+    let mut scope = scope.to_owned();
+    let mut receiver = receiver.strip_prefix("self::").unwrap_or(receiver);
+    while let Some(parent) = receiver.strip_prefix("super::") {
+        scope = scope
+            .rsplit_once("::")
+            .map_or("", |(parent, _)| parent)
+            .to_owned();
+        receiver = parent;
+    }
+    if scope.is_empty() || receiver.starts_with(&format!("{scope}::")) {
+        receiver.to_owned()
+    } else {
+        format!("{scope}::{receiver}")
+    }
+}
+
+/// Definitions may follow their impl block. Resolve ownership after visiting
+/// the whole file; absent or ambiguous receiver types keep the lexical owner.
+fn repair_rust_ownership(
+    path: &str,
+    nodes: &BTreeMap<String, ScannedNode>,
+    edges: &mut BTreeMap<String, ScannedEdge>,
+) {
+    let mut owners = BTreeMap::<&str, Vec<&str>>::new();
+    for node in nodes.values().filter(|node| node.kind == "Type") {
+        owners
+            .entry(&node.label)
+            .or_default()
+            .push(&node.stable_key);
+    }
+    let replacements: Vec<_> = edges
+        .iter()
+        .filter_map(|(key, edge)| {
+            if edge.relation != "DEFINES" {
+                return None;
+            }
+            let target = nodes.get(&edge.target_key)?;
+            if target.kind != "Function" {
+                return None;
+            }
+            let (owner, _) = target.label.rsplit_once("::")?;
+            let [owner_key] = owners.get(owner)?.as_slice() else {
+                return None;
+            };
+            Some((
+                key.clone(),
+                (*owner_key).to_owned(),
+                edge.target_key.clone(),
+            ))
+        })
+        .collect();
+    for (key, owner, target) in replacements {
+        edges.remove(&key);
+        insert_edge(edges, &owner, "DEFINES", &target, 1.0, path);
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn visit_tree(
     node: Node<'_>,
     source: &[u8],
@@ -1146,6 +1315,11 @@ fn visit_tree(
                 stable_key: stable_key.clone(),
                 kind: kind.to_owned(),
                 label: qualified.clone(),
+                search_aliases: if matches!(language, SupportedLanguage::Rust) {
+                    rust_field_aliases(node, source, &qualified)
+                } else {
+                    String::new()
+                },
                 file_path: path.to_owned(),
                 language: language.name().to_owned(),
                 start_byte: usize_to_u64(node.start_byte()),
@@ -1156,6 +1330,13 @@ fn visit_tree(
         insert_edge(edges, owner_key, "DEFINES", &stable_key, 1.0, path);
         child_owner.clone_from(&stable_key);
         child_scope = qualified;
+    } else if matches!(language, SupportedLanguage::Rust) && node.kind() == "impl_item" {
+        if let Some(receiver) = node
+            .child_by_field_name("type")
+            .and_then(|receiver| rust_type_name(receiver, source))
+        {
+            child_scope = rust_receiver_scope(scope, &receiver);
+        }
     } else if language.is_import(node.kind()) {
         if let Ok(text) = node.utf8_text(source) {
             let label = normalize_reference(text);
@@ -1166,6 +1347,7 @@ fn visit_tree(
                     stable_key: target_key.clone(),
                     kind: "ExternalReference".to_owned(),
                     label,
+                    search_aliases: String::new(),
                     file_path: path.to_owned(),
                     language: language.name().to_owned(),
                     start_byte: usize_to_u64(node.start_byte()),
@@ -1195,6 +1377,7 @@ fn visit_tree(
                 stable_key: target_key.clone(),
                 kind: "ExternalReference".to_owned(),
                 label,
+                search_aliases: String::new(),
                 file_path: path.to_owned(),
                 language: language.name().to_owned(),
                 start_byte: usize_to_u64(function.start_byte()),
@@ -1269,6 +1452,141 @@ fn upsert_indexed_file(
     Ok(())
 }
 
+/// v2 qualifies Rust impl methods and their descendants. Rebind only unique
+/// unchanged native-v1 definitions before tombstoning so existing graph and
+/// memory references keep their IDs. A source edit is never an upgrade match.
+fn preserve_native_upgrade_identities(
+    transaction: &Transaction<'_>,
+    project_id: &ProjectId,
+    file: &FileScan,
+) -> Result<()> {
+    type Signature = (String, String, i64, i64, String);
+    if file.language != "rust" {
+        return Ok(());
+    }
+    let previous_digest: Option<String> = transaction
+        .query_row(
+            "SELECT f.content_digest FROM indexed_files f JOIN structural_scans s ON s.id=f.scan_id
+         WHERE f.project_id=?1 AND f.path=?2
+           AND s.provider='tree_sitter' AND s.provider_version='tree-sitter-v1'",
+            params![project_id.as_str(), file.path],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if previous_digest.as_deref() != Some(file.digest.as_str()) {
+        return retire_native_v1_symbol_keys(transaction, project_id, file, true);
+    }
+    // Deleted historical owners are not evidence of the current definition's
+    // identity, even when their old key is now occupied by a qualified method.
+    retire_native_v1_symbol_keys(transaction, project_id, file, false)?;
+    let mut new_by_signature = BTreeMap::<Signature, Vec<&ScannedNode>>::new();
+    for node in &file.nodes {
+        let signature = (
+            node.kind.clone(),
+            node.language.clone(),
+            u64_to_i64(node.start_byte),
+            u64_to_i64(node.end_byte),
+            node.digest.clone(),
+        );
+        new_by_signature.entry(signature).or_default().push(node);
+    }
+    let mut old_by_signature = BTreeMap::<Signature, Vec<(String, String)>>::new();
+    let mut statement = transaction.prepare(
+        "SELECT kind,language,start_byte,end_byte,current_digest,id,stable_key FROM nodes
+         WHERE project_id=?1 AND file_path=?2 AND tombstoned_at_ms IS NULL
+           AND source_kind='static_analysis' AND extractor_version='tree-sitter-v1'
+           AND language='rust' AND start_byte>=0 AND end_byte>=start_byte",
+    )?;
+    let rows = statement.query_map(params![project_id.as_str(), file.path], |row| {
+        Ok((
+            (
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ),
+            (row.get(5)?, row.get(6)?),
+        ))
+    })?;
+    for row in rows {
+        let (signature, identity) = row?;
+        old_by_signature
+            .entry(signature)
+            .or_default()
+            .push(identity);
+    }
+    let mut matched_ids = BTreeMap::new();
+    let mut relocations = BTreeMap::new();
+    for (signature, old) in old_by_signature {
+        let [(id, old_key)] = old.as_slice() else {
+            continue;
+        };
+        let Some(new) = new_by_signature.get(&signature) else {
+            continue;
+        };
+        let [new] = new.as_slice() else { continue };
+        matched_ids.insert(new.stable_key.clone(), id.clone());
+        if old_key == &new.stable_key {
+            continue;
+        }
+        relocations.insert(id.clone(), new.stable_key.clone());
+    }
+    for node in &file.nodes {
+        let target_key = &node.stable_key;
+        let occupant: Option<String> = transaction
+            .query_row(
+                "SELECT id FROM nodes WHERE project_id=?1 AND stable_key=?2",
+                params![project_id.as_str(), target_key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if occupant.is_some_and(|id| {
+            matched_ids.get(target_key) != Some(&id) && !relocations.contains_key(&id)
+        }) {
+            return Err(Error::Structural(
+                "native extractor upgrade has an ambiguous stable-key collision".to_owned(),
+            ));
+        }
+    }
+    // A v1 impl method may occupy the key now needed by a free function with
+    // the same name. Move every matched identity out of the way atomically,
+    // then assign final keys, rather than allowing exact-key upserts to swap
+    // their source identities. Temporary keys cannot escape this transaction.
+    for id in relocations.keys() {
+        transaction.execute(
+            "UPDATE nodes SET stable_key=?1 WHERE id=?2",
+            params![format!("native-upgrade:{}", Uuid::new_v4()), id],
+        )?;
+    }
+    for (id, target_key) in relocations {
+        transaction.execute(
+            "UPDATE nodes SET stable_key=?1 WHERE id=?2",
+            params![target_key, id],
+        )?;
+    }
+    Ok(())
+}
+
+/// A dirty file cannot prove ownership continuity from spans/digests alone.
+/// Conservatively retire all native-v1 Rust symbol keys before v2 upserts;
+/// the old IDs will be tombstoned normally and anchored memories quarantined.
+fn retire_native_v1_symbol_keys(
+    transaction: &Transaction<'_>,
+    project_id: &ProjectId,
+    file: &FileScan,
+    include_active: bool,
+) -> Result<()> {
+    transaction.execute(
+        "UPDATE nodes SET stable_key='retired-native-v1:' || id
+         WHERE project_id=?1 AND file_path=?2 AND (?3 OR tombstoned_at_ms IS NOT NULL)
+           AND source_kind='static_analysis' AND extractor_version='tree-sitter-v1'
+           AND language='rust' AND substr(stable_key,1,7)='symbol:'",
+        params![project_id.as_str(), file.path, include_active],
+    )?;
+    Ok(())
+}
+
 fn upsert_nodes(
     transaction: &Transaction<'_>,
     project_id: &ProjectId,
@@ -1296,15 +1614,16 @@ fn upsert_nodes(
             "INSERT INTO nodes
              (id, project_id, kind, stable_key, label, file_path, language, start_byte,
               end_byte, current_digest, source_kind, source_ref, extractor_version,
-              observed_at_ms, tombstoned_at_ms)
+              observed_at_ms, tombstoned_at_ms, search_aliases)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-                     ?6, ?12, ?13, NULL)
+                     ?6, ?12, ?13, NULL, ?14)
              ON CONFLICT(project_id, stable_key) DO UPDATE SET
                 kind = excluded.kind, label = excluded.label, file_path = excluded.file_path,
                 language = excluded.language, start_byte = excluded.start_byte,
                 end_byte = excluded.end_byte, current_digest = excluded.current_digest,
                 source_kind = excluded.source_kind, source_ref = excluded.source_ref,
                 extractor_version = excluded.extractor_version,
+                search_aliases = excluded.search_aliases,
                 observed_at_ms = excluded.observed_at_ms, tombstoned_at_ms = NULL",
             params![
                 id.as_str(),
@@ -1320,6 +1639,7 @@ fn upsert_nodes(
                 source_kind,
                 provider_version,
                 now,
+                node.search_aliases,
             ],
         )?;
         ids.insert(node.stable_key.clone(), id);
@@ -1793,6 +2113,461 @@ mod tests {
             .neighbors(&project.project.id, &engines[0].id, 2, 100)
             .expect("neighbors");
         assert!(slice.nodes.len() >= 2);
+    }
+
+    #[test]
+    fn rust_fields_and_impls_preserve_their_definition_owners() {
+        let source = br"
+            impl<T> Settings<T> { fn from_env() { let local_only = false; } }
+            struct Settings<T> { use_app_guides: bool, r#type: T }
+            struct SessionActionRequest { use_app_guides: Option<bool> }
+            struct Tuple(bool);
+            trait Load { fn from_env(); }
+            impl Load for SessionActionRequest { fn from_env() {} }
+            mod nested {
+                struct Settings { enabled: bool }
+                impl self::Settings { fn from_env() {} }
+                impl Settings { fn other() {} }
+            }
+            impl nested::Settings { fn outside() {} }
+        ";
+        let scan = parse_file("lib.rs", SupportedLanguage::Rust, source, sha256(source))
+            .expect("parse Rust");
+        let by_label = |label: &str| {
+            scan.nodes
+                .iter()
+                .find(|node| node.label == label)
+                .expect("node")
+        };
+        assert_eq!(
+            by_label("Settings").search_aliases,
+            "Settings::type\nSettings::use_app_guides\ntype\nuse_app_guides"
+        );
+        assert_eq!(
+            by_label("SessionActionRequest").search_aliases,
+            "SessionActionRequest::use_app_guides\nuse_app_guides"
+        );
+        assert!(by_label("Tuple").search_aliases.is_empty());
+        assert!(
+            scan.nodes
+                .iter()
+                .all(|node| !node.search_aliases.contains("local_only"))
+        );
+        for (owner, method) in [
+            ("Settings", "Settings::from_env"),
+            ("SessionActionRequest", "SessionActionRequest::from_env"),
+            ("nested::Settings", "nested::Settings::from_env"),
+            ("nested::Settings", "nested::Settings::other"),
+            ("nested::Settings", "nested::Settings::outside"),
+        ] {
+            let method = by_label(method);
+            let definitions: Vec<_> = scan
+                .edges
+                .iter()
+                .filter(|edge| edge.relation == "DEFINES" && edge.target_key == method.stable_key)
+                .collect();
+            assert_eq!(definitions.len(), 1);
+            assert_eq!(definitions[0].source_key, by_label(owner).stable_key);
+        }
+    }
+
+    #[test]
+    fn rust_field_aliases_are_bounded_and_leave_other_languages_unchanged() {
+        let fields = (0..1_000).fold(String::new(), |mut fields, n| {
+            use std::fmt::Write as _;
+            write!(fields, "field_{n}: bool,").unwrap();
+            fields
+        });
+        let source = format!("struct Many {{ {fields} }}");
+        let scan = parse_file(
+            "lib.rs",
+            SupportedLanguage::Rust,
+            source.as_bytes(),
+            sha256(source.as_bytes()),
+        )
+        .expect("parse");
+        let owner = scan
+            .nodes
+            .iter()
+            .find(|node| node.label == "Many")
+            .expect("owner");
+        assert_eq!(owner.search_aliases.lines().count(), 256);
+        assert!(owner.search_aliases.len() <= 16 * 1024);
+        let aliases_bytes = owner.search_aliases.len();
+        let mut without_aliases = scan.clone();
+        without_aliases
+            .nodes
+            .iter_mut()
+            .for_each(|node| node.search_aliases.clear());
+        assert_eq!(
+            file_scan_heap_bytes(&scan) - file_scan_heap_bytes(&without_aliases),
+            usize_to_u64(aliases_bytes)
+        );
+        let source = b"class Settings:\n    use_app_guides: bool\n";
+        let python = parse_file(
+            "config.py",
+            SupportedLanguage::Python,
+            source,
+            sha256(source),
+        )
+        .expect("Python");
+        assert!(
+            python
+                .nodes
+                .iter()
+                .all(|node| node.search_aliases.is_empty())
+        );
+    }
+
+    #[test]
+    fn owner_aliases_follow_field_changes_and_file_removal() {
+        let (_temp, database, project) = fixture();
+        let path = project.root.join("lib.rs");
+        fs::write(&path, "struct ActionRequest { use_app_guides: bool }").expect("source");
+        let world = WorldModel::new(database.clone());
+        let provider = TreeSitterProvider::new(100, 1_000_000, 10_000, 20_000, 16_000_000);
+        world
+            .index(&provider, &project, None)
+            .expect("initial index");
+        let matches = |field: &str| {
+            database
+                .with_reader(|connection| {
+                    Ok(connection.query_row(
+                        "SELECT count(*) FROM source_node_fts f JOIN nodes n ON n.rowid=f.rowid
+                     WHERE source_node_fts MATCH ?1 AND n.project_id=?2 AND n.kind='Type'",
+                        params![format!("\"{field}\""), project.project.id.as_str()],
+                        |row| row.get::<_, i64>(0),
+                    )?)
+                })
+                .expect("FTS count")
+        };
+        assert_eq!(matches("use_app_guides"), 1);
+        fs::write(&path, "struct ActionRequest { use_task_guides: bool }").expect("edit");
+        let changed = [PathBuf::from("lib.rs")];
+        world
+            .index(&provider, &project, Some(&changed))
+            .expect("refresh");
+        assert_eq!(matches("use_app_guides"), 0);
+        assert_eq!(matches("use_task_guides"), 1);
+        fs::remove_file(&path).expect("remove");
+        world
+            .index(&provider, &project, Some(&changed))
+            .expect("remove index");
+        assert_eq!(matches("use_task_guides"), 0);
+    }
+
+    #[test]
+    fn native_extractor_upgrade_revisits_unchanged_files_after_a_partial_scan() {
+        let (_temp, database, project) = fixture();
+        fs::write(
+            project.root.join("lib.rs"),
+            "struct Request { use_app_guides: bool }",
+        )
+        .expect("source");
+        let world = WorldModel::new(database.clone());
+        let provider = TreeSitterProvider::new(100, 1_000_000, 10_000, 20_000, 16_000_000);
+        world
+            .index(&provider, &project, None)
+            .expect("initial index");
+        database.write_immediate(|tx| {
+            tx.execute("UPDATE structural_scans SET provider_version='tree-sitter-v1'", [])?;
+            tx.execute("UPDATE nodes SET search_aliases=''", [])?;
+            tx.execute("UPDATE nodes SET extractor_version='tree-sitter-v1' WHERE file_path='lib.rs'", [])?;
+            // A newer partial scan must not hide older extraction in lib.rs.
+            tx.execute(
+                "INSERT INTO structural_scans
+                 (id,project_id,provider,provider_version,head,diff_fingerprint,
+                  started_at_ms,completed_at_ms,file_count,node_count,edge_count,incremental,changed_paths_json)
+                 SELECT 'partial-upgrade',project_id,provider,?1,head,diff_fingerprint,
+                        started_at_ms,completed_at_ms,file_count,node_count,edge_count,1,changed_paths_json
+                 FROM structural_scans LIMIT 1", [EXTRACTOR_VERSION],
+            )?;
+            tx.execute("UPDATE indexed_files SET scan_id='partial-upgrade' WHERE path='worker.py'", [])?;
+            Ok(())
+        }).expect("simulate old extraction");
+        let status = world
+            .latest_index_status(&project.project.id)
+            .expect("status")
+            .expect("scan");
+        assert_eq!(status.scan_id, "partial-upgrade");
+        assert!(status.needs_reindex);
+        let upgraded = world
+            .index(&provider, &project, Some(&[]))
+            .expect("upgrade");
+        assert!(!upgraded.incremental);
+        assert_eq!(upgraded.parsed_files, 1);
+        assert_eq!(upgraded.unchanged_files, 1);
+        assert!(
+            !world
+                .latest_index_status(&project.project.id)
+                .expect("status")
+                .expect("scan")
+                .needs_reindex
+        );
+        let aliases: String = database.with_reader(|connection| {
+            Ok(connection.query_row("SELECT search_aliases FROM nodes WHERE label='Request' AND tombstoned_at_ms IS NULL", [], |row| row.get(0))?)
+        }).expect("aliases");
+        assert!(aliases.lines().any(|alias| alias == "use_app_guides"));
+        let unchanged = world.index(&provider, &project, None).expect("unchanged");
+        assert_eq!(unchanged.parsed_files, 0);
+        assert_eq!(unchanged.unchanged_files, 2);
+    }
+
+    #[test]
+    fn native_upgrade_preserves_method_anchors_but_source_changes_still_invalidate() {
+        assert_native_upgrade_identity(false, false);
+    }
+
+    #[test]
+    fn dirty_native_upgrade_conservatively_retires_v1_symbol_anchors() {
+        assert_native_upgrade_identity(true, false);
+    }
+
+    #[test]
+    fn recreated_v1_file_cannot_reuse_retired_symbol_anchors() {
+        assert_native_upgrade_identity(true, true);
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn assert_native_upgrade_identity(dirty_before_upgrade: bool, recreated_file: bool) {
+        use crate::memory::{MemoryDraft, MemoryStatus, MemoryStore};
+
+        let (_temp, database, project) = fixture();
+        // Identical method/free-function bodies exercise the v1 stable-key
+        // collision as well as descendants; digests alone cannot tell them apart.
+        let source = "struct Settings;\nimpl Settings { fn from_env() -> u8 { fn read_flag() -> u8 { 1 } read_flag() } }\nfn from_env() -> u8 { fn read_flag() -> u8 { 1 } read_flag() }\n";
+        fs::write(project.root.join("lib.rs"), source).expect("source");
+        let mut legacy = parse_file(
+            "lib.rs",
+            SupportedLanguage::Rust,
+            source.as_bytes(),
+            sha256(source.as_bytes()),
+        )
+        .expect("parse");
+        // Recreate native-v1 labels and lexical ownership, using identical
+        // source spans/digests rather than fabricated matching IDs.
+        let mut lexical_nodes: Vec<_> = legacy.nodes.iter().collect();
+        lexical_nodes.sort_by_key(|node| node.start_byte);
+        let mut taken = BTreeSet::new();
+        let mut keys = BTreeMap::new();
+        for node in lexical_nodes {
+            let base = node.stable_key.replace("Settings::", "");
+            let key = if taken.insert(base.clone()) {
+                base
+            } else {
+                format!("{base}:{}", node.start_byte)
+            };
+            keys.insert(node.stable_key.clone(), key);
+        }
+        for node in &mut legacy.nodes {
+            node.stable_key = keys[&node.stable_key].clone();
+            node.label = node.label.replace("Settings::", "");
+        }
+        for edge in &mut legacy.edges {
+            edge.source_key = keys[&edge.source_key].clone();
+            edge.target_key = keys[&edge.target_key].clone();
+            if edge.relation == "DEFINES" && edge.target_key == "symbol:lib.rs:Function:from_env" {
+                edge.source_key = "file:lib.rs".to_owned();
+            }
+            edge.digest = sha256(
+                format!(
+                    "{}\0{}\0{}",
+                    edge.source_key, edge.relation, edge.target_key
+                )
+                .as_bytes(),
+            );
+        }
+        let world = WorldModel::new(database.clone());
+        world
+            .apply_scan(
+                &project,
+                ScanResult {
+                    provider: "tree_sitter".to_owned(),
+                    provider_version: "tree-sitter-v1".to_owned(),
+                    incremental: false,
+                    seen_paths: BTreeSet::from(["lib.rs".to_owned()]),
+                    deleted_paths: BTreeSet::new(),
+                    unchanged_count: 0,
+                    files: vec![legacy],
+                },
+            )
+            .expect("legacy index");
+        let find = |label: &str| {
+            world
+                .search_symbols(&project.project.id, label, 20)
+                .expect("symbols")
+                .into_iter()
+                .find(|node| node.label == label)
+                .expect("symbol")
+        };
+        let method = find("from_env");
+        let descendant = find("from_env::read_flag");
+        let reference = find("read_flag");
+        let global = world
+            .search_symbols(&project.project.id, "from_env", 20)
+            .expect("global")
+            .into_iter()
+            .find(|node| {
+                node.start_byte
+                    == Some(usize_to_u64(
+                        source.rfind("fn from_env").expect("global offset"),
+                    ))
+            })
+            .expect("global function");
+        let call_edge: String = database
+            .with_reader(|connection| {
+                Ok(connection.query_row(
+                    "SELECT id FROM edges WHERE source_id=?1 AND target_id=?2 AND relation='CALLS'",
+                    params![method.id.as_str(), reference.id.as_str()],
+                    |row| row.get(0),
+                )?)
+            })
+            .expect("call edge");
+        let memories = MemoryStore::new(database.clone());
+        let memory = memories
+            .create_candidate(
+                &project.project.id,
+                &MemoryDraft {
+                    scope_type: "project".to_owned(),
+                    scope_id: project.project.id.to_string(),
+                    kind: "lesson".to_owned(),
+                    claim: "Settings reads a flag through its local helper.".to_owned(),
+                    rationale: "Source inspection.".to_owned(),
+                    confidence: 0.5,
+                    importance: 0.5,
+                    tags: Vec::new(),
+                    valid_from_commit: None,
+                    valid_to_commit: None,
+                    trust_source: "agent_inference".to_owned(),
+                    evidence_ids: Vec::new(),
+                    source_task_ids: Vec::new(),
+                    node_ids: vec![
+                        method.id.clone(),
+                        descendant.id.clone(),
+                        reference.id.clone(),
+                    ],
+                },
+            )
+            .expect("anchored memory");
+        let provider = TreeSitterProvider::new(100, 1_000_000, 10_000, 20_000, 16_000_000);
+        let historical = NodeId::new();
+        database.write_immediate(|tx| {
+            // A deleted v1 module function can occupy the new impl method key
+            // with the same body digest. It must never be reactivated as it.
+            tx.execute(
+                "INSERT INTO nodes(id,project_id,kind,stable_key,label,file_path,language,start_byte,end_byte,current_digest,source_kind,source_ref,extractor_version,observed_at_ms,tombstoned_at_ms)
+                 SELECT ?1,project_id,kind,'symbol:lib.rs:Function:Settings::from_env','Settings::from_env',file_path,language,start_byte,end_byte,current_digest,source_kind,source_ref,extractor_version,observed_at_ms,1 FROM nodes WHERE id=?2",
+                params![historical.as_str(), method.id.as_str()],
+            )?;
+            if recreated_file {
+                tx.execute("DELETE FROM indexed_files WHERE project_id=?1 AND path='lib.rs'", [project.project.id.as_str()])?;
+                tx.execute("UPDATE nodes SET tombstoned_at_ms=1 WHERE project_id=?1 AND file_path='lib.rs'", [project.project.id.as_str()])?;
+            }
+            Ok(())
+        }).expect("historical tombstone");
+        if dirty_before_upgrade {
+            // Even unchanged spans/digests cannot establish ownership after a
+            // concurrent source edit. The upgrade deliberately invalidates.
+            fs::write(
+                project.root.join("lib.rs"),
+                format!("{source}\n// concurrent edit\n"),
+            )
+            .expect("dirty source");
+        }
+        let requested_paths = if recreated_file {
+            vec![PathBuf::from("lib.rs")]
+        } else {
+            Vec::new()
+        };
+        world
+            .index(&provider, &project, Some(&requested_paths))
+            .expect("upgrade");
+        assert_ne!(find("Settings::from_env").id, historical);
+        assert!(
+            database
+                .with_reader(|connection| {
+                    Ok(connection.query_row(
+                        "SELECT tombstoned_at_ms IS NOT NULL FROM nodes WHERE id=?1",
+                        [historical.as_str()],
+                        |row| row.get::<_, bool>(0),
+                    )?)
+                })
+                .unwrap()
+        );
+        if dirty_before_upgrade {
+            assert_ne!(find("Settings::from_env").id, method.id);
+            assert_ne!(find("Settings::from_env::read_flag").id, descendant.id);
+            assert_ne!(find("from_env").id, global.id);
+            assert_eq!(
+                memories
+                    .mark_symbol_drift_suspect(&project.project.id)
+                    .expect("dirty upgrade drift")
+                    .invalidated,
+                1
+            );
+            assert_eq!(
+                memories
+                    .get(&memory.id)
+                    .expect("memory")
+                    .expect("record")
+                    .status,
+                MemoryStatus::Suspect
+            );
+            return;
+        }
+        assert_eq!(find("Settings::from_env").id, method.id);
+        assert_eq!(find("from_env").id, global.id);
+        assert_ne!(method.id, global.id);
+        assert_eq!(find("Settings::from_env::read_flag").id, descendant.id);
+        assert_eq!(find("read_flag").id, reference.id);
+        let active_call: bool = database
+            .with_reader(|connection| {
+                Ok(connection.query_row(
+                    "SELECT tombstoned_at_ms IS NULL FROM edges WHERE id=?1",
+                    [&call_edge],
+                    |row| row.get(0),
+                )?)
+            })
+            .expect("preserved call");
+        assert!(active_call);
+        assert_eq!(
+            memories
+                .mark_symbol_drift_suspect(&project.project.id)
+                .expect("drift")
+                .invalidated,
+            0
+        );
+        assert_eq!(
+            memories
+                .get(&memory.id)
+                .expect("memory")
+                .expect("record")
+                .status,
+            MemoryStatus::Active
+        );
+        fs::write(
+            project.root.join("lib.rs"),
+            source.replace("{ 1 }", "{ 2 }"),
+        )
+        .expect("edit");
+        world
+            .index(&provider, &project, Some(&[PathBuf::from("lib.rs")]))
+            .expect("changed source");
+        assert_eq!(
+            memories
+                .mark_symbol_drift_suspect(&project.project.id)
+                .expect("changed drift")
+                .invalidated,
+            1
+        );
+        assert_eq!(
+            memories
+                .get(&memory.id)
+                .expect("memory")
+                .expect("record")
+                .status,
+            MemoryStatus::Suspect
+        );
     }
 
     #[test]

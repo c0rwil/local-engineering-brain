@@ -1,0 +1,3310 @@
+{
+  "schema_version": 1,
+  "record_classification_revision": "agent-completion-v2",
+  "record_count": 24,
+  "all_attempts": {
+    "off": {
+      "attempts": 12,
+      "grade_counts": {
+        "pass": 9,
+        "fail": 3
+      },
+      "behavioral_grade_counts": {
+        "pass": 9,
+        "fail": 3
+      },
+      "reported_usage_may_be_partial_attempts": 0,
+      "totals_observed": {
+        "input_tokens": 1254,
+        "output_tokens": 369547,
+        "cache_creation_input_tokens": 886427,
+        "cache_read_input_tokens": 32476136,
+        "processed_input_tokens": 33363817,
+        "total_tokens": 33733364,
+        "tool_calls": 659,
+        "agent_wall_seconds": 6139.555,
+        "cost_usd_estimate": 34.347283
+      },
+      "measurement_coverage": {
+        "input_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "output_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "cache_creation_input_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "cache_read_input_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "processed_input_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "total_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "tool_calls": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "agent_wall_seconds": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "cost_usd_estimate": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      }
+    },
+    "brain": {
+      "attempts": 12,
+      "grade_counts": {
+        "pass": 8,
+        "fail": 4
+      },
+      "behavioral_grade_counts": {
+        "pass": 8,
+        "fail": 4
+      },
+      "reported_usage_may_be_partial_attempts": 0,
+      "totals_observed": {
+        "input_tokens": 956,
+        "output_tokens": 359019,
+        "cache_creation_input_tokens": 1102555,
+        "cache_read_input_tokens": 36077327,
+        "processed_input_tokens": 37180838,
+        "total_tokens": 37539857,
+        "tool_calls": 544,
+        "agent_wall_seconds": 6066.151,
+        "cost_usd_estimate": 38.0444685
+      },
+      "measurement_coverage": {
+        "input_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "output_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "cache_creation_input_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "cache_read_input_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "processed_input_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "total_tokens": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "tool_calls": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "agent_wall_seconds": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        },
+        "cost_usd_estimate": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      }
+    },
+    "unknown": {
+      "attempts": 0,
+      "grade_counts": {},
+      "behavioral_grade_counts": {},
+      "reported_usage_may_be_partial_attempts": 0,
+      "totals_observed": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "processed_input_tokens": null,
+        "total_tokens": null,
+        "tool_calls": null,
+        "agent_wall_seconds": null,
+        "cost_usd_estimate": null
+      },
+      "measurement_coverage": {
+        "input_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "output_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "cache_creation_input_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "cache_read_input_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "processed_input_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "total_tokens": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "tool_calls": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "agent_wall_seconds": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        },
+        "cost_usd_estimate": {
+          "available": 0,
+          "missing": 0,
+          "total": 0,
+          "partial": 0
+        }
+      }
+    }
+  },
+  "pair_counts": {
+    "observed_pairs": 12,
+    "complete_pairs": 12,
+    "both_pass": 8,
+    "off_only_pass": 1,
+    "brain_only_pass": 0,
+    "neither_pass": 3,
+    "infrastructure": 0,
+    "incomplete": 0,
+    "ambiguous": 0
+  },
+  "pairs": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "behavioral_grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "status": "both_pass",
+      "deltas": {
+        "input_tokens": {
+          "off": 178,
+          "brain": 112,
+          "delta": -66,
+          "delta_percent": -37.07865168539326,
+          "reduction": 66,
+          "reduction_percent": 37.07865168539326
+        },
+        "output_tokens": {
+          "off": 35609,
+          "brain": 37571,
+          "delta": 1962,
+          "delta_percent": 5.509843017214749,
+          "reduction": -1962,
+          "reduction_percent": -5.509843017214749
+        },
+        "cache_creation_input_tokens": {
+          "off": 108819,
+          "brain": 145465,
+          "delta": 36646,
+          "delta_percent": 33.67610435677593,
+          "reduction": -36646,
+          "reduction_percent": -33.67610435677593
+        },
+        "cache_read_input_tokens": {
+          "off": 5367201,
+          "brain": 6173196,
+          "delta": 805995,
+          "delta_percent": 15.017045197301163,
+          "reduction": -805995,
+          "reduction_percent": -15.017045197301163
+        },
+        "processed_input_tokens": {
+          "off": 5476198,
+          "brain": 6318773,
+          "delta": 842575,
+          "delta_percent": 15.386131034706926,
+          "reduction": -842575,
+          "reduction_percent": -15.386131034706926
+        },
+        "total_tokens": {
+          "off": 5511807,
+          "brain": 6356344,
+          "delta": 844537,
+          "delta_percent": 15.322325328154632,
+          "reduction": -844537,
+          "reduction_percent": -15.322325328154632
+        },
+        "tool_calls": {
+          "off": 89,
+          "brain": 59,
+          "delta": -30,
+          "delta_percent": -33.70786516853933,
+          "reduction": 30,
+          "reduction_percent": 33.70786516853933
+        },
+        "agent_wall_seconds": {
+          "off": 713.722,
+          "brain": 776.507,
+          "delta": 62.78499999999997,
+          "delta_percent": 8.7968424680758,
+          "reduction": -62.78499999999997,
+          "reduction_percent": -8.7968424680758
+        },
+        "cost_usd_estimate": {
+          "off": 4.662905500000001,
+          "brain": 5.481082999999999,
+          "delta": 0.8181774999999982,
+          "delta_percent": 17.546516865932585,
+          "reduction": -0.8181774999999982,
+          "reduction_percent": -17.546516865932585
+        }
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 2,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "behavioral_grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "status": "both_pass",
+      "deltas": {
+        "input_tokens": {
+          "off": 126,
+          "brain": 84,
+          "delta": -42,
+          "delta_percent": -33.333333333333336,
+          "reduction": 42,
+          "reduction_percent": 33.333333333333336
+        },
+        "output_tokens": {
+          "off": 27289,
+          "brain": 23394,
+          "delta": -3895,
+          "delta_percent": -14.273150353622338,
+          "reduction": 3895,
+          "reduction_percent": 14.273150353622338
+        },
+        "cache_creation_input_tokens": {
+          "off": 75846,
+          "brain": 120446,
+          "delta": 44600,
+          "delta_percent": 58.80336471270733,
+          "reduction": -44600,
+          "reduction_percent": -58.80336471270733
+        },
+        "cache_read_input_tokens": {
+          "off": 3115377,
+          "brain": 3967946,
+          "delta": 852569,
+          "delta_percent": 27.36647924151716,
+          "reduction": -852569,
+          "reduction_percent": -27.36647924151716
+        },
+        "processed_input_tokens": {
+          "off": 3191349,
+          "brain": 4088476,
+          "delta": 897127,
+          "delta_percent": 28.111215664598262,
+          "reduction": -897127,
+          "reduction_percent": -28.111215664598262
+        },
+        "total_tokens": {
+          "off": 3218638,
+          "brain": 4111870,
+          "delta": 893232,
+          "delta_percent": 27.75186274442792,
+          "reduction": -893232,
+          "reduction_percent": -27.75186274442792
+        },
+        "tool_calls": {
+          "off": 63,
+          "brain": 42,
+          "delta": -21,
+          "delta_percent": -33.333333333333336,
+          "reduction": 21,
+          "reduction_percent": 33.333333333333336
+        },
+        "agent_wall_seconds": {
+          "off": 559.289,
+          "brain": 469.985,
+          "delta": -89.30399999999997,
+          "delta_percent": -15.96741577252547,
+          "reduction": 89.30399999999997,
+          "reduction_percent": 15.96741577252547
+        },
+        "cost_usd_estimate": {
+          "off": 2.9990035,
+          "brain": 3.773702999999999,
+          "delta": 0.7746994999999988,
+          "delta_percent": 25.831897161840548,
+          "reduction": -0.7746994999999988,
+          "reduction_percent": -25.831897161840548
+        }
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 3,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "behavioral_grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "status": "both_pass",
+      "deltas": {
+        "input_tokens": {
+          "off": 132,
+          "brain": 136,
+          "delta": 4,
+          "delta_percent": 3.0303030303030303,
+          "reduction": -4,
+          "reduction_percent": -3.0303030303030303
+        },
+        "output_tokens": {
+          "off": 32872,
+          "brain": 40883,
+          "delta": 8011,
+          "delta_percent": 24.37028474081285,
+          "reduction": -8011,
+          "reduction_percent": -24.37028474081285
+        },
+        "cache_creation_input_tokens": {
+          "off": 116156,
+          "brain": 148680,
+          "delta": 32524,
+          "delta_percent": 28.00027549158029,
+          "reduction": -32524,
+          "reduction_percent": -28.00027549158029
+        },
+        "cache_read_input_tokens": {
+          "off": 5165832,
+          "brain": 7461282,
+          "delta": 2295450,
+          "delta_percent": 44.43524295795915,
+          "reduction": -2295450,
+          "reduction_percent": -44.43524295795915
+        },
+        "processed_input_tokens": {
+          "off": 5282120,
+          "brain": 7610098,
+          "delta": 2327978,
+          "delta_percent": 44.07279652866652,
+          "reduction": -2327978,
+          "reduction_percent": -44.07279652866652
+        },
+        "total_tokens": {
+          "off": 5314992,
+          "brain": 7650981,
+          "delta": 2335989,
+          "delta_percent": 43.950941036223576,
+          "reduction": -2335989,
+          "reduction_percent": -43.950941036223576
+        },
+        "tool_calls": {
+          "off": 66,
+          "brain": 73,
+          "delta": 7,
+          "delta_percent": 10.606060606060606,
+          "reduction": -7,
+          "reduction_percent": -10.606060606060606
+        },
+        "agent_wall_seconds": {
+          "off": 689.108,
+          "brain": 873.775,
+          "delta": 184.66700000000003,
+          "delta_percent": 26.797976514566667,
+          "reduction": -184.66700000000003,
+          "reduction_percent": -26.797976514566667
+        },
+        "cost_usd_estimate": {
+          "off": 4.566935999999998,
+          "brain": 6.240196,
+          "delta": 1.6732600000000017,
+          "delta_percent": 36.63856905373761,
+          "reduction": -1.6732600000000017,
+          "reduction_percent": -36.63856905373761
+        }
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "behavioral_grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "status": "both_pass",
+      "deltas": {
+        "input_tokens": {
+          "off": 142,
+          "brain": 136,
+          "delta": -6,
+          "delta_percent": -4.225352112676056,
+          "reduction": 6,
+          "reduction_percent": 4.225352112676056
+        },
+        "output_tokens": {
+          "off": 45738,
+          "brain": 39379,
+          "delta": -6359,
+          "delta_percent": -13.903100266736631,
+          "reduction": 6359,
+          "reduction_percent": 13.903100266736631
+        },
+        "cache_creation_input_tokens": {
+          "off": 88295,
+          "brain": 86271,
+          "delta": -2024,
+          "delta_percent": -2.292315533155898,
+          "reduction": 2024,
+          "reduction_percent": 2.292315533155898
+        },
+        "cache_read_input_tokens": {
+          "off": 3785177,
+          "brain": 3629908,
+          "delta": -155269,
+          "delta_percent": -4.1020274613313985,
+          "reduction": 155269,
+          "reduction_percent": 4.1020274613313985
+        },
+        "processed_input_tokens": {
+          "off": 3873614,
+          "brain": 3716315,
+          "delta": -157299,
+          "delta_percent": -4.060781482099146,
+          "reduction": 157299,
+          "reduction_percent": 4.060781482099146
+        },
+        "total_tokens": {
+          "off": 3919352,
+          "brain": 3755694,
+          "delta": -163658,
+          "delta_percent": -4.17563923832307,
+          "reduction": 163658,
+          "reduction_percent": 4.17563923832307
+        },
+        "tool_calls": {
+          "off": 79,
+          "brain": 75,
+          "delta": -4,
+          "delta_percent": -5.063291139240507,
+          "reduction": 4,
+          "reduction_percent": 5.063291139240507
+        },
+        "agent_wall_seconds": {
+          "off": 663.679,
+          "brain": 592.469,
+          "delta": -71.20999999999992,
+          "delta_percent": -10.729584633535177,
+          "reduction": 71.20999999999992,
+          "reduction_percent": 10.729584633535177
+        },
+        "cost_usd_estimate": {
+          "off": 3.9196985000000013,
+          "brain": 3.6628190000000003,
+          "delta": -0.25687950000000104,
+          "delta_percent": -6.553552524511795,
+          "reduction": 0.25687950000000104,
+          "reduction_percent": 6.553552524511795
+        }
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 2,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "behavioral_grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "status": "both_pass",
+      "deltas": {
+        "input_tokens": {
+          "off": 142,
+          "brain": 92,
+          "delta": -50,
+          "delta_percent": -35.2112676056338,
+          "reduction": 50,
+          "reduction_percent": 35.2112676056338
+        },
+        "output_tokens": {
+          "off": 44758,
+          "brain": 34319,
+          "delta": -10439,
+          "delta_percent": -23.323204790205104,
+          "reduction": 10439,
+          "reduction_percent": 23.323204790205104
+        },
+        "cache_creation_input_tokens": {
+          "off": 97444,
+          "brain": 114774,
+          "delta": 17330,
+          "delta_percent": 17.78457370387094,
+          "reduction": -17330,
+          "reduction_percent": -17.78457370387094
+        },
+        "cache_read_input_tokens": {
+          "off": 4443718,
+          "brain": 4422408,
+          "delta": -21310,
+          "delta_percent": -0.4795533830004514,
+          "reduction": 21310,
+          "reduction_percent": 0.4795533830004514
+        },
+        "processed_input_tokens": {
+          "off": 4541304,
+          "brain": 4537274,
+          "delta": -4030,
+          "delta_percent": -0.08874103121041886,
+          "reduction": 4030,
+          "reduction_percent": 0.08874103121041886
+        },
+        "total_tokens": {
+          "off": 4586062,
+          "brain": 4571593,
+          "delta": -14469,
+          "delta_percent": -0.3154994415688231,
+          "reduction": 14469,
+          "reduction_percent": 0.3154994415688231
+        },
+        "tool_calls": {
+          "off": 72,
+          "brain": 52,
+          "delta": -20,
+          "delta_percent": -27.77777777777778,
+          "reduction": 20,
+          "reduction_percent": 27.77777777777778
+        },
+        "agent_wall_seconds": {
+          "off": 606.148,
+          "brain": 482.946,
+          "delta": -123.202,
+          "delta_percent": -20.32539907745303,
+          "reduction": 123.202,
+          "reduction_percent": 20.32539907745303
+        },
+        "cost_usd_estimate": {
+          "off": 4.315958999999999,
+          "brain": 4.217379,
+          "delta": -0.09857999999999922,
+          "delta_percent": -2.2840810118909665,
+          "reduction": 0.09857999999999922,
+          "reduction_percent": 2.2840810118909665
+        }
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 3,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "behavioral_grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "status": "both_pass",
+      "deltas": {
+        "input_tokens": {
+          "off": 148,
+          "brain": 128,
+          "delta": -20,
+          "delta_percent": -13.513513513513514,
+          "reduction": 20,
+          "reduction_percent": 13.513513513513514
+        },
+        "output_tokens": {
+          "off": 35950,
+          "brain": 42630,
+          "delta": 6680,
+          "delta_percent": 18.581363004172463,
+          "reduction": -6680,
+          "reduction_percent": -18.581363004172463
+        },
+        "cache_creation_input_tokens": {
+          "off": 78829,
+          "brain": 76496,
+          "delta": -2333,
+          "delta_percent": -2.95957071636073,
+          "reduction": 2333,
+          "reduction_percent": 2.95957071636073
+        },
+        "cache_read_input_tokens": {
+          "off": 3360219,
+          "brain": 2858960,
+          "delta": -501259,
+          "delta_percent": -14.917450320946344,
+          "reduction": 501259,
+          "reduction_percent": 14.917450320946344
+        },
+        "processed_input_tokens": {
+          "off": 3439196,
+          "brain": 2935584,
+          "delta": -503612,
+          "delta_percent": -14.643306168069515,
+          "reduction": 503612,
+          "reduction_percent": 14.643306168069515
+        },
+        "total_tokens": {
+          "off": 3475146,
+          "brain": 2978214,
+          "delta": -496932,
+          "delta_percent": -14.299600649871977,
+          "reduction": 496932,
+          "reduction_percent": 14.299600649871977
+        },
+        "tool_calls": {
+          "off": 74,
+          "brain": 64,
+          "delta": -10,
+          "delta_percent": -13.513513513513514,
+          "reduction": 10,
+          "reduction_percent": 13.513513513513514
+        },
+        "agent_wall_seconds": {
+          "off": 558.295,
+          "brain": 623.574,
+          "delta": 65.279,
+          "delta_percent": 11.692563967078337,
+          "reduction": -65.279,
+          "reduction_percent": -11.692563967078337
+        },
+        "cost_usd_estimate": {
+          "off": 3.3678895,
+          "brain": 3.26083,
+          "delta": -0.10705950000000009,
+          "delta_percent": -3.178830540610079,
+          "reduction": 0.10705950000000009,
+          "reduction_percent": 3.178830540610079
+        }
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 1,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "pass",
+        "brain": "fail"
+      },
+      "behavioral_grades": {
+        "off": "pass",
+        "brain": "fail"
+      },
+      "status": "off_only_pass"
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 2,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "behavioral_grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "status": "both_pass",
+      "deltas": {
+        "input_tokens": {
+          "off": 48,
+          "brain": 46,
+          "delta": -2,
+          "delta_percent": -4.166666666666667,
+          "reduction": 2,
+          "reduction_percent": 4.166666666666667
+        },
+        "output_tokens": {
+          "off": 14812,
+          "brain": 26298,
+          "delta": 11486,
+          "delta_percent": 77.54523359438294,
+          "reduction": -11486,
+          "reduction_percent": -77.54523359438294
+        },
+        "cache_creation_input_tokens": {
+          "off": 38331,
+          "brain": 85793,
+          "delta": 47462,
+          "delta_percent": 123.82145000130443,
+          "reduction": -47462,
+          "reduction_percent": -123.82145000130443
+        },
+        "cache_read_input_tokens": {
+          "off": 676805,
+          "brain": 1541112,
+          "delta": 864307,
+          "delta_percent": 127.70399154852579,
+          "reduction": -864307,
+          "reduction_percent": -127.70399154852579
+        },
+        "processed_input_tokens": {
+          "off": 715184,
+          "brain": 1626951,
+          "delta": 911767,
+          "delta_percent": 127.48705228304884,
+          "reduction": -911767,
+          "reduction_percent": -127.48705228304884
+        },
+        "total_tokens": {
+          "off": 729996,
+          "brain": 1653249,
+          "delta": 923253,
+          "delta_percent": 126.47370670524222,
+          "reduction": -923253,
+          "reduction_percent": -126.47370670524222
+        },
+        "tool_calls": {
+          "off": 24,
+          "brain": 30,
+          "delta": 6,
+          "delta_percent": 25.0,
+          "reduction": -6,
+          "reduction_percent": -25.0
+        },
+        "agent_wall_seconds": {
+          "off": 224.853,
+          "brain": 409.205,
+          "delta": 184.35199999999998,
+          "delta_percent": 81.98778757677236,
+          "reduction": -184.35199999999998,
+          "reduction_percent": -81.98778757677236
+        },
+        "cost_usd_estimate": {
+          "off": 1.0922525,
+          "brain": 2.286166,
+          "delta": 1.1939135,
+          "delta_percent": 109.30746324682251,
+          "reduction": -1.1939135,
+          "reduction_percent": -109.30746324682251
+        }
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 3,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "behavioral_grades": {
+        "off": "pass",
+        "brain": "pass"
+      },
+      "status": "both_pass",
+      "deltas": {
+        "input_tokens": {
+          "off": 82,
+          "brain": 64,
+          "delta": -18,
+          "delta_percent": -21.951219512195124,
+          "reduction": 18,
+          "reduction_percent": 21.951219512195124
+        },
+        "output_tokens": {
+          "off": 30557,
+          "brain": 23051,
+          "delta": -7506,
+          "delta_percent": -24.563929705141213,
+          "reduction": 7506,
+          "reduction_percent": 24.563929705141213
+        },
+        "cache_creation_input_tokens": {
+          "off": 65826,
+          "brain": 83736,
+          "delta": 17910,
+          "delta_percent": 27.20809406617446,
+          "reduction": -17910,
+          "reduction_percent": -27.20809406617446
+        },
+        "cache_read_input_tokens": {
+          "off": 1568009,
+          "brain": 2113586,
+          "delta": 545577,
+          "delta_percent": 34.79425181870767,
+          "reduction": -545577,
+          "reduction_percent": -34.79425181870767
+        },
+        "processed_input_tokens": {
+          "off": 1633917,
+          "brain": 2197386,
+          "delta": 563469,
+          "delta_percent": 34.48577865338325,
+          "reduction": -563469,
+          "reduction_percent": -34.48577865338325
+        },
+        "total_tokens": {
+          "off": 1664474,
+          "brain": 2220437,
+          "delta": 555963,
+          "delta_percent": 33.40172330718293,
+          "reduction": -555963,
+          "reduction_percent": -33.40172330718293
+        },
+        "tool_calls": {
+          "off": 42,
+          "brain": 35,
+          "delta": -7,
+          "delta_percent": -16.666666666666668,
+          "reduction": 7,
+          "reduction_percent": 16.666666666666668
+        },
+        "agent_wall_seconds": {
+          "off": 557.177,
+          "brain": 437.637,
+          "delta": -119.54000000000002,
+          "delta_percent": -21.454582655062936,
+          "reduction": 119.54000000000002,
+          "reduction_percent": 21.454582655062936
+        },
+        "cost_usd_estimate": {
+          "off": 2.2065995,
+          "brain": 2.470747999999999,
+          "delta": 0.26414849999999923,
+          "delta_percent": 11.97084020004533,
+          "reduction": -0.26414849999999923,
+          "reduction_percent": -11.97084020004533
+        }
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 1,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "fail",
+        "brain": "fail"
+      },
+      "behavioral_grades": {
+        "off": "fail",
+        "brain": "fail"
+      },
+      "status": "neither_pass"
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 2,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "fail",
+        "brain": "fail"
+      },
+      "behavioral_grades": {
+        "off": "fail",
+        "brain": "fail"
+      },
+      "status": "neither_pass"
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 3,
+      "arm_attempt_counts": {
+        "off": 1,
+        "brain": 1
+      },
+      "grades": {
+        "off": "fail",
+        "brain": "fail"
+      },
+      "behavioral_grades": {
+        "off": "fail",
+        "brain": "fail"
+      },
+      "status": "neither_pass"
+    }
+  ],
+  "both_pass": {
+    "aggregate": {
+      "pair_count": 8,
+      "metrics": {
+        "input_tokens": {
+          "pair_count": 8,
+          "missing_pair_count": 0,
+          "comparison": {
+            "off": 998,
+            "brain": 798,
+            "delta": -200,
+            "delta_percent": -20.04008016032064,
+            "reduction": 200,
+            "reduction_percent": 20.04008016032064
+          }
+        },
+        "output_tokens": {
+          "pair_count": 8,
+          "missing_pair_count": 0,
+          "comparison": {
+            "off": 267585,
+            "brain": 267525,
+            "delta": -60,
+            "delta_percent": -0.022422781546050787,
+            "reduction": 60,
+            "reduction_percent": 0.022422781546050787
+          }
+        },
+        "cache_creation_input_tokens": {
+          "pair_count": 8,
+          "missing_pair_count": 0,
+          "comparison": {
+            "off": 669546,
+            "brain": 861661,
+            "delta": 192115,
+            "delta_percent": 28.69332353564953,
+            "reduction": -192115,
+            "reduction_percent": -28.69332353564953
+          }
+        },
+        "cache_read_input_tokens": {
+          "pair_count": 8,
+          "missing_pair_count": 0,
+          "comparison": {
+            "off": 27482338,
+            "brain": 32168398,
+            "delta": 4686060,
+            "delta_percent": 17.051169372853213,
+            "reduction": -4686060,
+            "reduction_percent": -17.051169372853213
+          }
+        },
+        "processed_input_tokens": {
+          "pair_count": 8,
+          "missing_pair_count": 0,
+          "comparison": {
+            "off": 28152882,
+            "brain": 33030857,
+            "delta": 4877975,
+            "delta_percent": 17.326734080013548,
+            "reduction": -4877975,
+            "reduction_percent": -17.326734080013548
+          }
+        },
+        "total_tokens": {
+          "pair_count": 8,
+          "missing_pair_count": 0,
+          "comparison": {
+            "off": 28420467,
+            "brain": 33298382,
+            "delta": 4877915,
+            "delta_percent": 17.163387920402574,
+            "reduction": -4877915,
+            "reduction_percent": -17.163387920402574
+          }
+        },
+        "tool_calls": {
+          "pair_count": 8,
+          "missing_pair_count": 0,
+          "comparison": {
+            "off": 509,
+            "brain": 430,
+            "delta": -79,
+            "delta_percent": -15.520628683693516,
+            "reduction": 79,
+            "reduction_percent": 15.520628683693516
+          }
+        },
+        "agent_wall_seconds": {
+          "pair_count": 8,
+          "missing_pair_count": 0,
+          "comparison": {
+            "off": 4572.271,
+            "brain": 4666.098,
+            "delta": 93.82700000000023,
+            "delta_percent": 2.0520874637570747,
+            "reduction": -93.82700000000023,
+            "reduction_percent": -2.0520874637570747
+          }
+        },
+        "cost_usd_estimate": {
+          "pair_count": 8,
+          "missing_pair_count": 0,
+          "comparison": {
+            "off": 27.131244,
+            "brain": 31.392923999999997,
+            "delta": 4.261679999999998,
+            "delta_percent": 15.707646873840353,
+            "reduction": -4.261679999999998,
+            "reduction_percent": -15.707646873840353
+          }
+        }
+      }
+    },
+    "per_task": [
+      {
+        "task_id": "r01_guide_hot_path",
+        "pair_count": 3,
+        "metrics": {
+          "input_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 436,
+              "brain": 332,
+              "delta": -104,
+              "delta_percent": -23.853211009174313,
+              "reduction": 104,
+              "reduction_percent": 23.853211009174313
+            }
+          },
+          "output_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 95770,
+              "brain": 101848,
+              "delta": 6078,
+              "delta_percent": 6.3464550485538265,
+              "reduction": -6078,
+              "reduction_percent": -6.3464550485538265
+            }
+          },
+          "cache_creation_input_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 300821,
+              "brain": 414591,
+              "delta": 113770,
+              "delta_percent": 37.81983305686771,
+              "reduction": -113770,
+              "reduction_percent": -37.81983305686771
+            }
+          },
+          "cache_read_input_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 13648410,
+              "brain": 17602424,
+              "delta": 3954014,
+              "delta_percent": 28.9705101180284,
+              "reduction": -3954014,
+              "reduction_percent": -28.9705101180284
+            }
+          },
+          "processed_input_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 13949667,
+              "brain": 18017347,
+              "delta": 4067680,
+              "delta_percent": 29.159692485849305,
+              "reduction": -4067680,
+              "reduction_percent": -29.159692485849305
+            }
+          },
+          "total_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 14045437,
+              "brain": 18119195,
+              "delta": 4073758,
+              "delta_percent": 29.004138497079158,
+              "reduction": -4073758,
+              "reduction_percent": -29.004138497079158
+            }
+          },
+          "tool_calls": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 218,
+              "brain": 174,
+              "delta": -44,
+              "delta_percent": -20.18348623853211,
+              "reduction": 44,
+              "reduction_percent": 20.18348623853211
+            }
+          },
+          "agent_wall_seconds": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 1962.119,
+              "brain": 2120.267,
+              "delta": 158.1479999999999,
+              "delta_percent": 8.060061596671758,
+              "reduction": -158.1479999999999,
+              "reduction_percent": -8.060061596671758
+            }
+          },
+          "cost_usd_estimate": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 12.228845,
+              "brain": 15.494981999999998,
+              "delta": 3.2661369999999987,
+              "delta_percent": 26.708466743997484,
+              "reduction": -3.2661369999999987,
+              "reduction_percent": -26.708466743997484
+            }
+          }
+        }
+      },
+      {
+        "task_id": "r02_lean_task_status",
+        "pair_count": 3,
+        "metrics": {
+          "input_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 432,
+              "brain": 356,
+              "delta": -76,
+              "delta_percent": -17.59259259259259,
+              "reduction": 76,
+              "reduction_percent": 17.59259259259259
+            }
+          },
+          "output_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 126446,
+              "brain": 116328,
+              "delta": -10118,
+              "delta_percent": -8.001834775319109,
+              "reduction": 10118,
+              "reduction_percent": 8.001834775319109
+            }
+          },
+          "cache_creation_input_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 264568,
+              "brain": 277541,
+              "delta": 12973,
+              "delta_percent": 4.903465271688186,
+              "reduction": -12973,
+              "reduction_percent": -4.903465271688186
+            }
+          },
+          "cache_read_input_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 11589114,
+              "brain": 10911276,
+              "delta": -677838,
+              "delta_percent": -5.848919943319221,
+              "reduction": 677838,
+              "reduction_percent": 5.848919943319221
+            }
+          },
+          "processed_input_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 11854114,
+              "brain": 11189173,
+              "delta": -664941,
+              "delta_percent": -5.609369034244145,
+              "reduction": 664941,
+              "reduction_percent": 5.609369034244145
+            }
+          },
+          "total_tokens": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 11980560,
+              "brain": 11305501,
+              "delta": -675059,
+              "delta_percent": -5.634619750662741,
+              "reduction": 675059,
+              "reduction_percent": 5.634619750662741
+            }
+          },
+          "tool_calls": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 225,
+              "brain": 191,
+              "delta": -34,
+              "delta_percent": -15.11111111111111,
+              "reduction": 34,
+              "reduction_percent": 15.11111111111111
+            }
+          },
+          "agent_wall_seconds": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 1828.1219999999998,
+              "brain": 1698.989,
+              "delta": -129.1329999999998,
+              "delta_percent": -7.06369706179346,
+              "reduction": 129.1329999999998,
+              "reduction_percent": 7.06369706179346
+            }
+          },
+          "cost_usd_estimate": {
+            "pair_count": 3,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 11.603547,
+              "brain": 11.141028,
+              "delta": -0.46251900000000035,
+              "delta_percent": -3.986013931774485,
+              "reduction": 0.46251900000000035,
+              "reduction_percent": 3.986013931774485
+            }
+          }
+        }
+      },
+      {
+        "task_id": "r05_test_env_isolation",
+        "pair_count": 2,
+        "metrics": {
+          "input_tokens": {
+            "pair_count": 2,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 130,
+              "brain": 110,
+              "delta": -20,
+              "delta_percent": -15.384615384615385,
+              "reduction": 20,
+              "reduction_percent": 15.384615384615385
+            }
+          },
+          "output_tokens": {
+            "pair_count": 2,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 45369,
+              "brain": 49349,
+              "delta": 3980,
+              "delta_percent": 8.772509863563226,
+              "reduction": -3980,
+              "reduction_percent": -8.772509863563226
+            }
+          },
+          "cache_creation_input_tokens": {
+            "pair_count": 2,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 104157,
+              "brain": 169529,
+              "delta": 65372,
+              "delta_percent": 62.76294440124043,
+              "reduction": -65372,
+              "reduction_percent": -62.76294440124043
+            }
+          },
+          "cache_read_input_tokens": {
+            "pair_count": 2,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 2244814,
+              "brain": 3654698,
+              "delta": 1409884,
+              "delta_percent": 62.806272590958535,
+              "reduction": -1409884,
+              "reduction_percent": -62.806272590958535
+            }
+          },
+          "processed_input_tokens": {
+            "pair_count": 2,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 2349101,
+              "brain": 3824337,
+              "delta": 1475236,
+              "delta_percent": 62.8000243497406,
+              "reduction": -1475236,
+              "reduction_percent": -62.8000243497406
+            }
+          },
+          "total_tokens": {
+            "pair_count": 2,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 2394470,
+              "brain": 3873686,
+              "delta": 1479216,
+              "delta_percent": 61.77634299030683,
+              "reduction": -1479216,
+              "reduction_percent": -61.77634299030683
+            }
+          },
+          "tool_calls": {
+            "pair_count": 2,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 66,
+              "brain": 65,
+              "delta": -1,
+              "delta_percent": -1.5151515151515151,
+              "reduction": 1,
+              "reduction_percent": 1.5151515151515151
+            }
+          },
+          "agent_wall_seconds": {
+            "pair_count": 2,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 782.03,
+              "brain": 846.842,
+              "delta": 64.81200000000001,
+              "delta_percent": 8.287661598659898,
+              "reduction": -64.81200000000001,
+              "reduction_percent": -8.287661598659898
+            }
+          },
+          "cost_usd_estimate": {
+            "pair_count": 2,
+            "missing_pair_count": 0,
+            "comparison": {
+              "off": 3.298852,
+              "brain": 4.756913999999999,
+              "delta": 1.458061999999999,
+              "delta_percent": 44.19907288959914,
+              "reduction": -1.458061999999999,
+              "reduction_percent": -44.19907288959914
+            }
+          }
+        }
+      }
+    ]
+  },
+  "measurement_coverage": {
+    "complete_pairs": 12,
+    "both_pass_pairs": 8,
+    "complete_pairs_with_both_measurements": {
+      "input_tokens": 12,
+      "output_tokens": 12,
+      "cache_creation_input_tokens": 12,
+      "cache_read_input_tokens": 12,
+      "processed_input_tokens": 12,
+      "total_tokens": 12,
+      "tool_calls": 12,
+      "agent_wall_seconds": 12,
+      "cost_usd_estimate": 12
+    },
+    "invalid_record_indices": []
+  },
+  "interpretation": "All-attempt totals include observed failed-run and infrastructure-run costs. Reductions use only both-pass pairs with both measurements present and not marked partial; missing measurements are not zero and failed-run cost reductions are not savings.",
+  "adjudication_counts": {},
+  "progress": {
+    "status": "complete",
+    "planned_runs": 24,
+    "started_trials": 24,
+    "coding_runs_started": 24,
+    "completed_records": 24,
+    "in_progress_trials": 0,
+    "infrastructure_outcomes": 0
+  },
+  "per_task": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "all_attempts": {
+        "off": {
+          "attempts": 3,
+          "grade_counts": {
+            "pass": 3
+          },
+          "behavioral_grade_counts": {
+            "pass": 3
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 436,
+            "output_tokens": 95770,
+            "cache_creation_input_tokens": 300821,
+            "cache_read_input_tokens": 13648410,
+            "processed_input_tokens": 13949667,
+            "total_tokens": 14045437,
+            "tool_calls": 218,
+            "agent_wall_seconds": 1962.119,
+            "cost_usd_estimate": 12.228845
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 3,
+          "grade_counts": {
+            "pass": 3
+          },
+          "behavioral_grade_counts": {
+            "pass": 3
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 332,
+            "output_tokens": 101848,
+            "cache_creation_input_tokens": 414591,
+            "cache_read_input_tokens": 17602424,
+            "processed_input_tokens": 18017347,
+            "total_tokens": 18119195,
+            "tool_calls": 174,
+            "agent_wall_seconds": 2120.267,
+            "cost_usd_estimate": 15.494981999999998
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "unknown": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "behavioral_grade_counts": {
+        "off": {
+          "pass": 3
+        },
+        "brain": {
+          "pass": 3
+        }
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "all_attempts": {
+        "off": {
+          "attempts": 3,
+          "grade_counts": {
+            "pass": 3
+          },
+          "behavioral_grade_counts": {
+            "pass": 3
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 432,
+            "output_tokens": 126446,
+            "cache_creation_input_tokens": 264568,
+            "cache_read_input_tokens": 11589114,
+            "processed_input_tokens": 11854114,
+            "total_tokens": 11980560,
+            "tool_calls": 225,
+            "agent_wall_seconds": 1828.1219999999998,
+            "cost_usd_estimate": 11.603547
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 3,
+          "grade_counts": {
+            "pass": 3
+          },
+          "behavioral_grade_counts": {
+            "pass": 3
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 356,
+            "output_tokens": 116328,
+            "cache_creation_input_tokens": 277541,
+            "cache_read_input_tokens": 10911276,
+            "processed_input_tokens": 11189173,
+            "total_tokens": 11305501,
+            "tool_calls": 191,
+            "agent_wall_seconds": 1698.989,
+            "cost_usd_estimate": 11.141028
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "unknown": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "behavioral_grade_counts": {
+        "off": {
+          "pass": 3
+        },
+        "brain": {
+          "pass": 3
+        }
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "all_attempts": {
+        "off": {
+          "attempts": 3,
+          "grade_counts": {
+            "pass": 3
+          },
+          "behavioral_grade_counts": {
+            "pass": 3
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 186,
+            "output_tokens": 67326,
+            "cache_creation_input_tokens": 151763,
+            "cache_read_input_tokens": 3293697,
+            "processed_input_tokens": 3445646,
+            "total_tokens": 3512972,
+            "tool_calls": 100,
+            "agent_wall_seconds": 1167.464,
+            "cost_usd_estimate": 4.848558499999999
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 3,
+          "grade_counts": {
+            "fail": 1,
+            "pass": 2
+          },
+          "behavioral_grade_counts": {
+            "fail": 1,
+            "pass": 2
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 164,
+            "output_tokens": 67902,
+            "cache_creation_input_tokens": 250016,
+            "cache_read_input_tokens": 5386688,
+            "processed_input_tokens": 5636868,
+            "total_tokens": 5704770,
+            "tool_calls": 93,
+            "agent_wall_seconds": 1180.12,
+            "cost_usd_estimate": 6.891874
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "unknown": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "behavioral_grade_counts": {
+        "off": {
+          "pass": 3
+        },
+        "brain": {
+          "fail": 1,
+          "pass": 2
+        }
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "all_attempts": {
+        "off": {
+          "attempts": 3,
+          "grade_counts": {
+            "fail": 3
+          },
+          "behavioral_grade_counts": {
+            "fail": 3
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 200,
+            "output_tokens": 80005,
+            "cache_creation_input_tokens": 169275,
+            "cache_read_input_tokens": 3944915,
+            "processed_input_tokens": 4114390,
+            "total_tokens": 4194395,
+            "tool_calls": 116,
+            "agent_wall_seconds": 1181.85,
+            "cost_usd_estimate": 5.6663325
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "brain": {
+          "attempts": 3,
+          "grade_counts": {
+            "fail": 3
+          },
+          "behavioral_grade_counts": {
+            "fail": 3
+          },
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": 104,
+            "output_tokens": 72941,
+            "cache_creation_input_tokens": 160407,
+            "cache_read_input_tokens": 2176939,
+            "processed_input_tokens": 2337450,
+            "total_tokens": 2410391,
+            "tool_calls": 86,
+            "agent_wall_seconds": 1066.775,
+            "cost_usd_estimate": 4.5165845
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 3,
+              "missing": 0,
+              "total": 3,
+              "partial": 0
+            }
+          }
+        },
+        "unknown": {
+          "attempts": 0,
+          "grade_counts": {},
+          "behavioral_grade_counts": {},
+          "reported_usage_may_be_partial_attempts": 0,
+          "totals_observed": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "cache_creation_input_tokens": null,
+            "cache_read_input_tokens": null,
+            "processed_input_tokens": null,
+            "total_tokens": null,
+            "tool_calls": null,
+            "agent_wall_seconds": null,
+            "cost_usd_estimate": null
+          },
+          "measurement_coverage": {
+            "input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "output_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_creation_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cache_read_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "processed_input_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "total_tokens": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "tool_calls": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "agent_wall_seconds": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            },
+            "cost_usd_estimate": {
+              "available": 0,
+              "missing": 0,
+              "total": 0,
+              "partial": 0
+            }
+          }
+        }
+      },
+      "behavioral_grade_counts": {
+        "off": {
+          "fail": 3
+        },
+        "brain": {
+          "fail": 3
+        }
+      }
+    }
+  ],
+  "resource_per_validated_success": {
+    "off": {
+      "input_tokens": {
+        "value": 139.33333333333334,
+        "validated_successes": 9,
+        "observed_total": 1254,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "output_tokens": {
+        "value": 41060.77777777778,
+        "validated_successes": 9,
+        "observed_total": 369547,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "cache_creation_input_tokens": {
+        "value": 98491.88888888889,
+        "validated_successes": 9,
+        "observed_total": 886427,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "cache_read_input_tokens": {
+        "value": 3608459.5555555555,
+        "validated_successes": 9,
+        "observed_total": 32476136,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "processed_input_tokens": {
+        "value": 3707090.777777778,
+        "validated_successes": 9,
+        "observed_total": 33363817,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "total_tokens": {
+        "value": 3748151.5555555555,
+        "validated_successes": 9,
+        "observed_total": 33733364,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "tool_calls": {
+        "value": 73.22222222222223,
+        "validated_successes": 9,
+        "observed_total": 659,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "agent_wall_seconds": {
+        "value": 682.1727777777778,
+        "validated_successes": 9,
+        "observed_total": 6139.555,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "cost_usd_estimate": {
+        "value": 3.8163647777777774,
+        "validated_successes": 9,
+        "observed_total": 34.347283,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      }
+    },
+    "brain": {
+      "input_tokens": {
+        "value": 119.5,
+        "validated_successes": 8,
+        "observed_total": 956,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "output_tokens": {
+        "value": 44877.375,
+        "validated_successes": 8,
+        "observed_total": 359019,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "cache_creation_input_tokens": {
+        "value": 137819.375,
+        "validated_successes": 8,
+        "observed_total": 1102555,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "cache_read_input_tokens": {
+        "value": 4509665.875,
+        "validated_successes": 8,
+        "observed_total": 36077327,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "processed_input_tokens": {
+        "value": 4647604.75,
+        "validated_successes": 8,
+        "observed_total": 37180838,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "total_tokens": {
+        "value": 4692482.125,
+        "validated_successes": 8,
+        "observed_total": 37539857,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "tool_calls": {
+        "value": 68.0,
+        "validated_successes": 8,
+        "observed_total": 544,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "agent_wall_seconds": {
+        "value": 758.268875,
+        "validated_successes": 8,
+        "observed_total": 6066.151,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      },
+      "cost_usd_estimate": {
+        "value": 4.7555585625,
+        "validated_successes": 8,
+        "observed_total": 38.0444685,
+        "partial": false,
+        "measurement_coverage": {
+          "available": 12,
+          "missing": 0,
+          "total": 12,
+          "partial": 0
+        }
+      }
+    }
+  },
+  "overhead": {
+    "fixtures": {
+      "setup_seconds": {
+        "observed_total": 86.06,
+        "available": 4,
+        "total": 4,
+        "partial": false
+      },
+      "index_seconds": {
+        "observed_total": 18.084,
+        "available": 4,
+        "total": 4,
+        "partial": false
+      },
+      "dependency_seconds": {
+        "observed_total": 0,
+        "available": 4,
+        "total": 4,
+        "partial": false
+      },
+      "inherited_seed_private_dependency_seconds": {
+        "observed_total": 479.9304295829497,
+        "available": 2,
+        "total": 4,
+        "partial": true
+      }
+    },
+    "trials": {
+      "off": {
+        "setup_seconds": {
+          "observed_total": 1218.081,
+          "available": 12,
+          "total": 12,
+          "partial": false
+        },
+        "grading_seconds": {
+          "observed_total": 262.245,
+          "available": 12,
+          "total": 12,
+          "partial": false
+        }
+      },
+      "brain": {
+        "setup_seconds": {
+          "observed_total": 1197.474,
+          "available": 12,
+          "total": 12,
+          "partial": false
+        },
+        "grading_seconds": {
+          "observed_total": 216.808,
+          "available": 12,
+          "total": 12,
+          "partial": false
+        }
+      }
+    }
+  },
+  "delivery": {
+    "off": {
+      "emission_receipts": {
+        "observed_total": 0,
+        "available": 12,
+        "total": 12,
+        "partial": false
+      },
+      "compiled_runs": {
+        "observed_total": 0,
+        "available": 12,
+        "total": 12,
+        "partial": false
+      },
+      "compiled_estimated_tokens": {
+        "observed_total": null,
+        "available": 0,
+        "total": 12,
+        "partial": true
+      },
+      "delivered_compiled_estimated_tokens": {
+        "observed_total": null,
+        "available": 0,
+        "total": 12,
+        "partial": true
+      },
+      "source_items": {
+        "observed_total": null,
+        "available": 0,
+        "total": 12,
+        "partial": true
+      }
+    },
+    "brain": {
+      "emission_receipts": {
+        "observed_total": 22,
+        "available": 12,
+        "total": 12,
+        "partial": false
+      },
+      "compiled_runs": {
+        "observed_total": 323,
+        "available": 12,
+        "total": 12,
+        "partial": false
+      },
+      "compiled_estimated_tokens": {
+        "observed_total": 124983,
+        "available": 12,
+        "total": 12,
+        "partial": false
+      },
+      "delivered_compiled_estimated_tokens": {
+        "observed_total": 8158,
+        "available": 12,
+        "total": 12,
+        "partial": false
+      },
+      "source_items": {
+        "observed_total": 3876,
+        "available": 12,
+        "total": 12,
+        "partial": false
+      }
+    }
+  },
+  "infrastructure_attempts": {
+    "attempts": 4,
+    "by_arm": {
+      "off": {
+        "attempts": 2,
+        "grade_counts": {
+          "infra": 2
+        },
+        "behavioral_grade_counts": {
+          "pass": 2
+        },
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": 290,
+          "output_tokens": 94062,
+          "cache_creation_input_tokens": 255693,
+          "cache_read_input_tokens": 10678241,
+          "processed_input_tokens": 10934224,
+          "total_tokens": 11028286,
+          "tool_calls": 143,
+          "agent_wall_seconds": 1305.52,
+          "cost_usd_estimate": 10.249050500000001
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          }
+        }
+      },
+      "brain": {
+        "attempts": 2,
+        "grade_counts": {
+          "infra": 2
+        },
+        "behavioral_grade_counts": {
+          "pass": 2
+        },
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": 220,
+          "output_tokens": 77003,
+          "cache_creation_input_tokens": 218018,
+          "cache_read_input_tokens": 6939218,
+          "processed_input_tokens": 7157456,
+          "total_tokens": 7234459,
+          "tool_calls": 119,
+          "agent_wall_seconds": 1247.696,
+          "cost_usd_estimate": 7.575964000000001
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 2,
+            "missing": 0,
+            "total": 2,
+            "partial": 0
+          }
+        }
+      },
+      "unknown": {
+        "attempts": 0,
+        "grade_counts": {},
+        "behavioral_grade_counts": {},
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cache_creation_input_tokens": null,
+          "cache_read_input_tokens": null,
+          "processed_input_tokens": null,
+          "total_tokens": null,
+          "tool_calls": null,
+          "agent_wall_seconds": null,
+          "cost_usd_estimate": null
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          }
+        }
+      }
+    },
+    "excluded_from_matrix": true
+  },
+  "preflight_runs": {
+    "attempts": 0,
+    "by_arm": {
+      "off": {
+        "attempts": 0,
+        "grade_counts": {},
+        "behavioral_grade_counts": {},
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cache_creation_input_tokens": null,
+          "cache_read_input_tokens": null,
+          "processed_input_tokens": null,
+          "total_tokens": null,
+          "tool_calls": null,
+          "agent_wall_seconds": null,
+          "cost_usd_estimate": null
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          }
+        }
+      },
+      "brain": {
+        "attempts": 0,
+        "grade_counts": {},
+        "behavioral_grade_counts": {},
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cache_creation_input_tokens": null,
+          "cache_read_input_tokens": null,
+          "processed_input_tokens": null,
+          "total_tokens": null,
+          "tool_calls": null,
+          "agent_wall_seconds": null,
+          "cost_usd_estimate": null
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          }
+        }
+      },
+      "unknown": {
+        "attempts": 0,
+        "grade_counts": {},
+        "behavioral_grade_counts": {},
+        "reported_usage_may_be_partial_attempts": 0,
+        "totals_observed": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cache_creation_input_tokens": null,
+          "cache_read_input_tokens": null,
+          "processed_input_tokens": null,
+          "total_tokens": null,
+          "tool_calls": null,
+          "agent_wall_seconds": null,
+          "cost_usd_estimate": null
+        },
+        "measurement_coverage": {
+          "input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "output_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_creation_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cache_read_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "processed_input_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "total_tokens": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "tool_calls": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "agent_wall_seconds": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          },
+          "cost_usd_estimate": {
+            "available": 0,
+            "missing": 0,
+            "total": 0,
+            "partial": 0
+          }
+        }
+      }
+    },
+    "excluded_from_matrix": true
+  },
+  "input_warnings": [],
+  "analysis_provenance": {
+    "report_real_repo_pilot.py": "16d1f9b9cc8af4043d5a92916102dea9b76e344d74fde8d08b3a8a03b7f89dea",
+    "real_repo_metrics.py": "811f990c8f46c5be53252d58383b8aa47e953f78d2976c77f985ed25a3f8499c",
+    "real_repo_diagnostics.py": "b4f51272276c8c50a3a3efe29785ebe7f9ca3742ffc8ceb84975660633c3f4bb",
+    "real_repo_adjudications.py": "88a9cea3ba08315f5f4055ffd6a5d6d48f65bba4edb8994fad3d2d015d221b50"
+  },
+  "generated_at": "2026-09-26T18:06:20.916313+00:00"
+}

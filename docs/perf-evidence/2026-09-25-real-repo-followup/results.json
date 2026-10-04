@@ -1,0 +1,4871 @@
+{
+  "schema_version": 1,
+  "record_classification_revision": "agent-completion-v2",
+  "generated_at": "2026-09-26T18:06:20.916313+00:00",
+  "progress": {
+    "status": "complete",
+    "planned_runs": 24,
+    "started_trials": 24,
+    "coding_runs_started": 24,
+    "completed_records": 24,
+    "in_progress_trials": 0,
+    "infrastructure_outcomes": 0
+  },
+  "manifest": {
+    "schema_version": 1,
+    "condition": "source-only native hooks; no MCP; no learned memories",
+    "model": "claude-opus-4-8[1m]",
+    "effort": "high",
+    "claude_version": "2.1.212 (Claude Code)",
+    "engram_sha256": "cc7678097ca6747544941d22b3518431db6717f04247812a7f9474a51fc0f195",
+    "daemon_sha256": "c595276569ebf8a62215e52f2c1e4ef4aa64abc19c1a77db71aafa52c736d48c",
+    "runner_sha256": "8aa09cdc5ce54e3f516e064a21718a5a339168a26e1a76d1f6e61cda2752f2b7",
+    "metrics_sha256": "811f990c8f46c5be53252d58383b8aa47e953f78d2976c77f985ed25a3f8499c",
+    "repetitions": 3,
+    "agent_limit_seconds": 1200,
+    "grading_limit_seconds": 1800,
+    "cost_cap_usd_estimate": 8,
+    "platform_dependencies": "same frozen pilot base dependencies in both arms; not a historical lock-exact reinstall",
+    "private_dependencies": "Rust registry-only cache; no user Git config; package installation disabled",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+    "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]",
+    "node": "v26.5.1",
+    "pnpm": "11.3.0",
+    "known_scope_limits": [
+      "Development tasks previously used to improve retrieval; not held-out generalization evidence.",
+      "V2 clarifies grading contracts. Compare Off/Brain within this collection; no causal old-versus-new comparison.",
+      "Provider prompt caching remains enabled and is not reset. Report all token categories; estimated USD is not subscription cash billing.",
+      "Single agent, six core tools, source-only hooks. Does not measure learned memories, automatic judging, or MCP tools.",
+      "Three repetitions per task are diagnostic, not statistically decisive."
+    ],
+    "suite": "real-repo-v2",
+    "controls_sha256": "ec058a5fc01c073f47dec35a1657e0a24234f76bac9eed92aeb9397f917370ab",
+    "runner_library_sha256": "7e3f16e606b1daa8a2505b09ded3eb17eb7269f19cc079491b3eb127dea69cfc",
+    "claude_sha256": "09ecba2ab2df9b6ee5b0695e26f65dea60fb3b6af3d3542ee09f466838d1e574",
+    "runtime_preflight_sha256": "06941c30f47d538e5b8e1e160210154a2413266acb14c08545e014f0e287e30b"
+  },
+  "fixtures": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "base_commit": "bbce775ef3252e4ad882ac43e6564263302f8076",
+      "fixture_head": "4df6a3277eed9cd04324cbf25c9028fce9718c73",
+      "snapshot_sha256": "527c951292e004173ab14618d779b3725aa348532c15a198768a7335761e40ea",
+      "index_seconds": 4.411,
+      "dependency_seconds": 0,
+      "setup_seconds": 19.396,
+      "source_counts": {
+        "nodes": 20924,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "Cargo.lock": "1541524c703b5c636a4dd3ec1ee77e47e302e2fafea61f7eddb252e673651ac4"
+      },
+      "inherited_seed_private_dependency_seconds": 223.6182622499764
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "base_commit": "1b5c21e44eda8e68dbbe457f7e98e7a607ff3b1a",
+      "fixture_head": "94523af6f15f5a339fa3f7efae1b7c4bd8d33302",
+      "snapshot_sha256": "15ba4518e736c70d5c50cc9354396982d9fe92a3d934d2639449cf48736f771e",
+      "index_seconds": 6.263,
+      "dependency_seconds": 0,
+      "setup_seconds": 8.475,
+      "source_counts": {
+        "nodes": 15751,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "uv.lock": "9c3944712eac67da48dd90c41053e533825f411dd9061c2142c146c89f8c0f2d"
+      },
+      "inherited_seed_private_dependency_seconds": null
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "base_commit": "cae95f3086d7320551ab02ba4ba0fc105dc13342",
+      "fixture_head": "13903445734e484ac51a9a61c735dd9c9d6bcc74",
+      "snapshot_sha256": "ed188f770142e142283a65dca4f28f1b04036c0caf91901576a87fe0a28be348",
+      "index_seconds": 4.576,
+      "dependency_seconds": 0,
+      "setup_seconds": 19.402,
+      "source_counts": {
+        "nodes": 22248,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "Cargo.lock": "fadd33956ad4766fbe68fa17add4f9b58b2f04ee365feadf5aa4d9c9065a5906"
+      },
+      "inherited_seed_private_dependency_seconds": 256.31216733297333
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "base_commit": "4a2668b9bb198ae7d9108f2cebefb84fa9244b24",
+      "fixture_head": "6ac78dfd21df8c49e537ae25eb9bd1fb1610508c",
+      "snapshot_sha256": "ebbc66f9f89529d88e504de6cf83dd90599c23e6d6dff951e1b75c154af82ff9",
+      "index_seconds": 2.834,
+      "dependency_seconds": 0,
+      "setup_seconds": 38.787,
+      "source_counts": {
+        "nodes": 10389,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "pnpm-lock.yaml": "0dba8da86df7b193e5ad123d169b30047a2b9d01b1d88b0c6058454b9b45e512"
+      },
+      "inherited_seed_private_dependency_seconds": null
+    }
+  ],
+  "records": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 178,
+        "output_tokens": 35609,
+        "cache_creation_input_tokens": 108819,
+        "cache_read_input_tokens": 5367201,
+        "processed_input_tokens": 5476198,
+        "total_tokens": 5511807,
+        "tool_calls": 89,
+        "cost_usd_estimate": 4.662905500000001,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 90,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 34,
+          "Edit": 13,
+          "Grep": 4,
+          "Read": 38
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 178,
+            "outputTokens": 35609,
+            "cacheReadInputTokens": 5367201,
+            "cacheCreationInputTokens": 108819,
+            "webSearchRequests": 0,
+            "costUSD": 4.662905500000001,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 713.722,
+      "setup_seconds": 243.332,
+      "grading_seconds": 47.309,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T02:08:49.313994+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "5cd0ba53f9b5f63b977b41285104ce4f215d4c0e92aed3f0b859304129600854",
+      "composed_prompt_sha256": "2cf471ed61af06964d409ea2237935af7cf0c9a2aa4bca8083f18763546fae80",
+      "snapshot_sha256": "527c951292e004173ab14618d779b3725aa348532c15a198768a7335761e40ea",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "4d2c7acc31d9072da28e83903c4ceac702494b400f29c20a20b3b1811bf588e3",
+        "grading/r01_guide_hot_path/preflight.json": "fbbbbc93b86c7d6b0aaf6b1cfbcaeb2e288fa971aff1aa99cafa30184e3bbf5c",
+        "grading/r01_guide_hot_path/preflight.py": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 112,
+        "output_tokens": 37571,
+        "cache_creation_input_tokens": 145465,
+        "cache_read_input_tokens": 6173196,
+        "processed_input_tokens": 6318773,
+        "total_tokens": 6356344,
+        "tool_calls": 59,
+        "cost_usd_estimate": 5.481082999999999,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 60,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 12,
+          "Edit": 11,
+          "Grep": 17,
+          "Read": 19
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 112,
+            "outputTokens": 37571,
+            "cacheReadInputTokens": 6173196,
+            "cacheCreationInputTokens": 145465,
+            "webSearchRequests": 0,
+            "costUSD": 5.481082999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 3,
+        "compiled_runs": 31,
+        "compiled_estimated_tokens": 11919,
+        "delivered_compiled_estimated_tokens": 1152,
+        "source_items": 372
+      },
+      "agent_wall_seconds": 776.507,
+      "setup_seconds": 225.818,
+      "grading_seconds": 35.352,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T02:25:41.354235+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "5cd0ba53f9b5f63b977b41285104ce4f215d4c0e92aed3f0b859304129600854",
+      "composed_prompt_sha256": "2cf471ed61af06964d409ea2237935af7cf0c9a2aa4bca8083f18763546fae80",
+      "snapshot_sha256": "527c951292e004173ab14618d779b3725aa348532c15a198768a7335761e40ea",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "4d2c7acc31d9072da28e83903c4ceac702494b400f29c20a20b3b1811bf588e3",
+        "grading/r01_guide_hot_path/preflight.json": "fbbbbc93b86c7d6b0aaf6b1cfbcaeb2e288fa971aff1aa99cafa30184e3bbf5c",
+        "grading/r01_guide_hot_path/preflight.py": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "null_cursor_is_absent_and_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "false_cursor_converts_to_zero_and_implies_history",
+            "passed": true
+          },
+          {
+            "name": "true_cursor_converts_to_one",
+            "passed": true
+          },
+          {
+            "name": "fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "negative_fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "signed_spaced_string_cursor_is_converted",
+            "passed": true
+          },
+          {
+            "name": "negative_integer_cursor_includes_newer_steps",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "false_string_cursor_is_invalid_not_disabled",
+            "passed": true
+          },
+          {
+            "name": "fractional_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "empty_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_existing_json_meaning_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_json_meaning_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 136,
+        "output_tokens": 39379,
+        "cache_creation_input_tokens": 86271,
+        "cache_read_input_tokens": 3629908,
+        "processed_input_tokens": 3716315,
+        "total_tokens": 3755694,
+        "tool_calls": 75,
+        "cost_usd_estimate": 3.6628190000000003,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 76,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 20,
+          "Edit": 23,
+          "Grep": 10,
+          "Read": 19,
+          "Write": 3
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 136,
+            "outputTokens": 39379,
+            "cacheReadInputTokens": 3629908,
+            "cacheCreationInputTokens": 86271,
+            "webSearchRequests": 0,
+            "costUSD": 3.6628190000000003,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 46,
+        "compiled_estimated_tokens": 19688,
+        "delivered_compiled_estimated_tokens": 428,
+        "source_items": 552
+      },
+      "agent_wall_seconds": 592.469,
+      "setup_seconds": 4.65,
+      "grading_seconds": 0.199,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T02:44:25.997741+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "e75b8aeee6d8c38d839748b640fd7249c20b323f7ff03074a877e3149af90680",
+      "composed_prompt_sha256": "1392661becae86816303ba26c2c0ca5e731e5ba84e19124233b5b382ba8c4752",
+      "snapshot_sha256": "15ba4518e736c70d5c50cc9354396982d9fe92a3d934d2639449cf48736f771e",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "f506d3002d444cb6b606e50deebfbc6b8287a33051ae926b500fa674fca7bea5",
+        "grading/r02_lean_task_status/preflight.json": "22a2ffc1477203117c8041082d23d64c3d06325ab0ce7c716aeeadbef99cd116",
+        "grading/r02_lean_task_status/preflight.py": "c3776e1fcb77e18bc836de649f4c1eee9a112b06dd433c9d4809b34c4eee2505",
+        "grading/r02_lean_task_status/v1_semantic_manifest.json": "97883ac3f442a0b9e6d6db7fbd468b3760eac4fe5f2e3b2a7ddd09c57eeb6d53",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "null_cursor_is_absent_and_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "false_cursor_converts_to_zero_and_implies_history",
+            "passed": true
+          },
+          {
+            "name": "true_cursor_converts_to_one",
+            "passed": true
+          },
+          {
+            "name": "fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "negative_fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "signed_spaced_string_cursor_is_converted",
+            "passed": true
+          },
+          {
+            "name": "negative_integer_cursor_includes_newer_steps",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "false_string_cursor_is_invalid_not_disabled",
+            "passed": true
+          },
+          {
+            "name": "fractional_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "empty_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_existing_json_meaning_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_json_meaning_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 142,
+        "output_tokens": 45738,
+        "cache_creation_input_tokens": 88295,
+        "cache_read_input_tokens": 3785177,
+        "processed_input_tokens": 3873614,
+        "total_tokens": 3919352,
+        "tool_calls": 79,
+        "cost_usd_estimate": 3.9196985000000013,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 80,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 23,
+          "Edit": 17,
+          "Grep": 15,
+          "Read": 21,
+          "Write": 3
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 142,
+            "outputTokens": 45738,
+            "cacheReadInputTokens": 3785177,
+            "cacheCreationInputTokens": 88295,
+            "webSearchRequests": 0,
+            "costUSD": 3.9196985000000013,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 663.679,
+      "setup_seconds": 2.066,
+      "grading_seconds": 0.187,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T02:54:34.508681+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "e75b8aeee6d8c38d839748b640fd7249c20b323f7ff03074a877e3149af90680",
+      "composed_prompt_sha256": "1392661becae86816303ba26c2c0ca5e731e5ba84e19124233b5b382ba8c4752",
+      "snapshot_sha256": "15ba4518e736c70d5c50cc9354396982d9fe92a3d934d2639449cf48736f771e",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "f506d3002d444cb6b606e50deebfbc6b8287a33051ae926b500fa674fca7bea5",
+        "grading/r02_lean_task_status/preflight.json": "22a2ffc1477203117c8041082d23d64c3d06325ab0ce7c716aeeadbef99cd116",
+        "grading/r02_lean_task_status/preflight.py": "c3776e1fcb77e18bc836de649f4c1eee9a112b06dd433c9d4809b34c4eee2505",
+        "grading/r02_lean_task_status/v1_semantic_manifest.json": "97883ac3f442a0b9e6d6db7fbd468b3760eac4fe5f2e3b2a7ddd09c57eeb6d53",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 56,
+        "output_tokens": 21957,
+        "cache_creation_input_tokens": 47606,
+        "cache_read_input_tokens": 1048883,
+        "processed_input_tokens": 1096545,
+        "total_tokens": 1118502,
+        "tool_calls": 34,
+        "cost_usd_estimate": 1.5497064999999999,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 35,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 10,
+          "Edit": 8,
+          "Grep": 5,
+          "Read": 11
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 56,
+            "outputTokens": 21957,
+            "cacheReadInputTokens": 1048883,
+            "cacheCreationInputTokens": 47606,
+            "webSearchRequests": 0,
+            "costUSD": 1.5497064999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 1,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 385.434,
+      "setup_seconds": 236.189,
+      "grading_seconds": 45.852,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T03:05:46.559781+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "ed188f770142e142283a65dca4f28f1b04036c0caf91901576a87fe0a28be348",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7",
+        "grading/r05_test_env_isolation/preflight.json": "ad248e17278dd1c3c8459d12173e0a9b6f425050e756743abff84bc3ea8489e6"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": false
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 54,
+        "output_tokens": 18553,
+        "cache_creation_input_tokens": 80487,
+        "cache_read_input_tokens": 1731990,
+        "processed_input_tokens": 1812531,
+        "total_tokens": 1831084,
+        "tool_calls": 28,
+        "cost_usd_estimate": 2.1349600000000004,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 29,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 6,
+          "Edit": 5,
+          "Grep": 8,
+          "Read": 9
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 54,
+            "outputTokens": 18553,
+            "cacheReadInputTokens": 1731990,
+            "cacheCreationInputTokens": 80487,
+            "webSearchRequests": 0,
+            "costUSD": 2.1349600000000004,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 15,
+        "compiled_estimated_tokens": 5955,
+        "delivered_compiled_estimated_tokens": 794,
+        "source_items": 180
+      },
+      "agent_wall_seconds": 333.278,
+      "setup_seconds": 219.441,
+      "grading_seconds": 15.154,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-26T03:17:01.828922+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "ed188f770142e142283a65dca4f28f1b04036c0caf91901576a87fe0a28be348",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7",
+        "grading/r05_test_env_isolation/preflight.json": "ad248e17278dd1c3c8459d12173e0a9b6f425050e756743abff84bc3ea8489e6"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 38,
+        "output_tokens": 26069,
+        "cache_creation_input_tokens": 58571,
+        "cache_read_input_tokens": 841358,
+        "processed_input_tokens": 899967,
+        "total_tokens": 926036,
+        "tool_calls": 30,
+        "cost_usd_estimate": 1.6583039999999998,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 31,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 10,
+          "Edit": 4,
+          "Read": 15,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 38,
+            "outputTokens": 26069,
+            "cacheReadInputTokens": 841358,
+            "cacheCreationInputTokens": 58571,
+            "webSearchRequests": 0,
+            "costUSD": 1.6583039999999998,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 21,
+        "compiled_estimated_tokens": 6286,
+        "delivered_compiled_estimated_tokens": 600,
+        "source_items": 252
+      },
+      "agent_wall_seconds": 391.98,
+      "setup_seconds": 31.414,
+      "grading_seconds": 31.806,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-26T03:26:40.639407+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "7b4bd2054018c8fdb5ab68621fcd022354537353bee2e00b5ad1005b533b0c8a",
+      "composed_prompt_sha256": "2748b8750c582112546634b32679cdd73be35d5d4dcd3ff98c5661b39b5122dd",
+      "snapshot_sha256": "ebbc66f9f89529d88e504de6cf83dd90599c23e6d6dff951e1b75c154af82ff9",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "grading/r06_onboarding_outage/preflight.json": "ea20ac252ea3c58d6e13fec6832e1e3044faebf4aec6eddf649bc64eba913abc",
+        "grading/r06_onboarding_outage/preflight.py": "32c5a1b33d56e6ab3d703cbbfe765032108fdd7b9f40e1d791108f530bea0762"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 56,
+        "output_tokens": 27411,
+        "cache_creation_input_tokens": 55734,
+        "cache_read_input_tokens": 1042837,
+        "processed_input_tokens": 1098627,
+        "total_tokens": 1126038,
+        "tool_calls": 32,
+        "cost_usd_estimate": 1.7643134999999996,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 33,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 16,
+          "Edit": 5,
+          "Grep": 1,
+          "Read": 9,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 56,
+            "outputTokens": 27411,
+            "cacheReadInputTokens": 1042837,
+            "cacheCreationInputTokens": 55734,
+            "webSearchRequests": 0,
+            "costUSD": 1.7643134999999996,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 398.683,
+      "setup_seconds": 25.341,
+      "grading_seconds": 32.332,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-26T03:35:14.094788+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "7b4bd2054018c8fdb5ab68621fcd022354537353bee2e00b5ad1005b533b0c8a",
+      "composed_prompt_sha256": "2748b8750c582112546634b32679cdd73be35d5d4dcd3ff98c5661b39b5122dd",
+      "snapshot_sha256": "ebbc66f9f89529d88e504de6cf83dd90599c23e6d6dff951e1b75c154af82ff9",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "grading/r06_onboarding_outage/preflight.json": "ea20ac252ea3c58d6e13fec6832e1e3044faebf4aec6eddf649bc64eba913abc",
+        "grading/r06_onboarding_outage/preflight.py": "32c5a1b33d56e6ab3d703cbbfe765032108fdd7b9f40e1d791108f530bea0762"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 84,
+        "output_tokens": 23394,
+        "cache_creation_input_tokens": 120446,
+        "cache_read_input_tokens": 3967946,
+        "processed_input_tokens": 4088476,
+        "total_tokens": 4111870,
+        "tool_calls": 42,
+        "cost_usd_estimate": 3.773702999999999,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 43,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 7,
+          "Edit": 10,
+          "Grep": 8,
+          "Read": 17
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 84,
+            "outputTokens": 23394,
+            "cacheReadInputTokens": 3967946,
+            "cacheCreationInputTokens": 120446,
+            "webSearchRequests": 0,
+            "costUSD": 3.773702999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 28,
+        "compiled_estimated_tokens": 10920,
+        "delivered_compiled_estimated_tokens": 390,
+        "source_items": 336
+      },
+      "agent_wall_seconds": 469.985,
+      "setup_seconds": 184.784,
+      "grading_seconds": 23.005,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T03:44:00.697441+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "5cd0ba53f9b5f63b977b41285104ce4f215d4c0e92aed3f0b859304129600854",
+      "composed_prompt_sha256": "2cf471ed61af06964d409ea2237935af7cf0c9a2aa4bca8083f18763546fae80",
+      "snapshot_sha256": "527c951292e004173ab14618d779b3725aa348532c15a198768a7335761e40ea",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "4d2c7acc31d9072da28e83903c4ceac702494b400f29c20a20b3b1811bf588e3",
+        "grading/r01_guide_hot_path/preflight.json": "fbbbbc93b86c7d6b0aaf6b1cfbcaeb2e288fa971aff1aa99cafa30184e3bbf5c",
+        "grading/r01_guide_hot_path/preflight.py": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 126,
+        "output_tokens": 27289,
+        "cache_creation_input_tokens": 75846,
+        "cache_read_input_tokens": 3115377,
+        "processed_input_tokens": 3191349,
+        "total_tokens": 3218638,
+        "tool_calls": 63,
+        "cost_usd_estimate": 2.9990035,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 64,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 25,
+          "Edit": 9,
+          "Grep": 5,
+          "Read": 24
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 126,
+            "outputTokens": 27289,
+            "cacheReadInputTokens": 3115377,
+            "cacheCreationInputTokens": 75846,
+            "webSearchRequests": 0,
+            "costUSD": 2.9990035,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 559.289,
+      "setup_seconds": 153.873,
+      "grading_seconds": 18.938,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T03:55:41.751876+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "5cd0ba53f9b5f63b977b41285104ce4f215d4c0e92aed3f0b859304129600854",
+      "composed_prompt_sha256": "2cf471ed61af06964d409ea2237935af7cf0c9a2aa4bca8083f18763546fae80",
+      "snapshot_sha256": "527c951292e004173ab14618d779b3725aa348532c15a198768a7335761e40ea",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "4d2c7acc31d9072da28e83903c4ceac702494b400f29c20a20b3b1811bf588e3",
+        "grading/r01_guide_hot_path/preflight.json": "fbbbbc93b86c7d6b0aaf6b1cfbcaeb2e288fa971aff1aa99cafa30184e3bbf5c",
+        "grading/r01_guide_hot_path/preflight.py": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "null_cursor_is_absent_and_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "false_cursor_converts_to_zero_and_implies_history",
+            "passed": true
+          },
+          {
+            "name": "true_cursor_converts_to_one",
+            "passed": true
+          },
+          {
+            "name": "fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "negative_fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "signed_spaced_string_cursor_is_converted",
+            "passed": true
+          },
+          {
+            "name": "negative_integer_cursor_includes_newer_steps",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "false_string_cursor_is_invalid_not_disabled",
+            "passed": true
+          },
+          {
+            "name": "fractional_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "empty_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_existing_json_meaning_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_json_meaning_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 142,
+        "output_tokens": 44758,
+        "cache_creation_input_tokens": 97444,
+        "cache_read_input_tokens": 4443718,
+        "processed_input_tokens": 4541304,
+        "total_tokens": 4586062,
+        "tool_calls": 72,
+        "cost_usd_estimate": 4.315958999999999,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 73,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 21,
+          "Edit": 16,
+          "Grep": 6,
+          "Read": 26,
+          "Write": 3
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 142,
+            "outputTokens": 44758,
+            "cacheReadInputTokens": 4443718,
+            "cacheCreationInputTokens": 97444,
+            "webSearchRequests": 0,
+            "costUSD": 4.315958999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 606.148,
+      "setup_seconds": 1.41,
+      "grading_seconds": 0.13,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T04:08:04.144712+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "e75b8aeee6d8c38d839748b640fd7249c20b323f7ff03074a877e3149af90680",
+      "composed_prompt_sha256": "1392661becae86816303ba26c2c0ca5e731e5ba84e19124233b5b382ba8c4752",
+      "snapshot_sha256": "15ba4518e736c70d5c50cc9354396982d9fe92a3d934d2639449cf48736f771e",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "f506d3002d444cb6b606e50deebfbc6b8287a33051ae926b500fa674fca7bea5",
+        "grading/r02_lean_task_status/preflight.json": "22a2ffc1477203117c8041082d23d64c3d06325ab0ce7c716aeeadbef99cd116",
+        "grading/r02_lean_task_status/preflight.py": "c3776e1fcb77e18bc836de649f4c1eee9a112b06dd433c9d4809b34c4eee2505",
+        "grading/r02_lean_task_status/v1_semantic_manifest.json": "97883ac3f442a0b9e6d6db7fbd468b3760eac4fe5f2e3b2a7ddd09c57eeb6d53",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "null_cursor_is_absent_and_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "false_cursor_converts_to_zero_and_implies_history",
+            "passed": true
+          },
+          {
+            "name": "true_cursor_converts_to_one",
+            "passed": true
+          },
+          {
+            "name": "fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "negative_fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "signed_spaced_string_cursor_is_converted",
+            "passed": true
+          },
+          {
+            "name": "negative_integer_cursor_includes_newer_steps",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "false_string_cursor_is_invalid_not_disabled",
+            "passed": true
+          },
+          {
+            "name": "fractional_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "empty_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_existing_json_meaning_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_json_meaning_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 92,
+        "output_tokens": 34319,
+        "cache_creation_input_tokens": 114774,
+        "cache_read_input_tokens": 4422408,
+        "processed_input_tokens": 4537274,
+        "total_tokens": 4571593,
+        "tool_calls": 52,
+        "cost_usd_estimate": 4.217379,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 53,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 12,
+          "Edit": 19,
+          "Grep": 4,
+          "Read": 15,
+          "Write": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 92,
+            "outputTokens": 34319,
+            "cacheReadInputTokens": 4422408,
+            "cacheCreationInputTokens": 114774,
+            "webSearchRequests": 0,
+            "costUSD": 4.217379,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 37,
+        "compiled_estimated_tokens": 15836,
+        "delivered_compiled_estimated_tokens": 428,
+        "source_items": 444
+      },
+      "agent_wall_seconds": 482.946,
+      "setup_seconds": 3.405,
+      "grading_seconds": 0.135,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T04:18:19.342233+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "e75b8aeee6d8c38d839748b640fd7249c20b323f7ff03074a877e3149af90680",
+      "composed_prompt_sha256": "1392661becae86816303ba26c2c0ca5e731e5ba84e19124233b5b382ba8c4752",
+      "snapshot_sha256": "15ba4518e736c70d5c50cc9354396982d9fe92a3d934d2639449cf48736f771e",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "f506d3002d444cb6b606e50deebfbc6b8287a33051ae926b500fa674fca7bea5",
+        "grading/r02_lean_task_status/preflight.json": "22a2ffc1477203117c8041082d23d64c3d06325ab0ce7c716aeeadbef99cd116",
+        "grading/r02_lean_task_status/preflight.py": "c3776e1fcb77e18bc836de649f4c1eee9a112b06dd433c9d4809b34c4eee2505",
+        "grading/r02_lean_task_status/v1_semantic_manifest.json": "97883ac3f442a0b9e6d6db7fbd468b3760eac4fe5f2e3b2a7ddd09c57eeb6d53",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 46,
+        "output_tokens": 26298,
+        "cache_creation_input_tokens": 85793,
+        "cache_read_input_tokens": 1541112,
+        "processed_input_tokens": 1626951,
+        "total_tokens": 1653249,
+        "tool_calls": 30,
+        "cost_usd_estimate": 2.286166,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 31,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 11,
+          "Edit": 8,
+          "Grep": 4,
+          "Read": 7
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 46,
+            "outputTokens": 26298,
+            "cacheReadInputTokens": 1541112,
+            "cacheCreationInputTokens": 85793,
+            "webSearchRequests": 0,
+            "costUSD": 2.286166,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 16,
+        "compiled_estimated_tokens": 6352,
+        "delivered_compiled_estimated_tokens": 794,
+        "source_items": 192
+      },
+      "agent_wall_seconds": 409.205,
+      "setup_seconds": 154.51,
+      "grading_seconds": 12.197,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T04:26:29.872863+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "ed188f770142e142283a65dca4f28f1b04036c0caf91901576a87fe0a28be348",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7",
+        "grading/r05_test_env_isolation/preflight.json": "ad248e17278dd1c3c8459d12173e0a9b6f425050e756743abff84bc3ea8489e6"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 48,
+        "output_tokens": 14812,
+        "cache_creation_input_tokens": 38331,
+        "cache_read_input_tokens": 676805,
+        "processed_input_tokens": 715184,
+        "total_tokens": 729996,
+        "tool_calls": 24,
+        "cost_usd_estimate": 1.0922525,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 25,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 6,
+          "Edit": 3,
+          "Grep": 6,
+          "Read": 9
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 48,
+            "outputTokens": 14812,
+            "cacheReadInputTokens": 676805,
+            "cacheCreationInputTokens": 38331,
+            "webSearchRequests": 0,
+            "costUSD": 1.0922525,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 224.853,
+      "setup_seconds": 154.356,
+      "grading_seconds": 15.399,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T04:36:10.895588+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "ed188f770142e142283a65dca4f28f1b04036c0caf91901576a87fe0a28be348",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7",
+        "grading/r05_test_env_isolation/preflight.json": "ad248e17278dd1c3c8459d12173e0a9b6f425050e756743abff84bc3ea8489e6"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 76,
+        "output_tokens": 24894,
+        "cache_creation_input_tokens": 52356,
+        "cache_read_input_tokens": 1364412,
+        "processed_input_tokens": 1416844,
+        "total_tokens": 1441738,
+        "tool_calls": 38,
+        "cost_usd_estimate": 1.8284960000000003,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 39,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 24,
+          "Edit": 4,
+          "Grep": 1,
+          "Read": 5,
+          "Write": 4
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 76,
+            "outputTokens": 24894,
+            "cacheReadInputTokens": 1364412,
+            "cacheCreationInputTokens": 52356,
+            "webSearchRequests": 0,
+            "costUSD": 1.8284960000000003,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 386.277,
+      "setup_seconds": 22.947,
+      "grading_seconds": 31.737,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-26T04:42:53.627398+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "7b4bd2054018c8fdb5ab68621fcd022354537353bee2e00b5ad1005b533b0c8a",
+      "composed_prompt_sha256": "2748b8750c582112546634b32679cdd73be35d5d4dcd3ff98c5661b39b5122dd",
+      "snapshot_sha256": "ebbc66f9f89529d88e504de6cf83dd90599c23e6d6dff951e1b75c154af82ff9",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "grading/r06_onboarding_outage/preflight.json": "ea20ac252ea3c58d6e13fec6832e1e3044faebf4aec6eddf649bc64eba913abc",
+        "grading/r06_onboarding_outage/preflight.py": "32c5a1b33d56e6ab3d703cbbfe765032108fdd7b9f40e1d791108f530bea0762"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 32,
+        "output_tokens": 26392,
+        "cache_creation_input_tokens": 51090,
+        "cache_read_input_tokens": 644553,
+        "processed_input_tokens": 695675,
+        "total_tokens": 722067,
+        "tool_calls": 28,
+        "cost_usd_estimate": 1.4931364999999999,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 29,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 9,
+          "Edit": 4,
+          "Read": 14,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 32,
+            "outputTokens": 26392,
+            "cacheReadInputTokens": 644553,
+            "cacheCreationInputTokens": 51090,
+            "webSearchRequests": 0,
+            "costUSD": 1.4931364999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 20,
+        "compiled_estimated_tokens": 5976,
+        "delivered_compiled_estimated_tokens": 600,
+        "source_items": 240
+      },
+      "agent_wall_seconds": 362.735,
+      "setup_seconds": 22.622,
+      "grading_seconds": 31.955,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-26T04:51:02.732931+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "7b4bd2054018c8fdb5ab68621fcd022354537353bee2e00b5ad1005b533b0c8a",
+      "composed_prompt_sha256": "2748b8750c582112546634b32679cdd73be35d5d4dcd3ff98c5661b39b5122dd",
+      "snapshot_sha256": "ebbc66f9f89529d88e504de6cf83dd90599c23e6d6dff951e1b75c154af82ff9",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "grading/r06_onboarding_outage/preflight.json": "ea20ac252ea3c58d6e13fec6832e1e3044faebf4aec6eddf649bc64eba913abc",
+        "grading/r06_onboarding_outage/preflight.py": "32c5a1b33d56e6ab3d703cbbfe765032108fdd7b9f40e1d791108f530bea0762"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 132,
+        "output_tokens": 32872,
+        "cache_creation_input_tokens": 116156,
+        "cache_read_input_tokens": 5165832,
+        "processed_input_tokens": 5282120,
+        "total_tokens": 5314992,
+        "tool_calls": 66,
+        "cost_usd_estimate": 4.566935999999998,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 67,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 18,
+          "Edit": 9,
+          "Grep": 14,
+          "Read": 25
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 132,
+            "outputTokens": 32872,
+            "cacheReadInputTokens": 5165832,
+            "cacheCreationInputTokens": 116156,
+            "webSearchRequests": 0,
+            "costUSD": 4.566935999999998,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 689.108,
+      "setup_seconds": 227.012,
+      "grading_seconds": 27.04,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T04:59:15.825113+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "5cd0ba53f9b5f63b977b41285104ce4f215d4c0e92aed3f0b859304129600854",
+      "composed_prompt_sha256": "2cf471ed61af06964d409ea2237935af7cf0c9a2aa4bca8083f18763546fae80",
+      "snapshot_sha256": "527c951292e004173ab14618d779b3725aa348532c15a198768a7335761e40ea",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "4d2c7acc31d9072da28e83903c4ceac702494b400f29c20a20b3b1811bf588e3",
+        "grading/r01_guide_hot_path/preflight.json": "fbbbbc93b86c7d6b0aaf6b1cfbcaeb2e288fa971aff1aa99cafa30184e3bbf5c",
+        "grading/r01_guide_hot_path/preflight.py": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 136,
+        "output_tokens": 40883,
+        "cache_creation_input_tokens": 148680,
+        "cache_read_input_tokens": 7461282,
+        "processed_input_tokens": 7610098,
+        "total_tokens": 7650981,
+        "tool_calls": 73,
+        "cost_usd_estimate": 6.240196,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 74,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 13,
+          "Edit": 15,
+          "Grep": 19,
+          "Read": 26
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 136,
+            "outputTokens": 40883,
+            "cacheReadInputTokens": 7461282,
+            "cacheCreationInputTokens": 148680,
+            "webSearchRequests": 0,
+            "costUSD": 6.240196,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 3,
+        "compiled_runs": 42,
+        "compiled_estimated_tokens": 16088,
+        "delivered_compiled_estimated_tokens": 1150,
+        "source_items": 504
+      },
+      "agent_wall_seconds": 873.775,
+      "setup_seconds": 197.192,
+      "grading_seconds": 22.383,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T05:15:32.724554+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "5cd0ba53f9b5f63b977b41285104ce4f215d4c0e92aed3f0b859304129600854",
+      "composed_prompt_sha256": "2cf471ed61af06964d409ea2237935af7cf0c9a2aa4bca8083f18763546fae80",
+      "snapshot_sha256": "527c951292e004173ab14618d779b3725aa348532c15a198768a7335761e40ea",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "4d2c7acc31d9072da28e83903c4ceac702494b400f29c20a20b3b1811bf588e3",
+        "grading/r01_guide_hot_path/preflight.json": "fbbbbc93b86c7d6b0aaf6b1cfbcaeb2e288fa971aff1aa99cafa30184e3bbf5c",
+        "grading/r01_guide_hot_path/preflight.py": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "null_cursor_is_absent_and_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "false_cursor_converts_to_zero_and_implies_history",
+            "passed": true
+          },
+          {
+            "name": "true_cursor_converts_to_one",
+            "passed": true
+          },
+          {
+            "name": "fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "negative_fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "signed_spaced_string_cursor_is_converted",
+            "passed": true
+          },
+          {
+            "name": "negative_integer_cursor_includes_newer_steps",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "false_string_cursor_is_invalid_not_disabled",
+            "passed": true
+          },
+          {
+            "name": "fractional_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "empty_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_existing_json_meaning_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_json_meaning_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 128,
+        "output_tokens": 42630,
+        "cache_creation_input_tokens": 76496,
+        "cache_read_input_tokens": 2858960,
+        "processed_input_tokens": 2935584,
+        "total_tokens": 2978214,
+        "tool_calls": 64,
+        "cost_usd_estimate": 3.26083,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 65,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 26,
+          "Edit": 14,
+          "Grep": 6,
+          "Read": 18
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 128,
+            "outputTokens": 42630,
+            "cacheReadInputTokens": 2858960,
+            "cacheCreationInputTokens": 76496,
+            "webSearchRequests": 0,
+            "costUSD": 3.26083,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 33,
+        "compiled_estimated_tokens": 14124,
+        "delivered_compiled_estimated_tokens": 428,
+        "source_items": 396
+      },
+      "agent_wall_seconds": 623.574,
+      "setup_seconds": 3.47,
+      "grading_seconds": 0.185,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T05:36:40.720244+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "e75b8aeee6d8c38d839748b640fd7249c20b323f7ff03074a877e3149af90680",
+      "composed_prompt_sha256": "1392661becae86816303ba26c2c0ca5e731e5ba84e19124233b5b382ba8c4752",
+      "snapshot_sha256": "15ba4518e736c70d5c50cc9354396982d9fe92a3d934d2639449cf48736f771e",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "f506d3002d444cb6b606e50deebfbc6b8287a33051ae926b500fa674fca7bea5",
+        "grading/r02_lean_task_status/preflight.json": "22a2ffc1477203117c8041082d23d64c3d06325ab0ce7c716aeeadbef99cd116",
+        "grading/r02_lean_task_status/preflight.py": "c3776e1fcb77e18bc836de649f4c1eee9a112b06dd433c9d4809b34c4eee2505",
+        "grading/r02_lean_task_status/v1_semantic_manifest.json": "97883ac3f442a0b9e6d6db7fbd468b3760eac4fe5f2e3b2a7ddd09c57eeb6d53",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "null_cursor_is_absent_and_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "false_cursor_converts_to_zero_and_implies_history",
+            "passed": true
+          },
+          {
+            "name": "true_cursor_converts_to_one",
+            "passed": true
+          },
+          {
+            "name": "fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "negative_fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "signed_spaced_string_cursor_is_converted",
+            "passed": true
+          },
+          {
+            "name": "negative_integer_cursor_includes_newer_steps",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "false_string_cursor_is_invalid_not_disabled",
+            "passed": true
+          },
+          {
+            "name": "fractional_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "empty_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_existing_json_meaning_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_json_meaning_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 148,
+        "output_tokens": 35950,
+        "cache_creation_input_tokens": 78829,
+        "cache_read_input_tokens": 3360219,
+        "processed_input_tokens": 3439196,
+        "total_tokens": 3475146,
+        "tool_calls": 74,
+        "cost_usd_estimate": 3.3678895,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 75,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 26,
+          "Edit": 16,
+          "Grep": 4,
+          "Read": 25,
+          "Write": 3
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 148,
+            "outputTokens": 35950,
+            "cacheReadInputTokens": 3360219,
+            "cacheCreationInputTokens": 78829,
+            "webSearchRequests": 0,
+            "costUSD": 3.3678895,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 558.295,
+      "setup_seconds": 1.397,
+      "grading_seconds": 0.088,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T16:23:52.003638+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "e75b8aeee6d8c38d839748b640fd7249c20b323f7ff03074a877e3149af90680",
+      "composed_prompt_sha256": "1392661becae86816303ba26c2c0ca5e731e5ba84e19124233b5b382ba8c4752",
+      "snapshot_sha256": "15ba4518e736c70d5c50cc9354396982d9fe92a3d934d2639449cf48736f771e",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "f506d3002d444cb6b606e50deebfbc6b8287a33051ae926b500fa674fca7bea5",
+        "grading/r02_lean_task_status/preflight.json": "22a2ffc1477203117c8041082d23d64c3d06325ab0ce7c716aeeadbef99cd116",
+        "grading/r02_lean_task_status/preflight.py": "c3776e1fcb77e18bc836de649f4c1eee9a112b06dd433c9d4809b34c4eee2505",
+        "grading/r02_lean_task_status/v1_semantic_manifest.json": "97883ac3f442a0b9e6d6db7fbd468b3760eac4fe5f2e3b2a7ddd09c57eeb6d53",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 82,
+        "output_tokens": 30557,
+        "cache_creation_input_tokens": 65826,
+        "cache_read_input_tokens": 1568009,
+        "processed_input_tokens": 1633917,
+        "total_tokens": 1664474,
+        "tool_calls": 42,
+        "cost_usd_estimate": 2.2065995,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 43,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 22,
+          "Edit": 5,
+          "Grep": 5,
+          "Read": 10
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 82,
+            "outputTokens": 30557,
+            "cacheReadInputTokens": 1568009,
+            "cacheCreationInputTokens": 65826,
+            "webSearchRequests": 0,
+            "costUSD": 2.2065995,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 1,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 557.177,
+      "setup_seconds": 129.485,
+      "grading_seconds": 11.436,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T16:33:15.790095+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "ed188f770142e142283a65dca4f28f1b04036c0caf91901576a87fe0a28be348",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7",
+        "grading/r05_test_env_isolation/preflight.json": "ad248e17278dd1c3c8459d12173e0a9b6f425050e756743abff84bc3ea8489e6"
+      }
+    },
+    {
+      "task_id": "r05_test_env_isolation",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "test_mode_does_not_restore_scrubbed_dotenv_values",
+            "passed": true
+          },
+          {
+            "name": "development_still_loads_dotenv",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_settings_harness",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_cluster_contract",
+            "passed": true
+          },
+          {
+            "name": "poisoned_lock_does_not_break_upstash_contract",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 64,
+        "output_tokens": 23051,
+        "cache_creation_input_tokens": 83736,
+        "cache_read_input_tokens": 2113586,
+        "processed_input_tokens": 2197386,
+        "total_tokens": 2220437,
+        "tool_calls": 35,
+        "cost_usd_estimate": 2.470747999999999,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 36,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 11,
+          "Edit": 8,
+          "Grep": 8,
+          "Read": 7,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 64,
+            "outputTokens": 23051,
+            "cacheReadInputTokens": 2113586,
+            "cacheCreationInputTokens": 83736,
+            "webSearchRequests": 0,
+            "costUSD": 2.470747999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 17,
+        "compiled_estimated_tokens": 6749,
+        "delivered_compiled_estimated_tokens": 794,
+        "source_items": 204
+      },
+      "agent_wall_seconds": 437.637,
+      "setup_seconds": 127.748,
+      "grading_seconds": 12.328,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T16:44:59.378516+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "304e440bfe70cdbe31aff4e9604ca8d4f9f8c9565531bd18b570a3d106b68244",
+      "composed_prompt_sha256": "8965909cb05ff2cff6828daf8ddd41b07a7f7b36f1d24981eae35ef4c108dfde",
+      "snapshot_sha256": "ed188f770142e142283a65dca4f28f1b04036c0caf91901576a87fe0a28be348",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r05_test_env_isolation/grade.py": "324741d177de2ac42150c01ad170dfa59964479c6b9cfcda837ae1e73a8049d3",
+        "grading/r05_test_env_isolation/hidden_tests.rs": "149e7e2b7fe2413b72c17afc778b8c1cbdb9faaf9d5f177242657fe9f6b288e7",
+        "grading/r05_test_env_isolation/preflight.json": "ad248e17278dd1c3c8459d12173e0a9b6f425050e756743abff84bc3ea8489e6"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 34,
+        "output_tokens": 20480,
+        "cache_creation_input_tokens": 50746,
+        "cache_read_input_tokens": 691028,
+        "processed_input_tokens": 741808,
+        "total_tokens": 762288,
+        "tool_calls": 28,
+        "cost_usd_estimate": 1.3651440000000001,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 29,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 12,
+          "Edit": 3,
+          "Read": 13
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 34,
+            "outputTokens": 20480,
+            "cacheReadInputTokens": 691028,
+            "cacheCreationInputTokens": 50746,
+            "webSearchRequests": 0,
+            "costUSD": 1.3651440000000001,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 17,
+        "compiled_estimated_tokens": 5090,
+        "delivered_compiled_estimated_tokens": 600,
+        "source_items": 204
+      },
+      "agent_wall_seconds": 312.06,
+      "setup_seconds": 22.42,
+      "grading_seconds": 32.109,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-26T16:54:45.562927+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "7b4bd2054018c8fdb5ab68621fcd022354537353bee2e00b5ad1005b533b0c8a",
+      "composed_prompt_sha256": "2748b8750c582112546634b32679cdd73be35d5d4dcd3ff98c5661b39b5122dd",
+      "snapshot_sha256": "ebbc66f9f89529d88e504de6cf83dd90599c23e6d6dff951e1b75c154af82ff9",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "grading/r06_onboarding_outage/preflight.json": "ea20ac252ea3c58d6e13fec6832e1e3044faebf4aec6eddf649bc64eba913abc",
+        "grading/r06_onboarding_outage/preflight.py": "32c5a1b33d56e6ab3d703cbbfe765032108fdd7b9f40e1d791108f530bea0762"
+      }
+    },
+    {
+      "task_id": "r06_onboarding_outage",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "private onboarding behavior HTTP 500: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: preserves the established failure result",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /org/invite?token=benchmark",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior completed user settles at /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior incomplete user keeps safe return path /cli/auth?code=BENCH-1234#confirm",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"//evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/\\t/evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/welcome?next=/me\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior completed welcome discards unsafe return path \"/https://evil.invalid/path\"",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior profile fetch keeps the token server-side and bypasses caching",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+            "passed": true
+          },
+          {
+            "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+            "passed": false
+          },
+          {
+            "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+            "passed": false
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 68,
+        "output_tokens": 27700,
+        "cache_creation_input_tokens": 61185,
+        "cache_read_input_tokens": 1537666,
+        "processed_input_tokens": 1598919,
+        "total_tokens": 1626619,
+        "tool_calls": 46,
+        "cost_usd_estimate": 2.0735230000000002,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 47,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 21,
+          "Edit": 1,
+          "Grep": 2,
+          "Read": 17,
+          "Write": 5
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 68,
+            "outputTokens": 27700,
+            "cacheReadInputTokens": 1537666,
+            "cacheCreationInputTokens": 61185,
+            "webSearchRequests": 0,
+            "costUSD": 2.0735230000000002,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 396.89,
+      "setup_seconds": 20.673,
+      "grading_seconds": 31.797,
+      "agent_exit_code": 0,
+      "grader_exit_code": 1,
+      "started_at": "2026-09-26T17:01:39.578489+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "7b4bd2054018c8fdb5ab68621fcd022354537353bee2e00b5ad1005b533b0c8a",
+      "composed_prompt_sha256": "2748b8750c582112546634b32679cdd73be35d5d4dcd3ff98c5661b39b5122dd",
+      "snapshot_sha256": "ebbc66f9f89529d88e504de6cf83dd90599c23e6d6dff951e1b75c154af82ff9",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/r06_onboarding_outage/grade.py": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "grading/r06_onboarding_outage/onboarding.private.test.ts": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "grading/r06_onboarding_outage/preflight.json": "ea20ac252ea3c58d6e13fec6832e1e3044faebf4aec6eddf649bc64eba913abc",
+        "grading/r06_onboarding_outage/preflight.py": "32c5a1b33d56e6ab3d703cbbfe765032108fdd7b9f40e1d791108f530bea0762"
+      }
+    }
+  ],
+  "infrastructure_attempts": [
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 98,
+        "output_tokens": 32337,
+        "cache_creation_input_tokens": 117862,
+        "cache_read_input_tokens": 3692177,
+        "processed_input_tokens": 3810137,
+        "total_tokens": 3842474,
+        "tool_calls": 50,
+        "cost_usd_estimate": 3.8336235000000007,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 51,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 3,
+          "Edit": 10,
+          "Grep": 15,
+          "Read": 22
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 98,
+            "outputTokens": 32337,
+            "cacheReadInputTokens": 3692177,
+            "cacheCreationInputTokens": 117862,
+            "webSearchRequests": 0,
+            "costUSD": 3.8336235000000007,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 33,
+        "compiled_estimated_tokens": 12870,
+        "delivered_compiled_estimated_tokens": 390,
+        "source_items": 396
+      },
+      "agent_wall_seconds": 518.174,
+      "setup_seconds": 237.28,
+      "grading_seconds": 30.05,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T01:05:52.320914+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "5cd0ba53f9b5f63b977b41285104ce4f215d4c0e92aed3f0b859304129600854",
+      "composed_prompt_sha256": "2cf471ed61af06964d409ea2237935af7cf0c9a2aa4bca8083f18763546fae80",
+      "snapshot_sha256": "4ce37a075588b467c5dae3e0626d9ad97389fd174631abfde65b572fbd44512d",
+      "validity_issues": [
+        "shell_spawn_argument_limit"
+      ],
+      "tool_runtime_evidence": {
+        "schema_version": 1,
+        "trace_sha256": "a34b68cade2f4a000c6d1a20e09b1e2cdc8a98807235440ff6b9ac7002638db3",
+        "reason": "shell_spawn_argument_limit",
+        "shell_tool_calls": 3,
+        "shell_spawn_failure_count": 3
+      },
+      "behavioral_grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "4d2c7acc31d9072da28e83903c4ceac702494b400f29c20a20b3b1811bf588e3",
+        "grading/r01_guide_hot_path/preflight.json": "fbbbbc93b86c7d6b0aaf6b1cfbcaeb2e288fa971aff1aa99cafa30184e3bbf5c",
+        "grading/r01_guide_hot_path/preflight.py": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc"
+      }
+    },
+    {
+      "task_id": "r01_guide_hot_path",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 154,
+        "output_tokens": 36698,
+        "cache_creation_input_tokens": 116332,
+        "cache_read_input_tokens": 4896089,
+        "processed_input_tokens": 5012575,
+        "total_tokens": 5049273,
+        "tool_calls": 76,
+        "cost_usd_estimate": 4.529584500000001,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 77,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 5,
+          "Edit": 10,
+          "Glob": 3,
+          "Grep": 20,
+          "Read": 38
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 154,
+            "outputTokens": 36698,
+            "cacheReadInputTokens": 4896089,
+            "cacheCreationInputTokens": 116332,
+            "webSearchRequests": 0,
+            "costUSD": 4.529584500000001,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 559.169,
+      "setup_seconds": 195.449,
+      "grading_seconds": 48.085,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T00:52:23.553074+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "5cd0ba53f9b5f63b977b41285104ce4f215d4c0e92aed3f0b859304129600854",
+      "composed_prompt_sha256": "2cf471ed61af06964d409ea2237935af7cf0c9a2aa4bca8083f18763546fae80",
+      "snapshot_sha256": "4ce37a075588b467c5dae3e0626d9ad97389fd174631abfde65b572fbd44512d",
+      "validity_issues": [
+        "shell_spawn_argument_limit"
+      ],
+      "tool_runtime_evidence": {
+        "schema_version": 1,
+        "trace_sha256": "64bec4c8f1ecedd46bd78b3947ecf081730040864a9d7b05ad46c0a7b352c082",
+        "reason": "shell_spawn_argument_limit",
+        "shell_tool_calls": 5,
+        "shell_spawn_failure_count": 5
+      },
+      "behavioral_grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "absent_preserves_both",
+            "passed": true
+          },
+          {
+            "name": "task_opt_out_skips_search",
+            "passed": true
+          },
+          {
+            "name": "app_opt_out_preserves_task",
+            "passed": true
+          },
+          {
+            "name": "master_overrides_family_opt_in",
+            "passed": true
+          },
+          {
+            "name": "both_families_off",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_task_opt_out",
+            "passed": true
+          },
+          {
+            "name": "session_conversion_preserves_app_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_restricts_task_opt_in",
+            "passed": true
+          },
+          {
+            "name": "policy_cannot_override_caller_opt_out",
+            "passed": true
+          },
+          {
+            "name": "policy_master_disables_both",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_does_not_schedule_app_open_warm",
+            "passed": true
+          },
+          {
+            "name": "enabled_app_open_still_schedules_warm",
+            "passed": true
+          },
+          {
+            "name": "disabled_task_skips_later_cache_pickup",
+            "passed": true
+          },
+          {
+            "name": "enabled_task_preserves_later_cache_pickup",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r01_guide_hot_path/grade.py": "7e336cf909dd740c08c7f0d6252a658d8b58093c1e6b4816950329eca371cb1f",
+        "grading/r01_guide_hot_path/hidden_tests.rs": "4d2c7acc31d9072da28e83903c4ceac702494b400f29c20a20b3b1811bf588e3",
+        "grading/r01_guide_hot_path/preflight.json": "fbbbbc93b86c7d6b0aaf6b1cfbcaeb2e288fa971aff1aa99cafa30184e3bbf5c",
+        "grading/r01_guide_hot_path/preflight.py": "47749e4fe69f0812dba02d0da875e57790166716a53e4f16717fa4536361debc"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 122,
+        "output_tokens": 44666,
+        "cache_creation_input_tokens": 100156,
+        "cache_read_input_tokens": 3247041,
+        "processed_input_tokens": 3347319,
+        "total_tokens": 3391985,
+        "tool_calls": 69,
+        "cost_usd_estimate": 3.7423405,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 70,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 4,
+          "Edit": 18,
+          "Glob": 5,
+          "Grep": 13,
+          "Read": 28,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 122,
+            "outputTokens": 44666,
+            "cacheReadInputTokens": 3247041,
+            "cacheCreationInputTokens": 100156,
+            "webSearchRequests": 0,
+            "costUSD": 3.7423405,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 48,
+        "compiled_estimated_tokens": 20544,
+        "delivered_compiled_estimated_tokens": 428,
+        "source_items": 576
+      },
+      "agent_wall_seconds": 729.522,
+      "setup_seconds": 4.961,
+      "grading_seconds": 0.187,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T01:20:04.741711+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "e75b8aeee6d8c38d839748b640fd7249c20b323f7ff03074a877e3149af90680",
+      "composed_prompt_sha256": "1392661becae86816303ba26c2c0ca5e731e5ba84e19124233b5b382ba8c4752",
+      "snapshot_sha256": "3c0891647281a2046e5628f8cff9793757e798df36b287bbf384f1b280894eac",
+      "validity_issues": [
+        "shell_spawn_argument_limit"
+      ],
+      "tool_runtime_evidence": {
+        "schema_version": 1,
+        "trace_sha256": "b4aecc2cc68958f5d9b7d0b16fd08b759f4e32b30cf73439f3bcdec7fad5ba7b",
+        "reason": "shell_spawn_argument_limit",
+        "shell_tool_calls": 4,
+        "shell_spawn_failure_count": 4
+      },
+      "behavioral_grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "null_cursor_is_absent_and_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "false_cursor_converts_to_zero_and_implies_history",
+            "passed": true
+          },
+          {
+            "name": "true_cursor_converts_to_one",
+            "passed": true
+          },
+          {
+            "name": "fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "negative_fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "signed_spaced_string_cursor_is_converted",
+            "passed": true
+          },
+          {
+            "name": "negative_integer_cursor_includes_newer_steps",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "false_string_cursor_is_invalid_not_disabled",
+            "passed": true
+          },
+          {
+            "name": "fractional_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "empty_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_existing_json_meaning_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_json_meaning_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "f506d3002d444cb6b606e50deebfbc6b8287a33051ae926b500fa674fca7bea5",
+        "grading/r02_lean_task_status/preflight.json": "22a2ffc1477203117c8041082d23d64c3d06325ab0ce7c716aeeadbef99cd116",
+        "grading/r02_lean_task_status/preflight.py": "c3776e1fcb77e18bc836de649f4c1eee9a112b06dd433c9d4809b34c4eee2505",
+        "grading/r02_lean_task_status/v1_semantic_manifest.json": "97883ac3f442a0b9e6d6db7fbd468b3760eac4fe5f2e3b2a7ddd09c57eeb6d53",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    },
+    {
+      "task_id": "r02_lean_task_status",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 136,
+        "output_tokens": 57364,
+        "cache_creation_input_tokens": 139361,
+        "cache_read_input_tokens": 5782152,
+        "processed_input_tokens": 5921649,
+        "total_tokens": 5979013,
+        "tool_calls": 67,
+        "cost_usd_estimate": 5.719466,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 68,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 6,
+          "Edit": 19,
+          "Glob": 3,
+          "Grep": 14,
+          "Read": 24,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 136,
+            "outputTokens": 57364,
+            "cacheReadInputTokens": 5782152,
+            "cacheCreationInputTokens": 139361,
+            "webSearchRequests": 0,
+            "costUSD": 5.719466,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 746.351,
+      "setup_seconds": 2.049,
+      "grading_seconds": 0.194,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-09-26T01:32:29.508322+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "e75b8aeee6d8c38d839748b640fd7249c20b323f7ff03074a877e3149af90680",
+      "composed_prompt_sha256": "1392661becae86816303ba26c2c0ca5e731e5ba84e19124233b5b382ba8c4752",
+      "snapshot_sha256": "3c0891647281a2046e5628f8cff9793757e798df36b287bbf384f1b280894eac",
+      "validity_issues": [
+        "shell_spawn_argument_limit"
+      ],
+      "tool_runtime_evidence": {
+        "schema_version": 1,
+        "trace_sha256": "8e165c8fabc3449d6d05138d4e4c73cdf0cff5398b5562988c6078e2538e814b",
+        "reason": "shell_spawn_argument_limit",
+        "shell_tool_calls": 6,
+        "shell_spawn_failure_count": 6
+      },
+      "behavioral_grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "default_uses_count_without_loading_history",
+            "passed": true
+          },
+          {
+            "name": "boolean_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "spaced_string_false_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "empty_history_has_integer_zero_count",
+            "passed": true
+          },
+          {
+            "name": "null_cursor_is_absent_and_stays_lean",
+            "passed": true
+          },
+          {
+            "name": "runtime_step_serializer_preserves_all_wire_fields",
+            "passed": true
+          },
+          {
+            "name": "explicit_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "string_true_returns_full_history",
+            "passed": true
+          },
+          {
+            "name": "cursor_returns_strictly_newer_steps_total_count",
+            "passed": true
+          },
+          {
+            "name": "string_cursor_implies_steps_even_with_false",
+            "passed": true
+          },
+          {
+            "name": "cursor_zero_includes_all",
+            "passed": true
+          },
+          {
+            "name": "cursor_past_end_keeps_total",
+            "passed": true
+          },
+          {
+            "name": "false_cursor_converts_to_zero_and_implies_history",
+            "passed": true
+          },
+          {
+            "name": "true_cursor_converts_to_one",
+            "passed": true
+          },
+          {
+            "name": "fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "negative_fractional_cursor_truncates_toward_zero",
+            "passed": true
+          },
+          {
+            "name": "signed_spaced_string_cursor_is_converted",
+            "passed": true
+          },
+          {
+            "name": "negative_integer_cursor_includes_newer_steps",
+            "passed": true
+          },
+          {
+            "name": "invalid_text_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_array_cursor",
+            "passed": true
+          },
+          {
+            "name": "invalid_object_cursor",
+            "passed": true
+          },
+          {
+            "name": "false_string_cursor_is_invalid_not_disabled",
+            "passed": true
+          },
+          {
+            "name": "fractional_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "empty_string_cursor_is_invalid",
+            "passed": true
+          },
+          {
+            "name": "missing_task_and_cross_user_access_preserved",
+            "passed": true
+          },
+          {
+            "name": "completed_result_preserved",
+            "passed": true
+          },
+          {
+            "name": "user_control_error_preserved",
+            "passed": true
+          },
+          {
+            "name": "tool_schema_exposes_opt_in_and_cursor",
+            "passed": true
+          },
+          {
+            "name": "v1_fixture_existing_json_meaning_preserved",
+            "passed": true
+          },
+          {
+            "name": "v2_device_wire_json_meaning_preserved_if_added",
+            "passed": true
+          },
+          {
+            "name": "versioned_status_contract_matches_behavior_if_added",
+            "passed": true
+          },
+          {
+            "name": "user_control_consumer_explicitly_fetches_needed_steps",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/r02_lean_task_status/grade.py": "f506d3002d444cb6b606e50deebfbc6b8287a33051ae926b500fa674fca7bea5",
+        "grading/r02_lean_task_status/preflight.json": "22a2ffc1477203117c8041082d23d64c3d06325ab0ce7c716aeeadbef99cd116",
+        "grading/r02_lean_task_status/preflight.py": "c3776e1fcb77e18bc836de649f4c1eee9a112b06dd433c9d4809b34c4eee2505",
+        "grading/r02_lean_task_status/v1_semantic_manifest.json": "97883ac3f442a0b9e6d6db7fbd468b3760eac4fe5f2e3b2a7ddd09c57eeb6d53",
+        "grading/r02_lean_task_status/v1_sha256.json": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef"
+      }
+    }
+  ],
+  "preflight_runs": [],
+  "analysis_provenance": {
+    "report_real_repo_pilot.py": "16d1f9b9cc8af4043d5a92916102dea9b76e344d74fde8d08b3a8a03b7f89dea",
+    "real_repo_metrics.py": "811f990c8f46c5be53252d58383b8aa47e953f78d2976c77f985ed25a3f8499c",
+    "real_repo_diagnostics.py": "b4f51272276c8c50a3a3efe29785ebe7f9ca3742ffc8ceb84975660633c3f4bb",
+    "real_repo_adjudications.py": "88a9cea3ba08315f5f4055ffd6a5d6d48f65bba4edb8994fad3d2d015d221b50"
+  }
+}

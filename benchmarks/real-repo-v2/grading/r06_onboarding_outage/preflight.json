@@ -1,0 +1,564 @@
+{
+  "grading_version": 2,
+  "task_id": "r06_onboarding_outage",
+  "base_commit": "4a2668b9bb198ae7d9108f2cebefb84fa9244b24",
+  "reference_commit": "60cfcd4eda9d776f6cdac8af88f853c9276cb30e",
+  "private_workspace": "/tmp/engram-r06-v2-preflight-pjwd8ni8",
+  "all_expectations_met": true,
+  "sha256": {
+    "grade.py": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+    "onboarding.private.test.ts": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+    "preflight.py": "32c5a1b33d56e6ab3d703cbbfe765032108fdd7b9f40e1d791108f530bea0762",
+    "r06_onboarding_outage.md": "7b4bd2054018c8fdb5ab68621fcd022354537353bee2e00b5ad1005b533b0c8a"
+  },
+  "controls": [
+    {
+      "name": "base",
+      "expected_pass": false,
+      "status": "fail",
+      "matches_expectation": true,
+      "expected_failed_checks": [
+        "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+        "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+        "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+        "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+        "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+        "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+        "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+        "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+        "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+        "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+        "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+        "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+        "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+        "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+        "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+        "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+        "private onboarding behavior unreachable backend: welcome remains usable without a redirect"
+      ],
+      "calibration_errors": [],
+      "passed_checks": 14,
+      "total_checks": 31,
+      "exit_code": 1,
+      "duration_seconds": 34.143,
+      "failed_checks": [
+        "private onboarding behavior HTTP 500: blocks the gate and preserves an invite",
+        "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+        "private onboarding behavior unreachable backend: blocks the gate and preserves an invite",
+        "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+        "private onboarding behavior non-JSON success: blocks the gate and preserves an invite",
+        "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+        "private onboarding behavior gate discards unsafe return path \"https://evil.invalid/path\"",
+        "private onboarding behavior gate discards unsafe return path \"//evil.invalid/path\"",
+        "private onboarding behavior gate discards unsafe return path \"/\\t/evil.invalid/path\"",
+        "private onboarding behavior gate discards unsafe return path \"/welcome?next=/me\"",
+        "private onboarding behavior gate discards unsafe return path \"/https://evil.invalid/path\"",
+        "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+        "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+        "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+        "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+        "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+        "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline"
+      ],
+      "deadline_checks": [
+        {
+          "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+          "status": "fail"
+        }
+      ],
+      "sha256": {
+        "grader": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "private_tests": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "repository_lockfile": "0dba8da86df7b193e5ad123d169b30047a2b9d01b1d88b0c6058454b9b45e512",
+        "prepared_runtime_lockfile": "4d3b3ce6a1af0d369c6e63947ae6a899f77bfc66e3f559993662af14f453141d"
+      },
+      "node_version": "v26.5.1",
+      "dependency_versions": {
+        "vitest": "4.1.5",
+        "msw": "2.13.5"
+      },
+      "private_report": "/tmp/engram-r06-v2-preflight-pjwd8ni8/base.json",
+      "control_source_sha256": {
+        "features/onboarding/actions/submit-onboarding.ts": "bc486ffd91b27414384b1c371ceb64731c9abb5fe5236aa1052641359049ee80",
+        "features/onboarding/actions/onboarding.test.ts": "7173929a04755ba694412c0d94a3af863b601a9c63989801e8c130d3ed9b64b7",
+        "features/onboarding/actions/_call-backend.ts": "92d89cc6250f4d1302aa08332352a2acecae8e140b0dd985647ad9f7a5dcf23f",
+        "features/onboarding/actions/get-current-user.ts": "d5b6f809dca9597f13613dbc4ca2ede49bcf80be30c4029140d0ba8b8ac53e02",
+        "features/onboarding/actions/enforce-onboarding-gate.ts": "145341953c0a80d95a11183a5986cf4bbc09dcc1a06713d6fd77ab180c776be6",
+        "features/onboarding/actions/index.ts": "ad5ad0aac8615c3610fb10c9af51ff485769b6843877f6aa05414f04489be908"
+      }
+    },
+    {
+      "name": "reference_503",
+      "expected_pass": true,
+      "status": "pass",
+      "matches_expectation": true,
+      "expected_failed_checks": [],
+      "calibration_errors": [],
+      "passed_checks": 31,
+      "total_checks": 31,
+      "exit_code": 0,
+      "duration_seconds": 31.154,
+      "failed_checks": [],
+      "deadline_checks": [
+        {
+          "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+          "status": "pass"
+        }
+      ],
+      "sha256": {
+        "grader": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "private_tests": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "repository_lockfile": "0dba8da86df7b193e5ad123d169b30047a2b9d01b1d88b0c6058454b9b45e512",
+        "prepared_runtime_lockfile": "4d3b3ce6a1af0d369c6e63947ae6a899f77bfc66e3f559993662af14f453141d"
+      },
+      "node_version": "v26.5.1",
+      "dependency_versions": {
+        "vitest": "4.1.5",
+        "msw": "2.13.5"
+      },
+      "private_report": "/tmp/engram-r06-v2-preflight-pjwd8ni8/reference_503.json",
+      "control_source_sha256": {
+        "features/onboarding/actions/submit-onboarding.ts": "bc486ffd91b27414384b1c371ceb64731c9abb5fe5236aa1052641359049ee80",
+        "features/onboarding/actions/onboarding.test.ts": "0159d39db7bbc1c225f85c51a3ba3207c2a3040435a7e1161d0a29a2383e43c3",
+        "features/onboarding/actions/_call-backend.ts": "167a006093dd80275f448fcf94653f00ea92969cb7d13b028a3ef735efc13d39",
+        "features/onboarding/actions/get-current-user.ts": "d5b6f809dca9597f13613dbc4ca2ede49bcf80be30c4029140d0ba8b8ac53e02",
+        "features/onboarding/actions/enforce-onboarding-gate.ts": "e9449280dd0400425c0b3e1038f1b14613029f71d53e00e1d30ed748dd169dd2",
+        "features/onboarding/actions/index.ts": "ad5ad0aac8615c3610fb10c9af51ff485769b6843877f6aa05414f04489be908"
+      }
+    },
+    {
+      "name": "reference_504",
+      "expected_pass": true,
+      "status": "pass",
+      "matches_expectation": true,
+      "expected_failed_checks": [],
+      "calibration_errors": [],
+      "passed_checks": 31,
+      "total_checks": 31,
+      "exit_code": 0,
+      "duration_seconds": 31.129,
+      "failed_checks": [],
+      "deadline_checks": [
+        {
+          "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+          "status": "pass"
+        }
+      ],
+      "sha256": {
+        "grader": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "private_tests": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "repository_lockfile": "0dba8da86df7b193e5ad123d169b30047a2b9d01b1d88b0c6058454b9b45e512",
+        "prepared_runtime_lockfile": "4d3b3ce6a1af0d369c6e63947ae6a899f77bfc66e3f559993662af14f453141d"
+      },
+      "node_version": "v26.5.1",
+      "dependency_versions": {
+        "vitest": "4.1.5",
+        "msw": "2.13.5"
+      },
+      "private_report": "/tmp/engram-r06-v2-preflight-pjwd8ni8/reference_504.json",
+      "control_source_sha256": {
+        "features/onboarding/actions/submit-onboarding.ts": "bc486ffd91b27414384b1c371ceb64731c9abb5fe5236aa1052641359049ee80",
+        "features/onboarding/actions/onboarding.test.ts": "0159d39db7bbc1c225f85c51a3ba3207c2a3040435a7e1161d0a29a2383e43c3",
+        "features/onboarding/actions/_call-backend.ts": "97c6990c09874aa0297fd66b084a0387a24a9251e09ed44d7b34b51a8381ed4d",
+        "features/onboarding/actions/get-current-user.ts": "d5b6f809dca9597f13613dbc4ca2ede49bcf80be30c4029140d0ba8b8ac53e02",
+        "features/onboarding/actions/enforce-onboarding-gate.ts": "e9449280dd0400425c0b3e1038f1b14613029f71d53e00e1d30ed748dd169dd2",
+        "features/onboarding/actions/index.ts": "ad5ad0aac8615c3610fb10c9af51ff485769b6843877f6aa05414f04489be908"
+      }
+    },
+    {
+      "name": "alternative_without_abort",
+      "expected_pass": true,
+      "status": "pass",
+      "matches_expectation": true,
+      "expected_failed_checks": [],
+      "calibration_errors": [],
+      "passed_checks": 31,
+      "total_checks": 31,
+      "exit_code": 0,
+      "duration_seconds": 30.603,
+      "failed_checks": [],
+      "deadline_checks": [
+        {
+          "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+          "status": "pass"
+        }
+      ],
+      "sha256": {
+        "grader": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "private_tests": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "repository_lockfile": "0dba8da86df7b193e5ad123d169b30047a2b9d01b1d88b0c6058454b9b45e512",
+        "prepared_runtime_lockfile": "4d3b3ce6a1af0d369c6e63947ae6a899f77bfc66e3f559993662af14f453141d"
+      },
+      "node_version": "v26.5.1",
+      "dependency_versions": {
+        "vitest": "4.1.5",
+        "msw": "2.13.5"
+      },
+      "private_report": "/tmp/engram-r06-v2-preflight-pjwd8ni8/alternative_without_abort.json",
+      "control_source_sha256": {
+        "features/onboarding/actions/submit-onboarding.ts": "bc486ffd91b27414384b1c371ceb64731c9abb5fe5236aa1052641359049ee80",
+        "features/onboarding/actions/onboarding.test.ts": "0159d39db7bbc1c225f85c51a3ba3207c2a3040435a7e1161d0a29a2383e43c3",
+        "features/onboarding/actions/_call-backend.ts": "69a3efe0068c818054349b90849311fbf22792a71db2aeb61d3f7c2f395b20a6",
+        "features/onboarding/actions/get-current-user.ts": "d5b6f809dca9597f13613dbc4ca2ede49bcf80be30c4029140d0ba8b8ac53e02",
+        "features/onboarding/actions/enforce-onboarding-gate.ts": "e9449280dd0400425c0b3e1038f1b14613029f71d53e00e1d30ed748dd169dd2",
+        "features/onboarding/actions/index.ts": "ad5ad0aac8615c3610fb10c9af51ff485769b6843877f6aa05414f04489be908"
+      }
+    },
+    {
+      "name": "bad_no_deadline",
+      "expected_pass": false,
+      "status": "fail",
+      "matches_expectation": true,
+      "expected_failed_checks": [
+        "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+        "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+        "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+        "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+        "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+        "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline"
+      ],
+      "calibration_errors": [],
+      "passed_checks": 25,
+      "total_checks": 31,
+      "exit_code": 1,
+      "duration_seconds": 33.635,
+      "failed_checks": [
+        "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+        "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+        "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+        "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+        "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+        "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline"
+      ],
+      "deadline_checks": [
+        {
+          "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+          "status": "fail"
+        }
+      ],
+      "sha256": {
+        "grader": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "private_tests": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "repository_lockfile": "0dba8da86df7b193e5ad123d169b30047a2b9d01b1d88b0c6058454b9b45e512",
+        "prepared_runtime_lockfile": "4d3b3ce6a1af0d369c6e63947ae6a899f77bfc66e3f559993662af14f453141d"
+      },
+      "node_version": "v26.5.1",
+      "dependency_versions": {
+        "vitest": "4.1.5",
+        "msw": "2.13.5"
+      },
+      "private_report": "/tmp/engram-r06-v2-preflight-pjwd8ni8/bad_no_deadline.json",
+      "control_source_sha256": {
+        "features/onboarding/actions/submit-onboarding.ts": "bc486ffd91b27414384b1c371ceb64731c9abb5fe5236aa1052641359049ee80",
+        "features/onboarding/actions/onboarding.test.ts": "0159d39db7bbc1c225f85c51a3ba3207c2a3040435a7e1161d0a29a2383e43c3",
+        "features/onboarding/actions/_call-backend.ts": "a43fad99f3f4cb75cb1d02cd7c2938c74fffcba4f859b19a294a50ad170cad89",
+        "features/onboarding/actions/get-current-user.ts": "d5b6f809dca9597f13613dbc4ca2ede49bcf80be30c4029140d0ba8b8ac53e02",
+        "features/onboarding/actions/enforce-onboarding-gate.ts": "e9449280dd0400425c0b3e1038f1b14613029f71d53e00e1d30ed748dd169dd2",
+        "features/onboarding/actions/index.ts": "ad5ad0aac8615c3610fb10c9af51ff485769b6843877f6aa05414f04489be908"
+      }
+    },
+    {
+      "name": "bad_headers_only_deadline",
+      "expected_pass": false,
+      "status": "fail",
+      "matches_expectation": true,
+      "expected_failed_checks": [
+        "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+        "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+        "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline"
+      ],
+      "calibration_errors": [],
+      "passed_checks": 28,
+      "total_checks": 31,
+      "exit_code": 1,
+      "duration_seconds": 32.115,
+      "failed_checks": [
+        "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+        "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+        "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline"
+      ],
+      "deadline_checks": [
+        {
+          "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+          "status": "fail"
+        }
+      ],
+      "sha256": {
+        "grader": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "private_tests": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "repository_lockfile": "0dba8da86df7b193e5ad123d169b30047a2b9d01b1d88b0c6058454b9b45e512",
+        "prepared_runtime_lockfile": "4d3b3ce6a1af0d369c6e63947ae6a899f77bfc66e3f559993662af14f453141d"
+      },
+      "node_version": "v26.5.1",
+      "dependency_versions": {
+        "vitest": "4.1.5",
+        "msw": "2.13.5"
+      },
+      "private_report": "/tmp/engram-r06-v2-preflight-pjwd8ni8/bad_headers_only_deadline.json",
+      "control_source_sha256": {
+        "features/onboarding/actions/submit-onboarding.ts": "bc486ffd91b27414384b1c371ceb64731c9abb5fe5236aa1052641359049ee80",
+        "features/onboarding/actions/onboarding.test.ts": "0159d39db7bbc1c225f85c51a3ba3207c2a3040435a7e1161d0a29a2383e43c3",
+        "features/onboarding/actions/_call-backend.ts": "55f74511d866a614a90a47ec4210d1cc8fd12f2918cadc3987d70aeaa11df0dc",
+        "features/onboarding/actions/get-current-user.ts": "d5b6f809dca9597f13613dbc4ca2ede49bcf80be30c4029140d0ba8b8ac53e02",
+        "features/onboarding/actions/enforce-onboarding-gate.ts": "e9449280dd0400425c0b3e1038f1b14613029f71d53e00e1d30ed748dd169dd2",
+        "features/onboarding/actions/index.ts": "ad5ad0aac8615c3610fb10c9af51ff485769b6843877f6aa05414f04489be908"
+      }
+    },
+    {
+      "name": "bad_welcome_loop",
+      "expected_pass": false,
+      "status": "fail",
+      "matches_expectation": true,
+      "expected_failed_checks": [
+        "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+        "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+        "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+        "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+        "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+        "private onboarding behavior unreachable backend: welcome remains usable without a redirect"
+      ],
+      "calibration_errors": [],
+      "passed_checks": 25,
+      "total_checks": 31,
+      "exit_code": 1,
+      "duration_seconds": 30.938,
+      "failed_checks": [
+        "private onboarding behavior HTTP 500: welcome remains usable without a redirect",
+        "private onboarding behavior unreachable backend: welcome remains usable without a redirect",
+        "private onboarding behavior non-JSON success: welcome remains usable without a redirect",
+        "private onboarding behavior unauthenticated checks do not contact the backend or loop welcome",
+        "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+        "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline"
+      ],
+      "deadline_checks": [
+        {
+          "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+          "status": "fail"
+        }
+      ],
+      "sha256": {
+        "grader": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "private_tests": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "repository_lockfile": "0dba8da86df7b193e5ad123d169b30047a2b9d01b1d88b0c6058454b9b45e512",
+        "prepared_runtime_lockfile": "4d3b3ce6a1af0d369c6e63947ae6a899f77bfc66e3f559993662af14f453141d"
+      },
+      "node_version": "v26.5.1",
+      "dependency_versions": {
+        "vitest": "4.1.5",
+        "msw": "2.13.5"
+      },
+      "private_report": "/tmp/engram-r06-v2-preflight-pjwd8ni8/bad_welcome_loop.json",
+      "control_source_sha256": {
+        "features/onboarding/actions/submit-onboarding.ts": "bc486ffd91b27414384b1c371ceb64731c9abb5fe5236aa1052641359049ee80",
+        "features/onboarding/actions/onboarding.test.ts": "0159d39db7bbc1c225f85c51a3ba3207c2a3040435a7e1161d0a29a2383e43c3",
+        "features/onboarding/actions/_call-backend.ts": "167a006093dd80275f448fcf94653f00ea92969cb7d13b028a3ef735efc13d39",
+        "features/onboarding/actions/get-current-user.ts": "d5b6f809dca9597f13613dbc4ca2ede49bcf80be30c4029140d0ba8b8ac53e02",
+        "features/onboarding/actions/enforce-onboarding-gate.ts": "00126740b6459054667866894c44303256c86a51f513ac7fcbfd0f122158ea2a",
+        "features/onboarding/actions/index.ts": "ad5ad0aac8615c3610fb10c9af51ff485769b6843877f6aa05414f04489be908"
+      }
+    },
+    {
+      "name": "bad_timeout_status",
+      "expected_pass": false,
+      "status": "fail",
+      "matches_expectation": true,
+      "expected_failed_checks": [
+        "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline"
+      ],
+      "calibration_errors": [],
+      "passed_checks": 30,
+      "total_checks": 31,
+      "exit_code": 1,
+      "duration_seconds": 30.829,
+      "failed_checks": [
+        "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline"
+      ],
+      "deadline_checks": [
+        {
+          "name": "private onboarding behavior stalled headers: profile action settles with a failure within the total deadline",
+          "status": "fail"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled headers: welcome settles without a redirect loop within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: profile action settles with a failure within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: gate settles closed and preserves the CLI destination within the total deadline",
+          "status": "pass"
+        },
+        {
+          "name": "private onboarding behavior stalled body: welcome settles without a redirect loop within the total deadline",
+          "status": "pass"
+        }
+      ],
+      "sha256": {
+        "grader": "64a825be7d1b5bbd560f8172fb39f7de01509455dd33e550c91828d818f44838",
+        "private_tests": "3c924451fe59a04cf41ecf1b92925416e558ba00118af263050d06bcf748f965",
+        "repository_lockfile": "0dba8da86df7b193e5ad123d169b30047a2b9d01b1d88b0c6058454b9b45e512",
+        "prepared_runtime_lockfile": "4d3b3ce6a1af0d369c6e63947ae6a899f77bfc66e3f559993662af14f453141d"
+      },
+      "node_version": "v26.5.1",
+      "dependency_versions": {
+        "vitest": "4.1.5",
+        "msw": "2.13.5"
+      },
+      "private_report": "/tmp/engram-r06-v2-preflight-pjwd8ni8/bad_timeout_status.json",
+      "control_source_sha256": {
+        "features/onboarding/actions/submit-onboarding.ts": "bc486ffd91b27414384b1c371ceb64731c9abb5fe5236aa1052641359049ee80",
+        "features/onboarding/actions/onboarding.test.ts": "0159d39db7bbc1c225f85c51a3ba3207c2a3040435a7e1161d0a29a2383e43c3",
+        "features/onboarding/actions/_call-backend.ts": "99de0a72d61c6317ec05e7b193295d0b9b521a37f4c30175ec3400df94246ee7",
+        "features/onboarding/actions/get-current-user.ts": "d5b6f809dca9597f13613dbc4ca2ede49bcf80be30c4029140d0ba8b8ac53e02",
+        "features/onboarding/actions/enforce-onboarding-gate.ts": "e9449280dd0400425c0b3e1038f1b14613029f71d53e00e1d30ed748dd169dd2",
+        "features/onboarding/actions/index.ts": "ad5ad0aac8615c3610fb10c9af51ff485769b6843877f6aa05414f04489be908"
+      }
+    }
+  ]
+}

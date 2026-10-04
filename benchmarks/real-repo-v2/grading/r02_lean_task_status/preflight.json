@@ -1,0 +1,492 @@
+{
+  "suite_version": "real-repo-v2",
+  "task_id": "r02_lean_task_status",
+  "base_commit": "1b5c21e44eda8e68dbbe457f7e98e7a607ff3b1a",
+  "reference_fix_commit": "5b0c08504f191c7f9b96893764c120cb0f85efd0",
+  "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]",
+  "grader_sha256": "f506d3002d444cb6b606e50deebfbc6b8287a33051ae926b500fa674fca7bea5",
+  "fixture_manifest_sha256": "cfe28434179906a5ba25f3de2221948f6c8af2991e52c2a558d7f984b34161ef",
+  "semantic_manifest_sha256": "97883ac3f442a0b9e6d6db7fbd468b3760eac4fe5f2e3b2a7ddd09c57eeb6d53",
+  "preflight_sha256": "c3776e1fcb77e18bc836de649f4c1eee9a112b06dd433c9d4809b34c4eee2505",
+  "exported_paths": [
+    "src/agency/api/services/mcp_tool_handlers.py",
+    "src/agency/api/services/mcp_session_service.py",
+    "scripts/mcp_user_control_integration_test.py",
+    "contract_test_fixtures"
+  ],
+  "private_artifacts": "Exported source, raw results and logs retained outside the repository in the private preflight directory.",
+  "runs": [
+    {
+      "fixture": "base",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "default_uses_count_without_loading_history"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 5,
+      "failed_checks": [
+        "default_uses_count_without_loading_history",
+        "boolean_false_stays_lean",
+        "string_false_stays_lean",
+        "spaced_string_false_stays_lean",
+        "empty_history_has_integer_zero_count",
+        "null_cursor_is_absent_and_stays_lean",
+        "explicit_true_returns_full_history",
+        "string_true_returns_full_history",
+        "cursor_returns_strictly_newer_steps_total_count",
+        "string_cursor_implies_steps_even_with_false",
+        "cursor_zero_includes_all",
+        "cursor_past_end_keeps_total",
+        "false_cursor_converts_to_zero_and_implies_history",
+        "true_cursor_converts_to_one",
+        "fractional_cursor_truncates_toward_zero",
+        "negative_fractional_cursor_truncates_toward_zero",
+        "signed_spaced_string_cursor_is_converted",
+        "negative_integer_cursor_includes_newer_steps",
+        "invalid_text_cursor",
+        "invalid_array_cursor",
+        "invalid_object_cursor",
+        "false_string_cursor_is_invalid_not_disabled",
+        "fractional_string_cursor_is_invalid",
+        "empty_string_cursor_is_invalid",
+        "completed_result_preserved",
+        "user_control_error_preserved",
+        "tool_schema_exposes_opt_in_and_cursor",
+        "user_control_consumer_explicitly_fetches_needed_steps"
+      ]
+    },
+    {
+      "fixture": "reference",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "status": "pass",
+      "check_count": 33,
+      "passed_checks": 33,
+      "failed_checks": []
+    },
+    {
+      "fixture": "lean-payload-only",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "default_uses_count_without_loading_history"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 25,
+      "failed_checks": [
+        "default_uses_count_without_loading_history",
+        "boolean_false_stays_lean",
+        "string_false_stays_lean",
+        "spaced_string_false_stays_lean",
+        "empty_history_has_integer_zero_count",
+        "null_cursor_is_absent_and_stays_lean",
+        "completed_result_preserved",
+        "user_control_error_preserved"
+      ]
+    },
+    {
+      "fixture": "serializer-drops-field",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "runtime_step_serializer_preserves_all_wire_fields"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "runtime_step_serializer_preserves_all_wire_fields"
+      ]
+    },
+    {
+      "fixture": "history-and-serializer-erase-payload",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "runtime_step_serializer_preserves_all_wire_fields",
+        "explicit_true_returns_full_history"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 21,
+      "failed_checks": [
+        "runtime_step_serializer_preserves_all_wire_fields",
+        "explicit_true_returns_full_history",
+        "string_true_returns_full_history",
+        "cursor_returns_strictly_newer_steps_total_count",
+        "string_cursor_implies_steps_even_with_false",
+        "cursor_zero_includes_all",
+        "false_cursor_converts_to_zero_and_implies_history",
+        "true_cursor_converts_to_one",
+        "fractional_cursor_truncates_toward_zero",
+        "negative_fractional_cursor_truncates_toward_zero",
+        "signed_spaced_string_cursor_is_converted",
+        "negative_integer_cursor_includes_newer_steps"
+      ]
+    },
+    {
+      "fixture": "additive-status-fields",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "status": "pass",
+      "check_count": 33,
+      "passed_checks": 33,
+      "failed_checks": []
+    },
+    {
+      "fixture": "reformatted-fixtures",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "status": "pass",
+      "check_count": 33,
+      "passed_checks": 33,
+      "failed_checks": []
+    },
+    {
+      "fixture": "additive-device-fields",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "status": "pass",
+      "check_count": 33,
+      "passed_checks": 33,
+      "failed_checks": []
+    },
+    {
+      "fixture": "removed-existing-field",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "v1_fixture_existing_json_meaning_preserved"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "v1_fixture_existing_json_meaning_preserved"
+      ]
+    },
+    {
+      "fixture": "changed-existing-value",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "v1_fixture_existing_json_meaning_preserved"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "v1_fixture_existing_json_meaning_preserved"
+      ]
+    },
+    {
+      "fixture": "changed-existing-scalar-type",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "v1_fixture_existing_json_meaning_preserved"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "v1_fixture_existing_json_meaning_preserved"
+      ]
+    },
+    {
+      "fixture": "changed-existing-array",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "v1_fixture_existing_json_meaning_preserved"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "v1_fixture_existing_json_meaning_preserved"
+      ]
+    },
+    {
+      "fixture": "changed-existing-array-order",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "v1_fixture_existing_json_meaning_preserved"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "v1_fixture_existing_json_meaning_preserved"
+      ]
+    },
+    {
+      "fixture": "cursor-false-disabled",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "false_cursor_converts_to_zero_and_implies_history",
+        "false_string_cursor_is_invalid_not_disabled"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 31,
+      "failed_checks": [
+        "false_cursor_converts_to_zero_and_implies_history",
+        "false_string_cursor_is_invalid_not_disabled"
+      ]
+    },
+    {
+      "fixture": "cursor-strict-types",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "false_cursor_converts_to_zero_and_implies_history",
+        "true_cursor_converts_to_one",
+        "fractional_cursor_truncates_toward_zero"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 29,
+      "failed_checks": [
+        "false_cursor_converts_to_zero_and_implies_history",
+        "true_cursor_converts_to_one",
+        "fractional_cursor_truncates_toward_zero",
+        "negative_fractional_cursor_truncates_toward_zero"
+      ]
+    },
+    {
+      "fixture": "cursor-rounded",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "fractional_cursor_truncates_toward_zero"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "fractional_cursor_truncates_toward_zero"
+      ]
+    },
+    {
+      "fixture": "consumer-missing-history-opt-in",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "user_control_consumer_explicitly_fetches_needed_steps"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "user_control_consumer_explicitly_fetches_needed_steps"
+      ]
+    },
+    {
+      "fixture": "consumer-string-true-opt-in",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "status": "pass",
+      "check_count": 33,
+      "passed_checks": 33,
+      "failed_checks": []
+    },
+    {
+      "fixture": "schema-type-arrays",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "status": "pass",
+      "check_count": 33,
+      "passed_checks": 33,
+      "failed_checks": []
+    },
+    {
+      "fixture": "schema-anyof-oneof",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "status": "pass",
+      "check_count": 33,
+      "passed_checks": 33,
+      "failed_checks": []
+    },
+    {
+      "fixture": "schema-local-references",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "status": "pass",
+      "check_count": 33,
+      "passed_checks": 33,
+      "failed_checks": []
+    },
+    {
+      "fixture": "schema-missing-flag",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ]
+    },
+    {
+      "fixture": "schema-missing-cursor",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ]
+    },
+    {
+      "fixture": "schema-wrong-flag-type",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ]
+    },
+    {
+      "fixture": "schema-wrong-cursor-type",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ]
+    },
+    {
+      "fixture": "schema-missing-required-task",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ]
+    },
+    {
+      "fixture": "schema-cyclic-reference",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "tool_schema_exposes_opt_in_and_cursor"
+      ]
+    },
+    {
+      "fixture": "v2-explicit-history-examples",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "status": "pass",
+      "check_count": 33,
+      "passed_checks": 33,
+      "failed_checks": []
+    },
+    {
+      "fixture": "v2-filtered-history-example",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "status": "pass",
+      "check_count": 33,
+      "passed_checks": 33,
+      "failed_checks": []
+    },
+    {
+      "fixture": "v2-fixtures-omitted",
+      "expected_exit_code": 0,
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "status": "pass",
+      "check_count": 33,
+      "passed_checks": 33,
+      "failed_checks": []
+    },
+    {
+      "fixture": "v2-history-total-too-small",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "versioned_status_contract_matches_behavior_if_added"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "versioned_status_contract_matches_behavior_if_added"
+      ]
+    },
+    {
+      "fixture": "v2-history-missing-wire-field",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "versioned_status_contract_matches_behavior_if_added"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "versioned_status_contract_matches_behavior_if_added"
+      ]
+    },
+    {
+      "fixture": "v2-missing-summary-field",
+      "expected_exit_code": 1,
+      "expected_failure_checks": [
+        "versioned_status_contract_matches_behavior_if_added"
+      ],
+      "exit_code": 1,
+      "status": "fail",
+      "check_count": 33,
+      "passed_checks": 32,
+      "failed_checks": [
+        "versioned_status_contract_matches_behavior_if_added"
+      ]
+    }
+  ],
+  "status": "pass"
+}

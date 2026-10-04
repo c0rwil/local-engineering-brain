@@ -127,6 +127,7 @@ impl StructuralProvider for GraphifyProvider {
                 stable_key: stable_key.clone(),
                 kind: node.kind,
                 label: node.label,
+                search_aliases: String::new(),
                 file_path: path.clone(),
                 language: node.language.unwrap_or_else(|| "unknown".to_owned()),
                 start_byte: node.start_byte.unwrap_or(0),

@@ -175,9 +175,21 @@ impl McpServer {
                     .product_mutate(&serde_json::from_value(arguments.clone())?)
                     .await?,
             )?,
-            "engram_recall" => serde_json::to_value(
-                self.client
+            "engram_recall" => {
+                let context = self
+                    .client
                     .compile_context(&recall_request(&arguments)?)
+                    .await?;
+                return Ok(recall_result_envelope(&context));
+            }
+            "engram_effectiveness" => serde_json::to_value(
+                self.client
+                    .effectiveness(&serde_json::from_value(arguments.clone())?)
+                    .await?,
+            )?,
+            "engram_record_usage" => serde_json::to_value(
+                self.client
+                    .record_usage(&serde_json::from_value(arguments.clone())?)
                     .await?,
             )?,
             "engram_explain_context" => {
@@ -620,13 +632,28 @@ fn tool_catalog() -> Value {
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
                 }, "required": ["project_id", "query"], "additionalProperties": false
             })),
-            tool("engram_recall", "Compile relevant validated context with explanations. Passing the open task_id records truthful usage provenance for procedure-to-skill promotion", &json!({
+            tool("engram_recall", "Return bounded context text and a compact context_run_id handle. Includes relevant validated lessons, project preferences and indexed source pointers. Inspect sources before relying on them; use engram_explain_context for item provenance and scores. Passing the open task_id records usage provenance", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"}, "task": {"type": "string"},
                     "current_paths": {"type": "array", "items": {"type": "string"}},
                     "token_budget": {"type": "integer", "minimum": 1},
                     "task_id": {"type": "string"}
                 }, "required": ["project_id", "task"], "additionalProperties": false
+            })),
+            tool("engram_effectiveness", "Inspect measured usage, measurement coverage, retrieved context sources, learning state and controlled benchmark comparisons. Missing measurements are unknown; retrieval does not prove savings", &json!({
+                "type":"object","properties":{"project_ids":{"type":"array","items":{"type":"string"}},"since_ms":{"type":"integer"},"until_ms":{"type":"integer"}},"additionalProperties":false
+            })),
+            tool("engram_record_usage", "Record actual provider or harness usage with a stable unique sample_id. Omit unknown metrics. Never estimate token counts, cost or avoided tool calls. Repeating an identical sample is safe", &json!({
+                "type":"object","properties":{
+                    "sample_id":{"type":"string"},"project_id":{"type":"string"},"source":{"type":"string"},
+                    "task_id":{"type":"string"},"context_run_id":{"type":"string"},"session_id":{"type":"string"},
+                    "provider":{"type":"string"},"model":{"type":"string"},"mode":{"enum":["off","repo","brain"]},"observed_at_ms":{"type":"integer"},
+                    "metrics":{"type":"object","properties":{
+                        "input_tokens":{"type":"integer","minimum":0},"output_tokens":{"type":"integer","minimum":0},
+                        "cache_read_tokens":{"type":"integer","minimum":0},"cache_write_tokens":{"type":"integer","minimum":0},
+                        "tool_calls":{"type":"integer","minimum":0},"context_bytes":{"type":"integer","minimum":0},"context_tokens":{"type":"integer","minimum":0},"cost_usd":{"type":"number","minimum":0}
+                    },"additionalProperties":false}
+                },"required":["sample_id","project_id","source","metrics"],"additionalProperties":false
             })),
             tool("engram_explain_context", "Explain one selected item from a durable context run", &json!({
                 "type": "object", "properties": {
@@ -871,8 +898,55 @@ fn tool_result_envelope(output: &serde_json::Value) -> Result<serde_json::Value>
     }))
 }
 
+// The compiled text is the model-facing payload. Full scoring/audit records
+// stay in the daemon and are available through engram_explain_context instead
+// of being repeated in pretty JSON and structuredContent on every recall.
+fn recall_result_envelope(context: &crate::context::CompiledContext) -> Value {
+    json!({
+        "content": [{"type": "text", "text": format!("{}{}", context.stable_prefix, context.dynamic_context)}],
+        "structuredContent": {
+            "context_run_id": context.id,
+            "item_count": context.items.len(),
+            "selected_tokens": context.metrics.selected_tokens,
+            "token_budget": context.metrics.token_budget
+        },
+        "isError": false
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recall_sends_bounded_text_once_and_keeps_audit_handle() {
+        let id = crate::ids::ContextRunId::new();
+        let context: crate::context::CompiledContext = serde_json::from_value(serde_json::json!({
+            "id": id, "request_id": "test", "mode": "brain",
+            "stable_prefix": "Project: fixture\n", "dynamic_context": "- src/auth.rs\n",
+            "items": [], "metrics": {"compile_ms": 1,"candidate_count":0,"selected_tokens":8,
+                "token_budget":100,"stable_prefix_hash":"fixture"}
+        }))
+        .unwrap();
+        let result = super::recall_result_envelope(&context);
+        assert_eq!(
+            result["content"][0]["text"],
+            "Project: fixture\n- src/auth.rs\n"
+        );
+        assert_eq!(
+            result["structuredContent"]["context_run_id"],
+            id.to_string()
+        );
+        assert!(result["structuredContent"].get("dynamic_context").is_none());
+        assert!(result["structuredContent"].get("items").is_none());
+        assert!(
+            result["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .len()
+                .div_ceil(4)
+                <= 100
+        );
+    }
+
     #[test]
     fn tool_result_envelope_keeps_structured_content_an_object() {
         let list = super::tool_result_envelope(&serde_json::json!([{"label": "x"}])).unwrap();

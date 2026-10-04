@@ -1,0 +1,15 @@
+
+running 1 test
+test engram_benchmark_environment::test_mode_does_not_restore_scrubbed_dotenv_values ... FAILED
+
+failures:
+
+failures:
+    engram_benchmark_environment::test_mode_does_not_restore_scrubbed_dotenv_values
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 214 filtered out; finished in 0.00s
+
+
+thread 'engram_benchmark_environment::test_mode_does_not_restore_scrubbed_dotenv_values' (80984483) panicked at tests/http_contract.rs:13753:9:
+test mode must keep the server default after a scrub
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

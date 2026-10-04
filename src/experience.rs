@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::blobs::BlobStore;
 use crate::error::{Error, Result};
 use crate::events::{DomainEvent, append_generated_in_transaction};
-use crate::ids::{AttemptId, EvidenceId, ProjectId, TaskId};
+use crate::ids::{AttemptId, ContextRunId, EvidenceId, ProjectId, TaskId};
 use crate::security::Redactor;
 use crate::storage::Database;
 
@@ -219,7 +219,8 @@ impl ExperienceStore {
         self.start_task_with_context(project_id, prompt, session_id, None)
     }
 
-    /// Start a task and attach an earlier prompt injection from the same project.
+    /// Start a task and attach an unassigned earlier prompt injection from the
+    /// same project. Context already attributed to another task is not reused.
     ///
     /// # Errors
     /// Returns validation or storage errors.
@@ -261,8 +262,10 @@ impl ExperienceStore {
             if let Some(request_id) = context_request_id {
                 transaction.execute(
                     "INSERT INTO usage_events (id, source_type, source_id, context_run_id, usage_kind, outcome, created_at_ms)
-                     SELECT ?1, 'task', ?2, id, 'context_served', NULL, ?3 FROM context_runs
-                     WHERE project_id = ?4 AND request_id = ?5 AND mode = 'brain'",
+                     SELECT ?1, 'task', ?2, c.id, 'context_served', NULL, ?3 FROM context_runs c
+                     WHERE c.project_id = ?4 AND c.request_id = ?5 AND c.mode = 'brain'
+                       AND NOT EXISTS (SELECT 1 FROM usage_events u WHERE u.context_run_id=c.id
+                         AND u.source_type='task' AND u.usage_kind='context_served')",
                     params![format!("use_{}", uuid::Uuid::new_v4()), id.as_str(), now, project_id.as_str(), request_id],
                 )?;
             }
@@ -270,6 +273,93 @@ impl ExperienceStore {
         })?;
         self.get_task(&id)?.ok_or_else(|| {
             Error::Config("task projection missing after successful commit".to_owned())
+        })
+    }
+
+    /// Record that compiled brain context was actually delivered to a task.
+    /// Returns whether a new receipt was inserted; earlier lazy task-start
+    /// linkage and repeated delivery acknowledgements share the same identity.
+    /// A late receipt retains an already-closed task's observed outcome only
+    /// when that context existed before the task completed.
+    ///
+    /// # Errors
+    /// Returns an error for unknown references, a control context, project
+    /// mismatch, conflicting task attribution, post-completion context, or
+    /// canonical storage failure.
+    pub fn record_context_delivery(&self, task_id: &TaskId, run_id: &ContextRunId) -> Result<bool> {
+        self.database.write_immediate(|transaction| {
+            let (project_id, status) = task_project_and_status(transaction, task_id)?;
+            let (context_project, mode, context_created_at) = transaction
+                .query_row(
+                    "SELECT project_id,mode,created_at_ms FROM context_runs WHERE id=?1",
+                    [run_id.as_str()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or_else(|| Error::Config(format!("context run `{run_id}` is unknown")))?;
+            if context_project != project_id.as_str() {
+                return Err(Error::Config(
+                    "delivered context and task must belong to the same project".to_owned(),
+                ));
+            }
+            if mode != "brain" {
+                return Err(Error::Config(
+                    "only brain context can be recorded as delivered".to_owned(),
+                ));
+            }
+            let (conflicting, existing): (bool, bool) = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM usage_events WHERE source_type='task'
+                   AND context_run_id=?1 AND usage_kind='context_served' AND source_id<>?2),
+                   EXISTS(SELECT 1 FROM usage_events WHERE source_type='task'
+                   AND context_run_id=?1 AND usage_kind='context_served' AND source_id=?2)",
+                params![run_id.as_str(), task_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            if conflicting {
+                return Err(Error::Config(
+                    "delivered context is already linked to a different task".to_owned(),
+                ));
+            }
+            if existing {
+                return Ok(false);
+            }
+            if status != "open" {
+                let completed_at: Option<i64> = transaction.query_row(
+                    "SELECT completed_at_ms FROM tasks WHERE id=?1",
+                    [task_id.as_str()],
+                    |row| row.get(0),
+                )?;
+                if completed_at.is_none_or(|completed| context_created_at > completed) {
+                    return Err(Error::Config(
+                        "delivered context must exist before the task completes".to_owned(),
+                    ));
+                }
+            }
+            let outcome = (status != "open")
+                .then(|| TaskOutcome::parse(&status))
+                .transpose()?;
+            let inserted = transaction.execute(
+                "INSERT INTO usage_events
+                 (id,source_type,source_id,context_run_id,usage_kind,outcome,created_at_ms)
+                 SELECT ?1,'task',?2,?3,'context_served',?4,?5
+                 WHERE NOT EXISTS(
+                    SELECT 1 FROM usage_events WHERE source_type='task' AND source_id=?2
+                    AND context_run_id=?3 AND usage_kind='context_served')",
+                params![
+                    format!("use_{}", uuid::Uuid::new_v4()),
+                    task_id.as_str(),
+                    run_id.as_str(),
+                    outcome.map(TaskOutcome::as_str),
+                    unix_time_ms(),
+                ],
+            )?;
+            Ok(inserted > 0)
         })
     }
 
@@ -986,6 +1076,220 @@ mod tests {
             .project
             .id;
         (temp, ExperienceStore::new(database), project)
+    }
+
+    fn delivery_context(
+        store: &ExperienceStore,
+        project: &ProjectId,
+        request_id: &str,
+        mode: crate::context::ContextMode,
+    ) -> ContextRunId {
+        crate::context::ContextCompiler::new(store.database.clone(), 1_000, 64)
+            .compile(&crate::context::ContextCompileRequest {
+                request_id: request_id.to_owned(),
+                project_id: project.clone(),
+                task_text: "Locate the authorization check".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 500,
+                mode,
+                repository_root: None,
+                head: None,
+                task_id: None,
+                framing: None,
+            })
+            .expect("compile context without delivery linkage")
+            .id
+    }
+
+    fn delivery_outcomes(store: &ExperienceStore, task_id: &TaskId) -> Vec<Option<String>> {
+        store
+            .database
+            .with_reader(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT outcome FROM usage_events WHERE source_type='task' AND source_id=?1
+                     AND usage_kind='context_served' ORDER BY created_at_ms,id",
+                )?;
+                Ok(statement
+                    .query_map([task_id.as_str()], |row| row.get(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?)
+            })
+            .expect("delivery outcomes")
+    }
+
+    #[test]
+    fn context_delivery_is_idempotent_and_retains_late_task_outcomes() {
+        let (_temp, store, project) = store();
+        let task = store
+            .start_task(&project, "Verify authorization", None)
+            .expect("task");
+        let run_id = delivery_context(
+            &store,
+            &project,
+            "first",
+            crate::context::ContextMode::Brain,
+        );
+        assert!(delivery_outcomes(&store, &task.id).is_empty());
+        assert!(
+            store
+                .record_context_delivery(&task.id, &run_id)
+                .expect("delivery")
+        );
+        assert!(
+            !store
+                .record_context_delivery(&task.id, &run_id)
+                .expect("repeat delivery")
+        );
+        assert_eq!(delivery_outcomes(&store, &task.id), vec![None]);
+
+        // Compilation preceded completion; only its acknowledgement was delayed.
+        let late = delivery_context(&store, &project, "late", crate::context::ContextMode::Brain);
+        store
+            .finish_task(&task.id, TaskOutcome::Failure, None, None)
+            .expect("finish");
+        assert!(
+            store
+                .record_context_delivery(&task.id, &late)
+                .expect("late delivery")
+        );
+        assert!(
+            !store
+                .record_context_delivery(&task.id, &late)
+                .expect("repeat late receipt")
+        );
+        assert_eq!(
+            delivery_outcomes(&store, &task.id),
+            vec![Some("failure".to_owned()), Some("failure".to_owned())]
+        );
+        assert!(
+            store
+                .record_context_delivery(&task.id, &ContextRunId::new())
+                .is_err()
+        );
+        assert!(
+            store
+                .record_context_delivery(&TaskId::new(), &run_id)
+                .is_err()
+        );
+        assert_eq!(delivery_outcomes(&store, &task.id).len(), 2);
+    }
+
+    #[test]
+    fn context_delivery_rejects_foreign_projects_and_off_controls() {
+        let (temp, store, project) = store();
+        let task = store
+            .start_task(&project, "Verify authorization", None)
+            .expect("task");
+        let other_root = temp.path().join("other-project");
+        std::fs::create_dir(&other_root).expect("other repository");
+        let other = ProjectRegistry::new(store.database.clone())
+            .resolve_or_register(&other_root)
+            .expect("other project")
+            .project
+            .id;
+        let foreign = delivery_context(
+            &store,
+            &other,
+            "foreign",
+            crate::context::ContextMode::Brain,
+        );
+        assert!(
+            store
+                .record_context_delivery(&task.id, &foreign)
+                .expect_err("foreign rejected")
+                .to_string()
+                .contains("same project")
+        );
+        let off = delivery_context(&store, &project, "off", crate::context::ContextMode::Off);
+        assert!(
+            store
+                .record_context_delivery(&task.id, &off)
+                .expect_err("off rejected")
+                .to_string()
+                .contains("only brain")
+        );
+        assert!(delivery_outcomes(&store, &task.id).is_empty());
+    }
+
+    #[test]
+    fn context_delivery_recognizes_existing_lazy_task_linkage() {
+        let (_temp, store, project) = store();
+        let run_id = delivery_context(
+            &store,
+            &project,
+            "lazy-prompt",
+            crate::context::ContextMode::Brain,
+        );
+        let task = store
+            .start_task_with_context(&project, "Verify authorization", None, Some("lazy-prompt"))
+            .expect("lazy task");
+        assert_eq!(delivery_outcomes(&store, &task.id), vec![None]);
+        assert!(
+            !store
+                .record_context_delivery(&task.id, &run_id)
+                .expect("existing linkage")
+        );
+        assert_eq!(delivery_outcomes(&store, &task.id), vec![None]);
+    }
+
+    #[test]
+    fn context_delivery_rejects_a_different_task_in_the_same_project() {
+        let (_temp, store, project) = store();
+        let run_id = delivery_context(
+            &store,
+            &project,
+            "owned-context",
+            crate::context::ContextMode::Brain,
+        );
+        let owner = store
+            .start_task_with_context(&project, "Original task", None, Some("owned-context"))
+            .expect("owner task");
+        let other = store
+            .start_task_with_context(&project, "Another task", None, Some("owned-context"))
+            .expect("other task");
+        assert!(delivery_outcomes(&store, &other.id).is_empty());
+        assert!(
+            store
+                .record_context_delivery(&other.id, &run_id)
+                .expect_err("context cannot be reassigned")
+                .to_string()
+                .contains("different task")
+        );
+        assert_eq!(delivery_outcomes(&store, &owner.id), vec![None]);
+        assert!(delivery_outcomes(&store, &other.id).is_empty());
+        assert!(!store.record_context_delivery(&owner.id, &run_id).unwrap());
+    }
+
+    #[test]
+    fn context_delivery_cannot_attribute_new_context_to_an_old_success() {
+        let (_temp, store, project) = store();
+        let task = store
+            .start_task(&project, "Already completed task", None)
+            .expect("task");
+        store
+            .finish_task(&task.id, TaskOutcome::Success, None, None)
+            .expect("finish");
+        let run_id = delivery_context(
+            &store,
+            &project,
+            "post-completion",
+            crate::context::ContextMode::Brain,
+        );
+        // Force a distinct timestamp without sleeping or relying on clock resolution.
+        store.database.write_immediate(|transaction| {
+            transaction.execute(
+                "UPDATE context_runs SET created_at_ms=(SELECT completed_at_ms+1 FROM tasks WHERE id=?2) WHERE id=?1",
+                params![run_id.as_str(), task.id.as_str()],
+            )?;
+            Ok(())
+        }).unwrap();
+        assert!(
+            store
+                .record_context_delivery(&task.id, &run_id)
+                .expect_err("new context cannot inherit an earlier success")
+                .to_string()
+                .contains("before the task completes")
+        );
+        assert!(delivery_outcomes(&store, &task.id).is_empty());
     }
 
     #[test]

@@ -1,3 +1,16 @@
+# One shared knowledge workspace by default, preserving existing state.
+# Select another with --workspace NAME, ENGRAM_WORKSPACE=NAME, or this field
+# in a repository's .engram/config.toml (CLI > environment > project > user).
+# Names: 1-32 lowercase letters, digits, hyphens or underscores; start with a
+# letter or digit. Named state lives in ~/.engram/workspaces/NAME/.
+# Optional per-workspace tuning: ~/.engram/workspaces/NAME/config.toml, loaded
+# after global config and before project config. Omit this selector there.
+# Named profiles reset inherited DB/socket/vault paths and sync destinations;
+# explicit state paths must stay inside that workspace. Blob, semantic, and
+# hook state live beside the selected database. No repos are copied or indexed
+# merely by selecting a workspace.
+workspace = "default"
+
 [brain]
 auto_learn = false
 conservative_promotion = true
@@ -131,6 +144,28 @@ auto = false
 # when local evidence exists but is below the threshold. Off by default.
 cross_project_hypotheses = false
 
+[judge]
+# Optional evidence judge. Local uses an OpenAI-compatible endpoint.
+# Existing deterministic evidence checks still gate every promotion.
+enabled = false
+provider = "local"
+allow_remote = false
+# TypeSafe alternative: provider="typesafe", allow_remote=true,
+# endpoint="https://api.typesafe.ai/v1/systemone", model="jev-1.13.0".
+# Requires network.local_only=false and TYPESAFE_API_KEY in the daemon environment.
+# Only redacted review packets are sent, but these can contain proprietary data.
+# This threshold is a decision policy, not an empirically calibrated accuracy.
+acceptance_threshold = 0.98
+endpoint = "http://127.0.0.1:11434/v1/chat/completions"
+model = ""
+interval_seconds = 300
+timeout_seconds = 90
+batch_size = 2
+max_input_bytes = 49152
+max_output_tokens = 1200
+max_retries = 3
+retry_seconds = 1800
+
 [vault]
 # Derived Obsidian vault: per-repo notes, mermaid module maps, memory notes,
 # and the workspace overview. Point Obsidian at `root`.
@@ -163,6 +198,9 @@ auto_min_secs = 3600
 # The workspace browser, served by the daemon. Loopback by default; binding
 # beyond loopback (a central team server) REQUIRES `token`, which then gates
 # every /api and /webhook request.
+# Named workspaces disable this listener unless their own profile/project
+# explicitly enables it on a different port, e.g. 12436. Give each running
+# named workspace a unique port; 11436 is reserved for the default workspace.
 enabled = true
 port = 11436
 bind = "127.0.0.1"

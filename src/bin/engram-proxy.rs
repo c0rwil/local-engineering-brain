@@ -11,6 +11,9 @@ use engram::config::{Config, ConfigOverrides};
     about = "Engram-compatible inference proxy"
 )]
 struct Cli {
+    /// Isolated engineering workspace.
+    #[arg(long)]
+    workspace: Option<String>,
     /// Override the runtime base URL.
     #[arg(long)]
     runtime: Option<String>,
@@ -51,10 +54,11 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> engram::Result<()> {
     let overrides = ConfigOverrides {
+        workspace: cli.workspace.clone(),
         db_path: cli.db.clone(),
         ..ConfigOverrides::default()
     };
-    let config = Config::load_for(None, &overrides)?;
+    let config = Config::load_for_current_dir(&overrides)?;
     let config = apply_cli(config, cli)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
