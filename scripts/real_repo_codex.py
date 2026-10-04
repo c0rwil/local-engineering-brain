@@ -59,6 +59,59 @@ HOOK_EVENTS = {
 }
 # Never visible to tool commands, whatever the arm.
 EXCLUDED_ENV = ("CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "ENGRAM_DB_PATH", "ENGRAM_SOCKET_PATH")
+# A hook process that outlives Codex (for example a SessionEnd hook) must
+# finish while the arm's daemon still runs: a hook that finds no daemon loses
+# its record and auto-starts a replacement daemon on the trial's state.
+HOOK_DRAIN_SECONDS = 45
+HOOK_KILL_GRACE_SECONDS = 5
+
+
+def _signal_group(group: int, signum: int) -> bool:
+    try:
+        os.killpg(group, signum)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def _drain_group(group: int, seconds: float) -> bool:
+    """Wait for every process in the group to exit; stop stragglers at the deadline."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not _signal_group(group, 0):
+            return True
+        time.sleep(0.2)
+    _signal_group(group, signal.SIGTERM)
+    time.sleep(HOOK_KILL_GRACE_SECONDS)
+    _signal_group(group, signal.SIGKILL)
+    return False
+
+
+def run_codex(argv, *, cwd, env, prompt: str, stdout, stderr, timeout: float) -> dict:
+    """Run `codex exec` in its own process group, then drain hook stragglers.
+
+    Agent wall time ends when Codex exits; the drain is reported separately.
+    """
+    started = time.monotonic()
+    timed_out = False
+    proc = subprocess.Popen(list(map(str, argv)), cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=stdout,
+                            stderr=stderr, text=True, start_new_session=True)
+    try:
+        proc.communicate(prompt, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _signal_group(proc.pid, signal.SIGTERM)
+        try:
+            proc.wait(10)
+        except subprocess.TimeoutExpired:
+            _signal_group(proc.pid, signal.SIGKILL)
+            proc.wait()
+    wall = round(time.monotonic() - started, 3)
+    drain_started = time.monotonic()
+    drained = _drain_group(proc.pid, HOOK_DRAIN_SECONDS)
+    return {"agent_wall_seconds": wall, "agent_exit_code": proc.returncode, "agent_timed_out": timed_out,
+            "agent_hook_drain_seconds": round(time.monotonic() - drain_started, 3),
+            "agent_hook_stragglers_stopped": not drained}
 
 
 # Timeout Codex hashes for a command hook that sets none.
@@ -375,24 +428,10 @@ class CodexAgent:
     def execute(self, prepared: dict, prompt: str, args) -> dict:
         trial = prepared["trial"]
         prepared["scratch"].mkdir(exist_ok=True)
-        started = time.monotonic()
-        timed_out = False
         with (trial / "trace.jsonl").open("w") as out, (trial / "stderr.log").open("w") as err:
-            proc = subprocess.Popen(self.command(prepared), cwd=prepared["work"],
-                                    env=self.environment(prepared, compact=getattr(args, "compact_settings", False)),
-                                    stdin=subprocess.PIPE, stdout=out, stderr=err, text=True, start_new_session=True)
-            try:
-                proc.communicate(prompt, timeout=args.agent_seconds)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                os.killpg(proc.pid, signal.SIGTERM)
-                try:
-                    proc.wait(10)
-                except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.wait()
-        return {"agent_wall_seconds": round(time.monotonic() - started, 3), "agent_exit_code": proc.returncode,
-                "agent_timed_out": timed_out}
+            return run_codex(self.command(prepared), cwd=prepared["work"],
+                             env=self.environment(prepared, compact=getattr(args, "compact_settings", False)),
+                             prompt=prompt, stdout=out, stderr=err, timeout=args.agent_seconds)
 
     def metrics(self, prepared: dict) -> dict:
         return parse_codex_trace(prepared["trial"] / "trace.jsonl", session_files(prepared["codex_home"]))

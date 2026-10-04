@@ -17,7 +17,9 @@ endpoint: no model is called, no credentials are read, and the only provider is
   other or later trial roots are unreadable; other writes are denied; loopback
   TCP and Unix sockets are blocked; secrets are absent from the tool environment;
 - Brain hooks deliver Engram context and the daemon acknowledges it, Off sends
-  none, and the transcript parser recovers the scripted usage exactly.
+  none, and the transcript parser recovers the scripted usage exactly;
+- every hook process finishes before the arm's daemon stops, and nothing
+  restarts that daemon afterwards.
 
 A passing run writes codex-runtime-preflight.json, which run_real_repo_followup.py
 requires before a Codex collection.
@@ -72,7 +74,7 @@ CHECK_NAMES = {
     "cli_exit", "features", "mcp_servers", "hook_trust", "prompt_input_without_user_skills", "pinned_model_and_effort",
     "engram_tools", "engram_context", "probe_executed", "private_reads_denied", "allowed_paths_writable",
     "other_writes_denied", "network_denied", "tool_environment", "transcript_usage", "transcript_tools",
-    "delivery_receipts",
+    "delivery_receipts", "hooks_drained",
 }
 
 
@@ -205,6 +207,17 @@ def features(codex: Path, env: dict) -> dict:
     return states
 
 
+def socket_served(path: Path) -> bool:
+    """Whether a process accepts connections on this Unix socket."""
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(2)
+        try:
+            client.connect(str(path))
+        except OSError:
+            return False
+    return True
+
+
 def text_of(value) -> str:
     return json.dumps(value) if not isinstance(value, str) else value
 
@@ -278,8 +291,10 @@ def run_arm(arm: str, data: Path, active: Path, adapter, output: Path) -> dict:
         expected_mcp = str(runner.ENGRAM.parent / "engram-mcp")
         checks["mcp_servers"] = ((len(servers) == 1 and expected_mcp in json.dumps(servers)
                                   and "--no-autostart" in json.dumps(servers)) if arm == "brain" else servers == [])
-        rendered = subprocess.run([str(adapter.executable), "debug", "prompt-input", "preflight"], cwd=work,
-                                  env=tool_env, capture_output=True, text=True, timeout=120)
+        # Rendering starts a session, which would run trusted hooks without the
+        # arm's daemon; the session check below covers hooks.
+        rendered = subprocess.run([str(adapter.executable), "debug", "prompt-input", "--disable", "hooks", "preflight"],
+                                  cwd=work, env=tool_env, capture_output=True, text=True, timeout=120)
         # The permission profile's denied paths (for example ~/.engram) are
         # shown to the model in both arms; Engram *context* must not be.
         prompt_flags = {"user_skills": ".agents/skills" in rendered.stdout,
@@ -321,14 +336,19 @@ def run_arm(arm: str, data: Path, active: Path, adapter, output: Path) -> dict:
                        "-c", "model_providers.erp26_preflight={name=\"loopback preflight\", "
                              f"base_url=\"http://127.0.0.1:{server.server_address[1]}/v1\", wire_api=\"responses\", "
                              f"env_key=\"{codex_arm.AUTH_ENV}\", request_max_retries=0, stream_max_retries=0}}"]
+        if socket_served(state / "d.sock"):
+            raise RuntimeError("Something already serves this arm's Engram socket; a stray daemon would mask the check")
         manager = runner.daemon(config, state) if arm == "brain" else contextlib.nullcontext()
         with manager:
             if arm == "brain":
                 runner.cli(state, "index", work, "--json")
             with (output / f"{arm}.trace.jsonl").open("w") as trace, (output / f"{arm}.stderr.log").open("w") as err:
-                run = subprocess.run(argv, cwd=work, env=env, input=PROMPT, text=True, stdout=trace, stderr=err, timeout=300)
+                run = codex_arm.run_codex(argv, cwd=work, env=env, prompt=PROMPT, stdout=trace, stderr=err, timeout=300)
             receipts = runner.receipt_summary(state) if arm == "brain" else {"emission_receipts": 0}
-        checks["cli_exit"] = run.returncode == 0
+        # Hooks finished before the daemon stopped, and none restarted it afterwards.
+        time.sleep(2)
+        checks["hooks_drained"] = not run["agent_hook_stragglers_stopped"] and not socket_served(state / "d.sock")
+        checks["cli_exit"] = run["agent_exit_code"] == 0 and not run["agent_timed_out"]
         sessions = codex_arm.session_files(prepared["codex_home"])
         with (output / f"{arm}.session.jsonl").open("wb") as combined:
             for session in sessions:

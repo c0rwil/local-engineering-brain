@@ -158,6 +158,14 @@ separately. Tool calls are model-issued function, custom and shell calls,
 deduplicated by `call_id`. Codex reports no USD estimate and `codex exec` has
 no budget cap, so only the wall limit applies.
 
+A hook that runs while the arm's daemon is down loses its record and starts a
+replacement daemon on the trial's state. To keep any hook process that
+outlives Codex from doing so, the runner waits up to 45 seconds for the
+remaining processes in Codex's process group, then stops any stragglers,
+before it stops the daemon. Agent wall time ends when Codex exits. The wait
+is recorded separately (`agent_hook_drain_seconds`,
+`agent_hook_stragglers_stopped`).
+
 Before collection, run the model-free preflight
 [`preflight_real_repo_codex.py`](../../scripts/preflight_real_repo_codex.py).
 It builds each arm's exact Codex home and drives the pinned binary against a
@@ -165,8 +173,9 @@ scripted loopback endpoint; no model is called and no credentials are read.
 It checks feature flags, MCP servers, the hook-trust record, and the absence
 of user skills from the model-visible prompt input. Through Codex's real exec
 tool, it checks reads, writes, loopback TCP and Unix sockets, and the tool
-environment. It also checks Brain hook delivery and the daemon receipt, and
-that the parser recovers the scripted usage exactly. With persisted trust no
+environment. It also checks Brain hook delivery and the daemon receipt, that
+the parser recovers the scripted usage exactly, and that no hook restarts the
+arm's daemon after the session. With persisted trust no
 bypass flag is passed, so Brain hook delivery shows that Codex accepted the
 trust entries. The runner refuses to collect without a passing proof for the
 same binaries, model, effort, trust mode and scripts.

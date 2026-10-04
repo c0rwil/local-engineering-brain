@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import tomllib
 from types import SimpleNamespace
 import unittest
@@ -398,6 +399,38 @@ class CodexHookTests(unittest.TestCase):
                     for event, _, _, digest in CODEX_TRUST_VECTORS[:6]}
         self.assertEqual(entries, expected)
 
+    @unittest.skipUnless((SCRIPTS.parent / "target/debug/engram").is_file(), "debug engram binary not built")
+    def test_rust_inspector_reads_the_generated_trust_as_trusted(self):
+        """`engram doctor` (src/codex_trust.rs) must agree with this port."""
+        binary = (SCRIPTS.parent / "target/debug/engram").resolve()
+        active = self.root / "active"
+        home = active / "codex-home"
+        home.mkdir(parents=True)
+        (active / ".pilot-owned").write_text("unit\n")
+        with mock.patch.object(runner, "ENGRAM", binary):
+            codex.install_hooks(home, self.root / "hook-home")
+        trusted = codex.codex_hook_trust_entries(home)
+
+        def doctor(entries):
+            (home / "config.toml").write_text(codex.config_text(
+                arm="brain", model="m", effort="high", work=active / "work", denied=[], globs=[],
+                state=active / "state", engram_mcp=binary.parent / "engram-mcp", trusted_hooks=entries))
+            result = subprocess.run(
+                [str(binary), "--db", str(self.root / "doctor.sqlite"), "doctor", "--json"], capture_output=True,
+                text=True, timeout=120, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                                             "HOME": str(self.root / "doctor-home"), "CODEX_HOME": str(home)})
+            checks = [check for check in json.loads(result.stdout)["checks"] if check["name"] == "codex_hooks"]
+            self.assertEqual(len(checks), 1, "rebuild target/debug/engram: it predates Codex trust inspection")
+            return checks[0]
+
+        check = doctor(trusted)
+        self.assertEqual(check["status"], "pass", check["detail"])
+        self.assertIn(f"all {len(codex.HOOK_EVENTS)} Engram hooks", check["detail"])
+        tampered = {**trusted, min(trusted): "sha256:" + "0" * 64}
+        check = doctor(tampered)
+        self.assertEqual(check["status"], "warning")
+        self.assertIn("changed since trusted", check["detail"])
+
     def test_trust_is_never_written_outside_a_runner_owned_home(self):
         unowned = self.root / "unowned/codex-home"
         unowned.mkdir(parents=True)
@@ -671,6 +704,66 @@ args.output.write_text(json.dumps({"status": "pass" if passed else "fail", "chec
 """
 
 
+HOOK_STRAGGLER = """#!{python}
+\"\"\"Fake Codex that exits while a hook-like child keeps running in its group.\"\"\"
+import subprocess, sys
+child = "import os, pathlib, time; pathlib.Path({pid!r}).write_text(str(os.getpid())); time.sleep({delay}); pathlib.Path({marker!r}).write_text('done')"
+subprocess.Popen([sys.executable, "-c", child])
+sys.stdin.read()
+print('{{"type": "turn.completed"}}', flush=True)
+"""
+
+
+class CodexDrainTests(unittest.TestCase):
+    """Codex may exit before its hooks; they must finish before the daemon stops."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="codex-drain-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.marker, self.pid = self.root / "hook-finished", self.root / "hook-pid"
+
+    def run_fake(self, delay, timeout=30):
+        fake = make_executable(self.root / "codex", HOOK_STRAGGLER.format(
+            python=sys.executable, pid=str(self.pid), delay=delay, marker=str(self.marker)))
+        with (self.root / "out.jsonl").open("w") as out, (self.root / "err.log").open("w") as err:
+            return codex.run_codex([fake], cwd=self.root, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+                                   prompt="synthetic", stdout=out, stderr=err, timeout=timeout)
+
+    def test_hook_processes_left_in_the_group_finish_before_return(self):
+        result = self.run_fake(delay=2)
+        self.assertTrue(self.marker.is_file(), "returned before the hook finished")
+        self.assertIs(result["agent_hook_stragglers_stopped"], False)
+        self.assertEqual(result["agent_exit_code"], 0)
+        self.assertIs(result["agent_timed_out"], False)
+        # Agent wall time ends when Codex exits; the hook wait is separate.
+        self.assertGreater(result["agent_hook_drain_seconds"], result["agent_wall_seconds"])
+
+    def test_stragglers_are_stopped_at_the_deadline(self):
+        with mock.patch.multiple(codex, HOOK_DRAIN_SECONDS=0.5, HOOK_KILL_GRACE_SECONDS=0.2):
+            result = self.run_fake(delay=30)
+        self.assertIs(result["agent_hook_stragglers_stopped"], True)
+        pid = int(self.pid.read_text())
+        for _ in range(50):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            self.fail("straggler survived the drain deadline")
+        self.assertFalse(self.marker.exists())
+
+    def test_wall_timeout_stops_codex_and_its_group(self):
+        fake = make_executable(self.root / "slow-codex", f"#!{sys.executable}\nimport time\ntime.sleep(30)\n")
+        with (self.root / "out.jsonl").open("w") as out, (self.root / "err.log").open("w") as err:
+            result = codex.run_codex([fake], cwd=self.root, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+                                     prompt="", stdout=out, stderr=err, timeout=0.5)
+        self.assertIs(result["agent_timed_out"], True)
+        self.assertNotEqual(result["agent_exit_code"], 0)
+        self.assertLess(result["agent_wall_seconds"], 15)
+
+
 class FakeCodexTrialTests(unittest.TestCase):
     """run_trial end to end with a fake Codex CLI and a synthetic task."""
 
@@ -725,6 +818,7 @@ class FakeCodexTrialTests(unittest.TestCase):
                           usage["reasoning_output_tokens"], usage["total_tokens"]), (3000, 1200, 100, 40, 3100))
         self.assertEqual(usage["tool_calls"], 2)
         self.assertNotIn("usage_may_be_partial", record)
+        self.assertIs(record["agent_hook_stragglers_stopped"], False)
         self.assertNotIn("--dangerously-bypass-hook-trust", seen["argv"])
         self.assertIs(seen["hooks_feature"], False)
         self.assertEqual(seen["mcp"], [])
@@ -931,6 +1025,16 @@ class CodexPreflightTests(unittest.TestCase):
         (self.data / preflight.PROOF).unlink()
         with self.assertRaises(OSError):
             self.validate()
+
+    def test_socket_served_detects_a_listener_only(self):
+        import socket
+        path = self.data / "probe.sock"
+        self.assertFalse(preflight.socket_served(path))
+        with socket.socket(socket.AF_UNIX) as server:
+            server.bind(str(path))
+            server.listen()
+            self.assertTrue(preflight.socket_served(path))
+        self.assertFalse(preflight.socket_served(path))
 
     def test_probe_result_is_read_from_function_call_output(self):
         line = preflight.PROBE_MARKER + json.dumps({"allowed_read": True})
