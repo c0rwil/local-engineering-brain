@@ -236,7 +236,11 @@ pub fn pending_prompt(state_dir: &Path, session_id: &str) -> Option<String> {
         .ok()
 }
 
-/// Read shell text from Claude and native Codex tool argument shapes.
+/// Read shell text from a tool input: `command` (Claude Code, Cursor, and
+/// Codex hooks, which report `exec_command` as `Bash` with its `cmd` moved
+/// to `command`) or `cmd` (the raw `exec_command` argument). Only explicit
+/// string fields count: a code-mode `exec` cell's JavaScript is never read
+/// as shell text (see [`is_shell_tool`]).
 #[must_use]
 pub fn tool_command(input: &serde_json::Value) -> &str {
     input
@@ -1710,6 +1714,14 @@ pub struct PendingVerification {
 }
 
 /// Whether the tool runs shell text that can carry a verification.
+///
+/// Codex (0.155) reports every shell command as `Bash` with
+/// `{"command": ...}`, whether the model called `exec_command` directly or
+/// from a code-mode `exec` cell through `tools.exec_command(...)`. The cell
+/// itself is not a shell tool: its input is JavaScript, Codex runs no hook
+/// for it or for code mode's `wait`, and each command it runs arrives as its
+/// own `Bash` call. Reading the cell as shell would misparse JavaScript and
+/// count those commands twice, so `exec` and `wait` are not listed here.
 #[must_use]
 pub fn is_shell_tool(payload: &serde_json::Value) -> bool {
     payload
@@ -2112,7 +2124,9 @@ fn shell_commands(text: &str) -> Option<Vec<(String, Option<ShellOperator>)>> {
 /// reports every non-zero exit as a failure event, so only `claude_code`
 /// payloads may infer 0). Interrupted, backgrounded or reinterpreted
 /// (`returnCodeInterpretation`) calls, and failures without an exit code,
-/// have no known status.
+/// have no known status. Neither does a Codex (0.155) shell call: its
+/// `PostToolUse` `tool_response` is the command's output text, and Codex
+/// runs the hook for failing commands too.
 #[must_use]
 pub fn observed_exit_status(
     payload: &serde_json::Value,
@@ -2653,7 +2667,8 @@ fn declaration_paths(state_dir: &Path, session_id: &str) -> Vec<PathBuf> {
 /// Pull an explicit exit code out of the shapes tool results take. A bare
 /// `is_error` flag is not an exit status: it reports whether the tool call
 /// failed, which a client may decide without the command's status, so it
-/// never stands in for one.
+/// never stands in for one. Text never carries one either: a string result
+/// is the command's own output, which can print anything.
 #[must_use]
 pub fn extract_exit_code(tool_result: &serde_json::Value) -> Option<i32> {
     for key in ["exitCode", "exit_code", "code", "returnCode", "returncode"] {
@@ -3013,6 +3028,80 @@ mod tests {
                 None,
                 "is_error={flag}"
             );
+        }
+    }
+
+    /// Codex code mode (0.155): the `exec` cell's input is JavaScript and no
+    /// hook runs for it; were a build to report it, the cell is still not
+    /// shell text, whichever field carries the source.
+    #[test]
+    fn codex_code_mode_cells_are_not_shell_text() {
+        use serde_json::json;
+        let cell = "const r = await tools.exec_command({ cmd: \"cargo test\" });\ntext(r.output);";
+        for input in [
+            json!(cell),
+            json!({"command": cell}),
+            json!({"input": cell}),
+            json!({"code": cell}),
+        ] {
+            for tool in ["exec", "wait"] {
+                let payload = json!({"hook_event_name":"PostToolUse","tool_name":tool,
+                    "tool_use_id":"cell-1","tool_input":input,"tool_response":"test result: ok"});
+                assert!(!is_shell_tool(&payload), "{tool}: {input}");
+                assert!(
+                    pending_verification(&payload, Path::new("/work")).is_none(),
+                    "{tool}: {input}"
+                );
+            }
+        }
+        assert_eq!(tool_command(&json!(cell)), "");
+        assert_eq!(tool_command(&json!({"input": cell})), "");
+    }
+
+    /// A shell command run from a code-mode cell reaches hooks as its own
+    /// `Bash` call, in the shape Codex's hook schema gives every unified-exec
+    /// command: `tool_input.command` and the output text as `tool_response`.
+    /// It is a recognized verification without a status; only an explicit
+    /// integer exit code, never text, would give it one.
+    #[test]
+    fn codex_shell_results_carry_no_exit_status_unless_explicit() {
+        use serde_json::json;
+        let nested = json!({"session_id":"s1","turn_id":"turn-1","cwd":"/work",
+            "hook_event_name":"PostToolUse","model":"gpt-test","permission_mode":"default",
+            "transcript_path":null,"tool_name":"Bash","tool_use_id":"call-1",
+            "tool_input":{"command":"cargo test"},"tool_response":"test result: ok. 3 passed"});
+        let pending = pending_verification(&nested, Path::new("/work")).expect("recognized");
+        assert_eq!((pending.kind, pending.hidden), ("test_result", None));
+        assert_eq!(
+            observed_exit_status(&nested, false),
+            None,
+            "a completed Codex call is not a pass"
+        );
+        for text in [
+            "Process exited with code 0",
+            "Exit code 0",
+            "{\"exit_code\":0}",
+        ] {
+            let mut forged = nested.clone();
+            forged["tool_response"] = json!(text);
+            assert_eq!(observed_exit_status(&forged, false), None, "{text}");
+        }
+        // Code mode's own result object: an explicit integer is a status, a
+        // session still running has none.
+        let mut explicit = nested.clone();
+        explicit["tool_response"] =
+            json!({"wall_time_seconds":1.5,"exit_code":101,"output":"FAILED"});
+        assert_eq!(
+            observed_exit_status(&explicit, false),
+            Some((101, "tool_response"))
+        );
+        for response in [
+            json!({"wall_time_seconds":10.0,"session_id":7,"output":"running"}),
+            json!({"exit_code":null,"output":""}),
+        ] {
+            let mut unknown = nested.clone();
+            unknown["tool_response"] = response;
+            assert_eq!(observed_exit_status(&unknown, false), None);
         }
     }
 

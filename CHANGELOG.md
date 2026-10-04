@@ -192,6 +192,20 @@ not yet stable, and the schema version is 7.
 
 ### Fixed
 
+- Hooks resolve paths anywhere inside a registered folder that is not a Git
+  repository. Before, only paths at the folder's root resolved: reads, edits
+  and verifications in its subdirectories were dropped, and `engram index` or
+  `--path` on a subdirectory registered it as a separate project with its own
+  pin. A path now belongs to the nearest folder above it that holds a project
+  pin, as a subdirectory belongs to its repository, and configuration loads
+  from that folder. The search stops at any `.git` entry and at the home
+  directory, so a registered home directory owns only itself.
+- The user guide said Codex reports exit codes to hooks. Codex 0.155 does not:
+  every shell command, also one run from a code-mode `exec` cell, reaches
+  hooks as a `Bash` call whose `tool_response` is the command's output text.
+  Engram reads no status from output text, so Codex verification runs are not
+  recorded from hooks; status notes still apply. The `exec` cell itself runs
+  no hook, and its JavaScript is never read as shell text.
 - An interrupted backup (`engram backup create`, daily and pre-merge
   backups) no longer leaves a partial, world-readable file that looks like a
   backup: the copy is written to a hidden 0600 file and renamed when
