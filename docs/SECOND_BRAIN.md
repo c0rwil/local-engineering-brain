@@ -263,6 +263,20 @@ must be newer than every touched file's indexed version. The hook records only
 runs whose exit status the client reported; see the user guide on
 [verification evidence from hooks](USER_GUIDE.md#verification-evidence-from-hooks).
 
+Some touched files have no index anchor, for example YAML or Terraform files that
+the indexer does not parse. Evidence certifies such a file only when its hook-recorded
+digest equals the file's live SHA-256. Evidence reported by agents has no such digests,
+so these tasks stay deferred until a native hook records a verification. A digest
+that no longer matches means the file changed after the verification. Files in
+linked repositories still need an index anchor.
+
+A recorded task or evidence revision older than the live HEAD is immaterial when
+every touched file has the same bytes at that revision, in the live checkout and in
+the index. The judge compares them with one bounded `git cat-file --batch` read and
+passes only hexadecimal revisions of at least seven digits to Git. A missing or
+ambiguous revision, a changed file, an unreadable file or a task without touched
+files keeps the deferral.
+
 Hook provenance (a hook `source` label and `source_digests`) is attached only
 through the daemon's hook evidence endpoint, which the CLI and MCP do not use;
 the generic evidence endpoint removes those keys from client-supplied metadata.

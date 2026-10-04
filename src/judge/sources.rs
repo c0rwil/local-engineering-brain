@@ -30,6 +30,10 @@ const LIVE_FILE_LIMIT: usize = 512 * 1024;
 /// Git metadata read while matching a checkout to a recorded revision.
 const GIT_METADATA_LIMIT: u64 = 4 * 1024;
 const PACKED_REFS_LIMIT: u64 = 8 * 1024 * 1024;
+/// Distinct recorded revisions compared file by file with the live checkout.
+const MAX_REVISION_CHECKS: usize = 4;
+/// Longest `git cat-file --batch` header line read.
+const OBJECT_HEADER_LIMIT: u64 = 4 * 1024;
 
 pub(super) const TOO_MANY_FILES: &str =
     "Source episode exceeds the 64-file live verification limit";
@@ -53,6 +57,8 @@ pub(super) const DIFFERS_FROM_INDEX: &str =
     "Touched file differs from indexed source; index and verify it again";
 pub(super) const NOT_INDEXED: &str =
     "Touched file has no indexed anchor; index the repository and verify it again";
+pub(super) const UNANCHORED_UNOBSERVED: &str = "Touched file has no indexed anchor and no hook-recorded digest of its live content; verify it again through a native hook";
+pub(super) const UNANCHORED_CHANGED: &str = "Touched file has no indexed anchor and changed after the hook-observed verification; verify it again";
 
 /// Reporting order: containment, checkout state, reads, then index agreement.
 /// A Git HEAD failure has no fixed text and ranks with the revision check.
@@ -83,6 +89,22 @@ pub(super) struct LiveSources {
     pub live: Value,
     /// The highest-priority reason this packet cannot be reviewed automatically.
     pub issue: Option<String>,
+    /// Checkout-relative paths and live SHA-256 of this project's touched files
+    /// that have no index anchor. Only evidence whose hook-recorded digests
+    /// match every one of them can certify the task.
+    pub unanchored: Vec<(String, String)>,
+    /// Recorded revisions (normalized) at which every touched file has exactly
+    /// its live and indexed content, so a newer live HEAD is immaterial.
+    pub unchanged_revisions: Vec<String>,
+}
+
+impl LiveSources {
+    /// Whether a recorded revision differs from the live HEAD only in files the
+    /// task did not touch.
+    pub(super) fn revision_immaterial(&self, revision: &str) -> bool {
+        normalized_revision(revision)
+            .is_some_and(|revision| self.unchanged_revisions.contains(&revision))
+    }
 }
 
 struct Checkout {
@@ -126,6 +148,8 @@ pub(super) fn live_sources(
             indexed: Vec::new(),
             live: json!({"too_many_files": true}),
             issue: Some(TOO_MANY_FILES.to_owned()),
+            unanchored: Vec::new(),
+            unchanged_revisions: Vec::new(),
         });
     }
     let (checkouts, access_denied) = checkouts(project_id, &recorded);
@@ -140,8 +164,12 @@ pub(super) fn live_sources(
         .iter()
         .map(|path| locate(path, &checkouts))
         .collect();
-    let mut revisions = recorded.revisions;
-    revisions.extend(final_commit.map(str::to_owned));
+    // The task's own revision first, so the bounded comparison below covers it.
+    let revisions: Vec<String> = final_commit
+        .map(str::to_owned)
+        .into_iter()
+        .chain(recorded.revisions)
+        .collect();
     let task_checkout = task_checkout(&checkouts, &locations, &revisions);
 
     let mut issues = Issues::default();
@@ -150,13 +178,6 @@ pub(super) fn live_sources(
         match live_head(&checkouts[index].root) {
             Ok(current) => head = current,
             Err(error) => issues.add(&error),
-        }
-        if head
-            .as_deref()
-            .zip(final_commit)
-            .is_some_and(|(current, recorded)| !same_revision(recorded, current))
-        {
-            issues.add(TASK_REVISION_DIFFERS);
         }
     }
     let targets: Vec<Target> = locations
@@ -179,14 +200,37 @@ pub(super) fn live_sources(
         anchors,
         &mut issues,
     );
+    let unchanged_revisions = match (task_checkout, head.as_deref(), &files.comparable) {
+        (Some(index), Some(current), Some(comparable)) => {
+            immaterial_revisions(&checkouts[index].root, current, &revisions, comparable)
+        }
+        _ => Vec::new(),
+    };
+    if head
+        .as_deref()
+        .zip(final_commit)
+        .is_some_and(|(current, recorded)| {
+            !same_revision(recorded, current)
+                && !normalized_revision(recorded)
+                    .is_some_and(|recorded| unchanged_revisions.contains(&recorded))
+        })
+    {
+        issues.add(TASK_REVISION_DIFFERS);
+    }
     let checkout = task_checkout.map_or_else(
         || json!("unavailable"),
         |index| json!(checkouts[index].root.to_string_lossy()),
     );
+    let mut live = json!({"checkout": checkout, "head": head, "files": files.live});
+    if !unchanged_revisions.is_empty() {
+        live["touched_files_unchanged_since"] = json!(unchanged_revisions);
+    }
     Ok(LiveSources {
         indexed: files.indexed,
-        live: json!({"checkout": checkout, "head": head, "files": files.live}),
+        live,
         issue: issues.first(),
+        unanchored: files.unanchored,
+        unchanged_revisions,
     })
 }
 
@@ -194,6 +238,10 @@ pub(super) fn live_sources(
 struct VerifiedFiles {
     indexed: Vec<Value>,
     live: Vec<Value>,
+    unanchored: Vec<(String, String)>,
+    /// Task-checkout paths with their live digest when every touched file was
+    /// read there and matched any index anchor; `None` otherwise.
+    comparable: Option<Vec<(String, String)>>,
 }
 
 /// Read each resolved file once and compare it with its project's index.
@@ -205,13 +253,17 @@ fn verify_files(
     anchors: Vec<IndexAnchor>,
     issues: &mut Issues,
 ) -> VerifiedFiles {
-    let mut files = VerifiedFiles::default();
+    let mut files = VerifiedFiles {
+        comparable: Some(Vec::new()),
+        ..VerifiedFiles::default()
+    };
     let mut remaining = LIVE_READ_BUDGET;
     for ((recorded_path, target), anchor) in touched.iter().zip(targets).zip(anchors) {
         let (index, relative) = match target {
             Ok(target) => target,
             Err(error) => {
                 issues.add(error);
+                files.comparable = None;
                 files
                     .live
                     .push(json!({"path": recorded_path, "error": error}));
@@ -224,8 +276,21 @@ fn verify_files(
         match &observed {
             Ok(digest) if indexed_digest == Some(digest) => {}
             Ok(_) if indexed_digest.is_some() => issues.add(DIFFERS_FROM_INDEX),
-            Ok(_) => issues.add(NOT_INDEXED),
+            // Linked repositories get no hook-digest path; their index decides.
+            Ok(_) if checkout.linked => issues.add(NOT_INDEXED),
+            Ok(digest) => files.unanchored.push((relative.clone(), digest.clone())),
             Err(error) => issues.add(error),
+        }
+        match &observed {
+            Ok(digest)
+                if Some(*index) == task_checkout
+                    && indexed_digest.is_none_or(|indexed| indexed == digest) =>
+            {
+                if let Some(comparable) = &mut files.comparable {
+                    comparable.push((relative.clone(), digest.clone()));
+                }
+            }
+            _ => files.comparable = None,
         }
         let other_checkout =
             (Some(*index) != task_checkout).then(|| checkout.root.to_string_lossy().into_owned());
@@ -269,6 +334,145 @@ pub(super) fn same_revision(recorded: &str, live: &str) -> bool {
             && live
                 .get(..recorded.len())
                 .is_some_and(|prefix| prefix.eq_ignore_ascii_case(recorded)))
+}
+
+/// A recorded revision usable as a Git object name: 7 to 64 hexadecimal
+/// digits, lowercased (the abbreviation rule of migration 0019). Anything
+/// else, such as a branch name or revision expression, is never passed to Git.
+fn normalized_revision(revision: &str) -> Option<String> {
+    let revision = revision.trim();
+    ((7..=64).contains(&revision.len()) && revision.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| revision.to_ascii_lowercase())
+}
+
+/// Recorded revisions behind the live HEAD that are immaterial: every touched
+/// file still has exactly the content it had at that revision. At most
+/// `MAX_REVISION_CHECKS` distinct revisions are compared, the task's own first.
+/// A task without touched files has nothing to compare and gets none.
+fn immaterial_revisions(
+    root: &Path,
+    head: &str,
+    revisions: &[String],
+    files: &[(String, String)],
+) -> Vec<String> {
+    let mut differing: Vec<String> = Vec::new();
+    for revision in revisions {
+        if same_revision(revision, head) {
+            continue;
+        }
+        if let Some(revision) = normalized_revision(revision) {
+            if !differing.contains(&revision) && differing.len() < MAX_REVISION_CHECKS {
+                differing.push(revision);
+            }
+        }
+    }
+    if differing.is_empty() || files.is_empty() {
+        return Vec::new();
+    }
+    files_unchanged_since(root, &differing, files)
+}
+
+/// The recorded revisions at which every file has exactly its live content,
+/// read through one bounded `git cat-file --batch` process in `root`. A
+/// missing, ambiguous, non-blob or oversized object leaves that revision out.
+fn files_unchanged_since(
+    root: &Path,
+    revisions: &[String],
+    files: &[(String, String)],
+) -> Vec<String> {
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return Vec::new();
+    };
+    let mut unchanged = Vec::new();
+    if let (Some(mut input), Some(output)) = (child.stdin.take(), child.stdout.take()) {
+        let mut output = std::io::BufReader::new(output);
+        let mut remaining = LIVE_READ_BUDGET;
+        'revisions: for revision in revisions {
+            for (path, live_digest) in files {
+                if path.contains(['\n', '\r']) {
+                    continue 'revisions;
+                }
+                let object = format!("{revision}:{path}");
+                match read_blob(&mut input, &mut output, &object, &mut remaining) {
+                    Blob::Content(bytes)
+                        if crate::experience::sha256(&bytes).eq_ignore_ascii_case(live_digest) => {}
+                    Blob::Content(_) | Blob::Absent => continue 'revisions,
+                    // The stream position or the read budget is lost: stop.
+                    Blob::Unreadable => break 'revisions,
+                }
+            }
+            unchanged.push(revision.clone());
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    unchanged
+}
+
+enum Blob {
+    Content(Vec<u8>),
+    /// Missing, ambiguous or not a file at that revision.
+    Absent,
+    Unreadable,
+}
+
+/// Request one object and read its bounded content from `git cat-file --batch`.
+fn read_blob(
+    input: &mut impl std::io::Write,
+    output: &mut impl std::io::BufRead,
+    object: &str,
+    remaining: &mut usize,
+) -> Blob {
+    use std::io::BufRead as _;
+    if writeln!(input, "{object}")
+        .and_then(|()| input.flush())
+        .is_err()
+    {
+        return Blob::Unreadable;
+    }
+    let mut header = String::new();
+    match output
+        .by_ref()
+        .take(OBJECT_HEADER_LIMIT)
+        .read_line(&mut header)
+    {
+        Ok(read) if read > 0 && header.ends_with('\n') => {}
+        _ => return Blob::Unreadable,
+    }
+    let header = header.trim_end();
+    // "<name> missing" or "<name> ambiguous"; a found object ends in its size.
+    if header.ends_with(" missing") || header.ends_with(" ambiguous") {
+        return Blob::Absent;
+    }
+    let mut fields = header.rsplitn(3, ' ');
+    let (Some(size), Some(kind)) = (
+        fields.next().and_then(|size| size.parse::<usize>().ok()),
+        fields.next(),
+    ) else {
+        return Blob::Unreadable;
+    };
+    if size > LIVE_FILE_LIMIT || size > *remaining {
+        return Blob::Unreadable;
+    }
+    let mut bytes = vec![0; size + 1];
+    if output.read_exact(&mut bytes).is_err() || bytes.pop() != Some(b'\n') {
+        return Blob::Unreadable;
+    }
+    *remaining -= size;
+    if kind == "blob" {
+        Blob::Content(bytes)
+    } else {
+        Blob::Absent
+    }
 }
 
 /// Read the live Git HEAD, or `None` outside Git.
@@ -679,6 +883,66 @@ fn io_reason(error: &std::io::Error) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_hexadecimal_revisions_of_seven_or_more_digits_reach_git() {
+        assert_eq!(normalized_revision(" 4DD913A ").as_deref(), Some("4dd913a"));
+        assert_eq!(normalized_revision(&"a".repeat(64)), Some("a".repeat(64)));
+        for rejected in [
+            "4dd913",
+            "HEAD",
+            "main~1",
+            "4dd913a:src",
+            "",
+            &"a".repeat(65),
+        ] {
+            assert_eq!(normalized_revision(rejected), None, "{rejected:?}");
+        }
+    }
+
+    #[test]
+    fn object_reads_are_bounded_and_classify_absent_objects() {
+        let read = |stream: &[u8], remaining: &mut usize| {
+            let mut requests = Vec::new();
+            let blob = read_blob(
+                &mut requests,
+                &mut std::io::Cursor::new(stream.to_vec()),
+                "abc1234:src/lib.rs",
+                remaining,
+            );
+            assert_eq!(requests, b"abc1234:src/lib.rs\n");
+            blob
+        };
+        let mut remaining = 100;
+        assert!(matches!(
+            read(b"0a1b blob 5\nhello\n", &mut remaining),
+            Blob::Content(bytes) if bytes == b"hello"
+        ));
+        assert_eq!(remaining, 95);
+        for absent in [
+            &b"abc1234:src/lib.rs missing\n"[..],
+            b"abc1234:src/lib.rs ambiguous\n",
+            b"0a1b tree 3\nxyz\n",
+        ] {
+            assert!(matches!(read(absent, &mut remaining), Blob::Absent));
+        }
+        let oversized = format!("0a1b blob {}\n", LIVE_FILE_LIMIT + 1);
+        let mut unlimited = usize::MAX;
+        for unreadable in [
+            oversized.as_bytes(),
+            b"0a1b blob 5\nhel",
+            b"0a1b blob 5\nhelloX",
+            b"",
+            b"no header terminator",
+        ] {
+            assert!(matches!(read(unreadable, &mut unlimited), Blob::Unreadable));
+        }
+        let mut small = 4;
+        assert!(matches!(
+            read(b"0a1b blob 5\nhello\n", &mut small),
+            Blob::Unreadable
+        ));
+    }
 
     #[test]
     fn abbreviated_revisions_match_only_a_real_prefix() {
