@@ -19,7 +19,7 @@
     {"id":"mobile-auth-state","project":"mobile","query":"AuthState","expected_path":"core/common/src/main/kotlin/com/agiinc/androidagent/common/AuthState.kt","definition_label":"AuthState"},
     {"id":"mobile-bridge-authorize","project":"mobile","query":"authorize","expected_path":"workers/api/src/routes/bridge.ts","definition_label":"authorize"},
     {"id":"backend-token-kid","project":"agi-backend-rust","query":"token_kid","expected_path":"src/auth/clerk.rs","definition_label":"token_kid"},
-    {"id":"backend-cancelled","project":"agi-backend-rust","query":"cancelled","expected_path":"src/services/loopguard_enforcer.rs","definition_label":"cancelled"},
-    {"id":"backend-enforcer-snake-case","project":"agi-backend-rust","query":"loopguard_enforcer","expected_path":"src/services/loopguard_enforcer.rs","definition_label":"cancelled"}
+    {"id":"backend-cancelled","project":"agi-backend-rust","query":"cancelled","expected_path":"src/services/loopguard_enforcer.rs","definition_label":"Intervention::cancelled"},
+    {"id":"backend-enforcer-snake-case","project":"agi-backend-rust","query":"loopguard_enforcer","expected_path":"src/services/loopguard_enforcer.rs","definition_label":"Intervention::cancelled"}
   ]
 }

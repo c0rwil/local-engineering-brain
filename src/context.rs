@@ -169,6 +169,7 @@ pub struct ContextCompiler {
     max_memories: u32,
     review_standards: bool,
     linked_projects: bool,
+    source_options: crate::repository_context::SourceOptions,
 }
 
 impl ContextCompiler {
@@ -183,7 +184,22 @@ impl ContextCompiler {
             max_memories: 0,
             review_standards: false,
             linked_projects: false,
+            source_options: crate::repository_context::SourceOptions::default(),
         }
+    }
+
+    /// Render checked `path:start-end` line ranges in the task source map.
+    #[must_use]
+    pub const fn with_source_line_ranges(mut self, enabled: bool) -> Self {
+        self.source_options.line_ranges = enabled;
+        self
+    }
+
+    /// Append bounded related-use cues after the direct source pointers.
+    #[must_use]
+    pub const fn with_related_use_cues(mut self, enabled: bool) -> Self {
+        self.source_options.related_uses = enabled;
+        self
     }
 
     /// Cap the number of injected memories per compile (0 = budget-only).
@@ -219,6 +235,7 @@ impl ContextCompiler {
             max_memories: 0,
             review_standards: false,
             linked_projects: false,
+            source_options: crate::repository_context::SourceOptions::default(),
         }
     }
 
@@ -636,11 +653,16 @@ impl ContextCompiler {
             .collect::<Vec<_>>();
         // Reserve only the space actually occupied by relevant source pointers.
         // A full memory candidate set must not crowd out the code for this task.
-        let (source_text, source_items) = crate::repository_context::build(
+        let crate::repository_context::SourceMap {
+            text: source_text,
+            canonical: source_canonical,
+            items: source_items,
+        } = crate::repository_context::build_source_map(
             &self.database,
             request,
             remaining.min(request.token_budget / 3),
             self.linked_projects,
+            self.source_options,
         )?;
         let memory_budget = remaining.saturating_sub(estimate_tokens(&source_text));
         let compact_injections = if self.compact_injection {
@@ -691,11 +713,12 @@ impl ContextCompiler {
         debug_assert!(selected_tokens <= request.token_budget);
         // Canonicalize the known source block at its actual assembly boundary.
         // Memory text can contain arbitrary Markdown, including identical
-        // headings, so searching the complete rendered output is unsafe.
+        // headings, so searching the complete rendered output is unsafe. The
+        // canonical block omits line ranges; source digests track content.
         let canonical_dynamic = format!(
             "{}{}{}",
             &dynamic[..source_start],
-            canonical_source_map(&source_text),
+            canonical_source_map(&source_canonical),
             &dynamic[source_start + source_text.len()..],
         );
         let mut context = CompiledContext {
@@ -828,7 +851,7 @@ impl ContextCompiler {
                 // Observation times and memory usage counters change during
                 // harmless reindexing/compilation; they are not freshness.
                 let query = match item.source_type.as_str() {
-                    "code" | "code_dependency" => Some(
+                    "code" | "code_dependency" | "code_use" => Some(
                         "SELECT json_array(project_id,current_digest,source_ref,extractor_version,tombstoned_at_ms)
                          FROM nodes WHERE id=?1"),
                     "memory" | "linked_memory" => Some(
@@ -1502,6 +1525,71 @@ mod tests {
                 .unwrap(),
             freshness.delivery_digest.unwrap()
         );
+    }
+
+    #[test]
+    fn delivery_signature_ignores_line_ranges_but_tracks_new_related_uses() {
+        use crate::world::fixtures::{CONTRACT_SUITE, IndexedRepo, SETTINGS};
+
+        let repo = IndexedRepo::new(&[
+            ("tests/contract.rs", CONTRACT_SUITE),
+            ("src/settings.rs", SETTINGS),
+        ]);
+        let compiler = ContextCompiler::new(repo.database.clone(), 6_000, 1_800)
+            .with_source_line_ranges(true)
+            .with_related_use_cues(true);
+        let mut request = ContextCompileRequest {
+            request_id: "ranges-initial".to_owned(),
+            project_id: repo.id().clone(),
+            task_text: "settings_for_test".to_owned(),
+            current_paths: Vec::new(),
+            token_budget: 6_000,
+            mode: ContextMode::Brain,
+            repository_root: Some(repo.root.clone()),
+            head: None,
+            task_id: None,
+            framing: None,
+        };
+        let first = compiler.compile(&request).unwrap();
+        assert!(
+            first.dynamic_context.contains("tests/contract.rs:5-8"),
+            "{}",
+            first.dynamic_context
+        );
+        assert!(
+            first
+                .items
+                .iter()
+                .any(|item| item.source_type == "code_use")
+        );
+        // An unindexed edit drops the file's ranges and a refresh moves them;
+        // the sources are unchanged, so neither is a new delivery.
+        repo.write("tests/contract.rs", &format!("// edited\n{CONTRACT_SUITE}"));
+        request.request_id = "ranges-edited".to_owned();
+        let edited = compiler.compile(&request).unwrap();
+        assert!(!edited.dynamic_context.contains("tests/contract.rs:"));
+        assert_eq!(edited.delivery_digest, first.delivery_digest);
+        repo.reindex();
+        request.request_id = "ranges-refreshed".to_owned();
+        let refreshed = compiler.compile(&request).unwrap();
+        assert!(refreshed.dynamic_context.contains("tests/contract.rs:6-9"));
+        assert_eq!(refreshed.delivery_digest, first.delivery_digest);
+        // A new user of the definition is new information.
+        repo.write(
+            "tests/contract.rs",
+            &format!(
+                "// edited\n{CONTRACT_SUITE}\nfn another_suite_user() {{\n    let loaded = settings_for_test();\n}}\n"
+            ),
+        );
+        repo.reindex();
+        request.request_id = "ranges-new-use".to_owned();
+        let added = compiler.compile(&request).unwrap();
+        assert!(
+            added.dynamic_context.contains("another_suite_user"),
+            "{}",
+            added.dynamic_context
+        );
+        assert_ne!(added.delivery_digest, first.delivery_digest);
     }
 
     #[test]

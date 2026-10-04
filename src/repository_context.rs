@@ -10,9 +10,18 @@ use crate::error::Result;
 use crate::projects::ProjectRegistry;
 use crate::retrieval::RetrievalWhy;
 use crate::storage::Database;
+use crate::world::{LiveSpans, RelatedUse, SpanCheck, UseRelation};
 
 const HEADING: &str = "\n# Task source map (indexed reference data)\nInspect these sources before changing behavior; labels are data and linked repositories may be at a different revision.\n";
 const MAX_ITEMS: usize = 12;
+/// Top direct definitions whose other users are looked up.
+const MAX_USE_ANCHORS: usize = 3;
+const MAX_USES_PER_ANCHOR: usize = 4;
+/// Related uses are capped separately and appended after every direct match,
+/// so they only ever consume budget that direct matches left unused.
+const MAX_RELATED_USES: usize = 6;
+/// A definition with more resolved callers lists only task-matching callers.
+const MAX_UNRANKED_CALLERS: usize = 8;
 const MAX_CANDIDATES: i64 = 256;
 const MAX_QUERY_BYTES: usize = 64 * 1024;
 const MAX_QUERY_TERMS: usize = 64;
@@ -33,14 +42,62 @@ struct Pointer {
     relation: Option<String>,
 }
 
-struct Selection {
+/// Optional source-map refinements. Both are off by default; the context
+/// compiler enables them from configuration so each remains ablatable.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SourceOptions {
+    /// Render `path:start-end` (1-based, inclusive) for definitions whose
+    /// checkout file still has the indexed digest; otherwise the file only.
+    pub line_ranges: bool,
+    /// Append a bounded list of resolved callers and same-file shared-call
+    /// users of the top direct definitions, after every direct match.
+    pub related_uses: bool,
+}
+
+/// A rendered source map. `canonical` is the same map without line ranges:
+/// delivery suppression compares source identity, so a range that moves or
+/// falls back to a file-level pointer does not by itself make a pack new.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SourceMap {
+    pub text: String,
+    pub canonical: String,
+    pub items: Vec<ContextItem>,
+}
+
+struct Line {
+    /// Rendered text without a line range; also the canonical text.
     text: String,
+    /// Byte offset just after the path, where a checked range is inserted.
+    range_at: Option<usize>,
+    /// The rendered text once a checked range was added.
+    ranged: Option<String>,
+}
+
+struct Selection {
+    lines: Vec<Line>,
     items: Vec<ContextItem>,
     files: BTreeSet<(String, String)>,
+    emitted: BTreeSet<String>,
+    /// Rendered bytes, including the heading once the map is nonempty.
+    bytes: usize,
     budget: u32,
 }
 
 impl Selection {
+    fn fits(&self, additional: usize) -> bool {
+        let heading = if self.lines.is_empty() {
+            HEADING.len()
+        } else {
+            0
+        };
+        let bytes = self
+            .bytes
+            .saturating_add(heading)
+            .saturating_add(additional);
+        // The same estimate as `estimate_tokens` over the rendered text.
+        u32::try_from(bytes).unwrap_or(u32::MAX).saturating_add(3) / 4 <= self.budget
+    }
+
     fn append_source(&mut self, pointer: &Pointer, dependency: bool) -> bool {
         let key = (pointer.project_id.clone(), pointer.path.clone());
         if self.items.len() >= MAX_ITEMS || self.files.contains(&key) || pointer.path.len() > 1024 {
@@ -59,19 +116,22 @@ impl Selection {
             .relation
             .as_ref()
             .map_or_else(String::new, |relation| format!(" ({relation})"));
-        let line = format!(
-            "- {}{}: {}{label}{relation}\n",
+        let location = format!(
+            "- {}{}: {}",
             if dependency { "Related: " } else { "" },
             clean_short(&pointer.project, 64),
             clean(&pointer.path),
         );
+        let range_at = location.len();
+        let line = format!("{location}{label}{relation}\n");
         let note = if dependency {
             "Indexed graph neighbor of a task-relevant file; displayed direction is relative to that file."
         } else {
             "Ranked by task terms and current file paths; indexed source, not a verified lesson."
         };
         if !self.append(
-            &line,
+            line,
+            Some(range_at),
             item(
                 &pointer.id,
                 if dependency {
@@ -80,9 +140,10 @@ impl Selection {
                     "code"
                 },
                 pointer.score,
-                &line,
+                "",
                 note,
             ),
+            true,
         ) {
             return false;
         }
@@ -90,19 +151,82 @@ impl Selection {
         true
     }
 
-    fn append(&mut self, line: &str, mut item: ContextItem) -> bool {
-        if self.items.len() >= MAX_ITEMS {
+    /// Lines are selected by their unranged size, so ranges never change which
+    /// sources fit. `capped` lines count against the direct-map item limit;
+    /// related uses carry their own limit instead.
+    fn append(
+        &mut self,
+        line: String,
+        range_at: Option<usize>,
+        mut item: ContextItem,
+        capped: bool,
+    ) -> bool {
+        if (capped && self.items.len() >= MAX_ITEMS) || !self.fits(line.len()) {
             return false;
         }
-        let prefix = if self.text.is_empty() { HEADING } else { "" };
-        if estimate_tokens(&format!("{}{prefix}{line}", self.text)) > self.budget {
-            return false;
+        if self.lines.is_empty() {
+            self.bytes += HEADING.len();
         }
-        self.text.push_str(prefix);
-        self.text.push_str(line);
+        self.bytes += line.len();
         item.ordinal = u32::try_from(self.items.len() + 1).unwrap_or(u32::MAX);
+        item.tokens = estimate_tokens(&line);
+        self.emitted.insert(item.source_id.clone());
         self.items.push(item);
+        self.lines.push(Line {
+            text: line,
+            range_at,
+            ranged: None,
+        });
         true
+    }
+
+    /// Add checked line ranges to lines from `first` on, in emission order,
+    /// while the budget allows. Changed files keep a file-level pointer.
+    fn add_ranges(&mut self, first: usize, spans: &mut LiveSpans<'_>) -> Result<()> {
+        for index in first..self.lines.len() {
+            let Some(at) = self.lines[index].range_at else {
+                continue;
+            };
+            match spans.check(&self.items[index].source_id)? {
+                SpanCheck::Current(range) => {
+                    let suffix = format!(":{range}");
+                    if !self.fits(suffix.len()) {
+                        continue;
+                    }
+                    let mut ranged = self.lines[index].text.clone();
+                    ranged.insert_str(at, &suffix);
+                    self.bytes += suffix.len();
+                    let item = &mut self.items[index];
+                    item.tokens = estimate_tokens(&ranged);
+                    item.why
+                        .note
+                        .push_str(" Line range checked against the indexed file digest.");
+                    self.lines[index].ranged = Some(ranged);
+                }
+                SpanCheck::Changed => self.items[index].why.note.push_str(
+                    " File-level pointer: the checkout file differs from the indexed version.",
+                ),
+                SpanCheck::Unavailable => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn into_map(self) -> SourceMap {
+        if self.lines.is_empty() {
+            return SourceMap::default();
+        }
+        let mut text = HEADING.to_owned();
+        let mut canonical = HEADING.to_owned();
+        for line in &self.lines {
+            text.push_str(line.ranged.as_deref().unwrap_or(&line.text));
+            canonical.push_str(&line.text);
+        }
+        SourceMap {
+            text,
+            canonical,
+            items: self.items,
+        }
     }
 }
 
@@ -117,21 +241,47 @@ pub fn build(
     budget: u32,
     linked_projects: bool,
 ) -> Result<(String, Vec<ContextItem>)> {
+    let map = build_source_map(
+        database,
+        request,
+        budget,
+        linked_projects,
+        SourceOptions::default(),
+    )?;
+    Ok((map.text, map.items))
+}
+
+/// [`build`] with optional line ranges and related-use cues. Direct matches,
+/// graph neighbors and verified checks are selected exactly as without the
+/// options; ranges are added next, and related uses only fill what remains.
+///
+/// # Errors
+/// Returns database or serialization errors. Checkout files that cannot be
+/// read only remove line ranges.
+pub fn build_source_map(
+    database: &Database,
+    request: &ContextCompileRequest,
+    budget: u32,
+    linked_projects: bool,
+    options: SourceOptions,
+) -> Result<SourceMap> {
     if request.mode == ContextMode::Off || budget < 64 {
-        return Ok((String::new(), Vec::new()));
+        return Ok(SourceMap::default());
     }
     let query = SourceQuery::parse(&request.task_text);
     if query.terms.is_empty() && query.paths.is_empty() && request.current_paths.is_empty() {
-        return Ok((String::new(), Vec::new()));
+        return Ok(SourceMap::default());
     }
     let projects = scope(database, request, linked_projects)?;
     let terms_json = serde_json::to_string(&query.terms)?;
     let projects_json = serde_json::to_string(&projects)?;
     let pointers = sources(database, request, &query, &projects)?;
     let mut selected = Selection {
-        text: String::new(),
+        lines: Vec::new(),
         items: Vec::new(),
         files: BTreeSet::new(),
+        emitted: BTreeSet::new(),
+        bytes: 0,
         budget,
     };
     let mut direct = Vec::new();
@@ -166,7 +316,138 @@ pub fn build(
         }
     }
     append_commands(database, request, &terms_json, &mut selected)?;
-    Ok((selected.text, selected.items))
+    // Ranges are checked only against this request's own checkout. Linked
+    // repositories may be at another revision and keep file-level pointers.
+    let mut spans = if options.line_ranges {
+        LiveSpans::new(
+            database,
+            request.project_id.as_str(),
+            request.repository_root.as_deref(),
+        )
+    } else {
+        LiveSpans::disabled(database)
+    };
+    selected.add_ranges(0, &mut spans)?;
+    if options.related_uses {
+        let first = selected.lines.len();
+        append_related_uses(database, request, &query, &direct, &mut selected)?;
+        selected.add_ranges(first, &mut spans)?;
+    }
+    Ok(selected.into_map())
+}
+
+/// Other users of the top direct definitions: resolved callers and graph
+/// users ranked by task relevance, plus definitions in the same file that
+/// make the same specific call (for example, acquiring the same lock). They
+/// are appended after all direct matches, neighbors and checks, under their
+/// own cap and only within the remaining token budget.
+fn append_related_uses(
+    database: &Database,
+    request: &ContextCompileRequest,
+    query: &SourceQuery,
+    direct: &[Pointer],
+    selected: &mut Selection,
+) -> Result<()> {
+    // Only definitions the task names (an identifier or an explicit path) are
+    // treated as likely to change; generic prose or a recently touched file
+    // alone does not say which definition in it will change.
+    let anchors = direct
+        .iter()
+        .filter(|pointer| {
+            pointer.project_id == request.project_id.as_str()
+                && !matches!(
+                    pointer.kind.as_str(),
+                    "File" | "Section" | "ExternalReference"
+                )
+                && (query.identifier_score(pointer) >= 64.0 || query.paths.contains(&pointer.path))
+        })
+        .take(MAX_USE_ANCHORS);
+    let mut ranked = Vec::new();
+    for (rank, anchor) in anchors.enumerate() {
+        let mut uses: Vec<(f64, RelatedUse)> = crate::world::related_uses(database, &anchor.id)?
+            .into_iter()
+            .filter(|candidate| !selected.emitted.contains(&candidate.node_id))
+            .filter_map(|candidate| {
+                let relevance = query.use_relevance(&candidate.label, &candidate.file_path);
+                // Every caller of a widely used definition is a consumer, but
+                // only task-matching ones are informative enough to list.
+                let listed = candidate.shares_call
+                    || relevance > 0.0
+                    || candidate.anchor_callers <= MAX_UNRANKED_CALLERS;
+                listed.then_some((relevance + candidate.specificity.min(3.99), candidate))
+            })
+            .collect();
+        uses.sort_by(|(a_score, a), (b_score, b)| {
+            b_score
+                .total_cmp(a_score)
+                .then_with(|| a.file_path.cmp(&b.file_path))
+                .then_with(|| a.label.cmp(&b.label))
+                .then_with(|| a.node_id.cmp(&b.node_id))
+        });
+        ranked.extend(
+            uses.into_iter()
+                .take(MAX_USES_PER_ANCHOR)
+                .map(|(score, candidate)| (score, rank, anchor, candidate)),
+        );
+    }
+    ranked.sort_by(|(a_score, a_rank, _, a), (b_score, b_rank, _, b)| {
+        b_score
+            .total_cmp(a_score)
+            .then_with(|| a_rank.cmp(b_rank))
+            .then_with(|| a.file_path.cmp(&b.file_path))
+            .then_with(|| a.node_id.cmp(&b.node_id))
+    });
+    let mut appended = 0;
+    for (score, _, anchor, candidate) in ranked {
+        if appended >= MAX_RELATED_USES {
+            break;
+        }
+        if selected.emitted.contains(&candidate.node_id) || candidate.file_path.len() > 1024 {
+            continue;
+        }
+        let owner = clean_short(&anchor.label, 96);
+        let (relation, note) = match &candidate.relation {
+            UseRelation::Calls => (
+                format!("calls {owner}"),
+                "Indexed caller of a task-relevant definition; the call text names only that definition in this repository.",
+            ),
+            UseRelation::Edge(relation) => (
+                format!("{} {owner}", clean_short(relation, 32)),
+                "Indexed graph edge into a task-relevant definition.",
+            ),
+            UseRelation::SharedCall(expression) => (
+                format!(
+                    "also calls {}, as does {owner}",
+                    clean_short(expression, 96)
+                ),
+                "Makes the same call as a task-relevant definition in the same file; a shared use, not a dependency between them.",
+            ),
+        };
+        let label = if candidate.kind == "File" {
+            String::new()
+        } else {
+            format!(
+                " — {} {}",
+                clean_short(&candidate.kind, 32),
+                clean_short(&candidate.label, 96)
+            )
+        };
+        let location = format!(
+            "- Related use: {}: {}",
+            clean_short(&anchor.project, 64),
+            clean(&candidate.file_path)
+        );
+        let range_at = location.len();
+        if selected.append(
+            format!("{location}{label} ({relation})\n"),
+            Some(range_at),
+            item(&candidate.node_id, "code_use", score, "", note),
+            false,
+        ) {
+            appended += 1;
+        }
+    }
+    Ok(())
 }
 
 fn scope(
@@ -449,8 +730,14 @@ fn append_commands(
             clean(revision.as_deref().unwrap_or("unknown")),
             clean(&command)
         );
-        selected.append(&line, item(&id, "verification", 1.0, &line,
-            "Task-matching command with actual successful verification; historical output is not proof of current success."));
+        let verification = item(
+            &id,
+            "verification",
+            1.0,
+            &line,
+            "Task-matching command with actual successful verification; historical output is not proof of current success.",
+        );
+        selected.append(line, None, verification, true);
     }
     Ok(())
 }
@@ -696,6 +983,28 @@ impl SourceQuery {
 
     fn identifier_score(&self, pointer: &Pointer) -> f64 {
         self.identifier_score_with_matches(pointer, &BTreeSet::new())
+    }
+
+    /// Task relevance of a related use, in tiers: a task identifier naming
+    /// the use, then task terms in its file path (the module or suite a task
+    /// names), then terms in its name, which long test names match by
+    /// accident. Zero means no task term matched.
+    fn use_relevance(&self, label: &str, path: &str) -> f64 {
+        let names_identifier = self.identifiers.iter().any(|(identifier, parts)| {
+            identifier_score(identifier, parts, label, "", true) >= 32.0
+        });
+        let terms = |text: String| {
+            let matches = self
+                .prose_terms()
+                .filter(|term| term.len() >= 3 && text.contains(term.as_str()))
+                .take(4)
+                .count();
+            f64::from(u8::try_from(matches).unwrap_or(4))
+        };
+        // Each tier outweighs every lower tier and graph specificity (< 4).
+        f64::from(u8::from(names_identifier)) * 100.0
+            + terms(path.to_lowercase()) * 20.0
+            + terms(label.to_lowercase())
     }
 
     fn matches_pointer(
@@ -1965,5 +2274,183 @@ mod tests {
             items[0].source_id, relevant,
             "task relevance leads historical edit paths"
         );
+    }
+
+    use crate::world::fixtures::{CONTRACT_SUITE, IndexedRepo, SETTINGS};
+
+    const RANGES: SourceOptions = SourceOptions {
+        line_ranges: true,
+        related_uses: false,
+    };
+    const BOTH: SourceOptions = SourceOptions {
+        line_ranges: true,
+        related_uses: true,
+    };
+
+    fn contract_repo() -> IndexedRepo {
+        IndexedRepo::new(&[
+            ("tests/contract.rs", CONTRACT_SUITE),
+            ("src/settings.rs", SETTINGS),
+        ])
+    }
+
+    fn checkout_request(repo: &IndexedRepo, task: &str) -> ContextCompileRequest {
+        let mut request = request(repo.id().clone(), task);
+        request.repository_root = Some(repo.root.clone());
+        request
+    }
+
+    #[test]
+    fn checked_line_ranges_render_and_changed_files_fall_back_to_the_file() {
+        let repo = contract_repo();
+        let request = checkout_request(&repo, "settings_for_test");
+        let map = build_source_map(&repo.database, &request, 1_000, false, RANGES).unwrap();
+        let line = format!(
+            "- {}: tests/contract.rs:5-8 — Function settings_for_test\n",
+            repo.project.project.name
+        );
+        assert!(map.text.contains(&line), "{}", map.text);
+        assert_eq!(map.items[0].tokens, estimate_tokens(&line));
+        assert!(map.items[0].why.note.contains("Line range checked"));
+        assert_eq!(map.canonical, map.text.replace(":5-8", ""));
+        // Without the option, or without this request's checkout, the map is
+        // byte-identical to the canonical file-level map.
+        let plain = build_source_map(
+            &repo.database,
+            &request,
+            1_000,
+            false,
+            SourceOptions::default(),
+        )
+        .unwrap();
+        let mut rootless = request.clone();
+        rootless.repository_root = None;
+        let unrooted = build_source_map(&repo.database, &rootless, 1_000, false, RANGES).unwrap();
+        for other in [&plain, &unrooted] {
+            assert_eq!(other.text, map.canonical);
+            assert_eq!(other.canonical, map.canonical);
+        }
+        repo.write("tests/contract.rs", &format!("// edited\n{CONTRACT_SUITE}"));
+        let changed = build_source_map(&repo.database, &request, 1_000, false, RANGES).unwrap();
+        assert_eq!(
+            changed.text, map.canonical,
+            "a stale range is never emitted"
+        );
+        assert_eq!(changed.canonical, map.canonical);
+        assert!(
+            changed.items[0]
+                .why
+                .note
+                .contains("differs from the indexed version")
+        );
+        repo.reindex();
+        let refreshed = build_source_map(&repo.database, &request, 1_000, false, RANGES).unwrap();
+        assert!(
+            refreshed.text.contains("tests/contract.rs:6-9 — "),
+            "{}",
+            refreshed.text
+        );
+        assert_eq!(refreshed.canonical, map.canonical);
+    }
+
+    #[test]
+    fn related_uses_name_other_lock_users_after_every_direct_match() {
+        let repo = contract_repo();
+        let request = checkout_request(&repo, "settings_for_test");
+        let map = build_source_map(&repo.database, &request, 2_000, false, BOTH).unwrap();
+        let kinds: Vec<_> = map
+            .items
+            .iter()
+            .map(|item| item.source_type.as_str())
+            .collect();
+        assert_eq!(
+            kinds,
+            ["code", "code_use", "code_use", "code_use"],
+            "{}",
+            map.text
+        );
+        assert_eq!(map.items[0].source_id, repo.node("settings_for_test"));
+        for expected in [
+            "tests/contract.rs:10-13 — Function cluster_mode_keeps_its_own_url (also calls TEST_ENV_LOCK.lock, as does settings_for_test)\n",
+            "tests/contract.rs:20-23 — Function defaults_load_through_the_helper (calls settings_for_test)\n",
+            "tests/contract.rs:15-18 — Function hosted_mode_keeps_its_own_url (also calls TEST_ENV_LOCK.lock, as does settings_for_test)\n",
+        ] {
+            let expected = format!("- Related use: {}: {expected}", repo.project.project.name);
+            assert!(map.text.contains(&expected), "{expected}{}", map.text);
+        }
+        assert!(!map.text.contains("unrelated_arithmetic") && !map.text.contains("load_settings"));
+        assert!(
+            map.items[1..]
+                .iter()
+                .all(|item| item.why.note.contains("not a dependency")
+                    || item.why.note.contains("caller")),
+        );
+        // Options never change which direct sources are selected, and every
+        // budget holds; related uses only take what direct matches leave.
+        let mut saw_partial = false;
+        for budget in 0..=400 {
+            let base = build_source_map(
+                &repo.database,
+                &request,
+                budget,
+                false,
+                SourceOptions::default(),
+            )
+            .unwrap();
+            let full = build_source_map(&repo.database, &request, budget, false, BOTH).unwrap();
+            assert!(estimate_tokens(&full.text) <= budget, "budget {budget}");
+            let direct = |map: &SourceMap| {
+                map.items
+                    .iter()
+                    .filter(|item| item.source_type != "code_use")
+                    .map(|item| item.source_id.clone())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(direct(&base), direct(&full), "budget {budget}");
+            let uses = full.items.len() - direct(&full).len();
+            saw_partial |= !direct(&full).is_empty() && uses < 3;
+            assert!(uses <= MAX_RELATED_USES);
+        }
+        assert!(
+            saw_partial,
+            "some budgets fit the direct match but not every use"
+        );
+    }
+
+    #[test]
+    fn related_uses_need_a_named_local_definition_and_stay_off_by_default() {
+        let repo = contract_repo();
+        for (task, options) in [
+            // Prose alone does not say which definition will change.
+            ("settings helper environment lock", BOTH),
+            ("settings_for_test", SourceOptions::default()),
+            (
+                "settings_for_test",
+                SourceOptions {
+                    line_ranges: false,
+                    related_uses: true,
+                },
+            ),
+        ] {
+            let map = build_source_map(
+                &repo.database,
+                &checkout_request(&repo, task),
+                2_000,
+                false,
+                options,
+            )
+            .unwrap();
+            let uses = map
+                .items
+                .iter()
+                .filter(|item| item.source_type == "code_use")
+                .count();
+            if options.related_uses && task == "settings_for_test" {
+                assert_eq!(uses, 3, "{task}");
+                assert!(!map.text.contains(":5-8"), "ranges stay off: {}", map.text);
+            } else {
+                assert_eq!(uses, 0, "{task}: {}", map.text);
+            }
+        }
     }
 }

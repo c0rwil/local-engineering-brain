@@ -5,6 +5,8 @@ Run under caffeinate -dims on macOS. This script never resolves/registers a
 repository and never reads existing task prompts or source file contents. It
 exports authored queries, source identities, paths, kinds, ranks and counters;
 compiled context text remains private to the temporary evaluation process.
+With --repository-root, the isolated daemon may read that checkout's files to
+check line ranges against indexed digests; only counts are exported.
 """
 
 import argparse
@@ -13,6 +15,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import statistics
@@ -27,8 +30,58 @@ sys.dont_write_bytecode = True
 from capture_eval import UnixHTTP, api
 
 
-SOURCE_KINDS = {"code", "code_dependency", "verification"}
+SOURCE_KINDS = {"code", "code_dependency", "code_use", "verification"}
 DEFINITION_KINDS = {"Function", "Type", "Interface", "Module"}
+SOURCE_MAP_HEADING = "# Task source map (indexed reference data)\n"
+LINE_RANGE = re.compile(r":[0-9]+-[0-9]+$")
+
+
+def pointer_lines(text):
+    """Classify rendered source-map pointer lines; the text is never exported."""
+    start = text.find(SOURCE_MAP_HEADING)
+    if start < 0:
+        return []
+    classified = []
+    # The heading is followed by one sentence line, then "- " pointer lines.
+    for line in text[start + len(SOURCE_MAP_HEADING):].split("\n")[1:]:
+        if not line.startswith("- "):
+            break
+        body = line[2:]
+        if body.startswith("Previously passed check"):
+            continue
+        kind = "direct"
+        for prefix, name in (("Related use: ", "related_use"), ("Related: ", "neighbor")):
+            if body.startswith(prefix):
+                body, kind = body[len(prefix):], name
+                break
+        location = body.partition(": ")[2]
+        for separator in (" — ", " ("):
+            location = location.split(separator, 1)[0]
+        classified.append({"kind": kind, "ranged": bool(LINE_RANGE.search(location))})
+    return classified
+
+
+def pointer_counts(text):
+    lines = pointer_lines(text)
+    return {
+        "pointer_lines": len(lines),
+        "ranged_pointer_lines": sum(line["ranged"] for line in lines),
+        "direct_pointer_lines": sum(line["kind"] == "direct" for line in lines),
+        "ranged_direct_pointer_lines": sum(line["ranged"] and line["kind"] == "direct" for line in lines),
+        "related_use_lines": sum(line["kind"] == "related_use" for line in lines),
+    }
+
+
+def repository_roots(values):
+    """Parse repeated PROJECT=ABSOLUTE_CHECKOUT options."""
+    roots = {}
+    for value in values or []:
+        name, separator, path = value.partition("=")
+        root = Path(path)
+        if not separator or not name or not root.is_absolute() or not root.is_dir():
+            raise ValueError(f"--repository-root needs PROJECT=ABSOLUTE_DIRECTORY, got {value!r}")
+        roots[name] = str(root)
+    return roots
 
 
 def sha256(path):
@@ -166,12 +219,12 @@ def describe_items(database, response, expected_ids):
     return selected
 
 
-def run_trial(database, socket_path, case, project_id, definition_ids, repeat, budget, mode):
+def run_trial(database, socket_path, case, project_id, definition_ids, repeat, budget, mode, repository_root=None):
     request = {
         "request_id": f"context_quality_{case['id']}_{repeat}_{mode}_{uuid.uuid4()}",
         "project_id": project_id, "task_text": case["query"],
         "current_paths": case.get("current_paths", []), "token_budget": budget,
-        "mode": mode, "repository_root": None, "head": None, "task_id": None,
+        "mode": mode, "repository_root": repository_root, "head": None, "task_id": None,
     }
     result = {"repeat": repeat, "mode": mode, "token_budget": budget}
     started = time.perf_counter()
@@ -196,6 +249,8 @@ def run_trial(database, socket_path, case, project_id, definition_ids, repeat, b
             "unmatched_filler_source_items": len(sources) if case.get("expected_no_source") else None,
             "budget_pass": metrics["selected_tokens"] <= budget,
             "off_control_pass": not text and not selected and metrics["selected_tokens"] == 0 if mode == "off" else None,
+            "related_use_items": sum(item["source_type"] == "code_use" for item in selected),
+            **pointer_counts(text),
         })
     except Exception as error:
         result.update({
@@ -234,6 +289,11 @@ def summary(results):
         "budget_passes": sum(trial["budget_pass"] for trial in brain),
         "off_control_passes": sum(bool(trial.get("off_control_pass")) for trial in off),
         "source_pointers": sum(trial.get("source_pointer_count", 0) for trial in brain),
+        "source_estimated_tokens": sum(trial.get("source_estimated_tokens", 0) for trial in brain),
+        "related_use_items": sum(trial.get("related_use_items", 0) for trial in brain),
+        **{key: sum(trial.get(key, 0) for trial in brain) for key in (
+            "pointer_lines", "ranged_pointer_lines", "direct_pointer_lines",
+            "ranged_direct_pointer_lines", "related_use_lines")},
         "selected_tokens": sum(trial.get("selected_tokens", 0) for trial in brain),
         "api_latency_ms_median_successful": statistics.median(trial["api_latency_ms"] for trial in successful) if successful else None,
         "api_latency_ms_max_including_failures": max((trial["api_latency_ms"] for trial in brain), default=None),
@@ -249,9 +309,15 @@ def main():
     parser.add_argument("--cases", type=Path, default=Path(__file__).resolve().parents[1] / "tests/fixtures/context_quality_cases.json")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--repository-root", action="append", metavar="PROJECT=PATH",
+                        help="pass this checkout as the request root for one project's cases, so line ranges can be checked; repeatable")
     args = parser.parse_args()
     if not 1 <= args.repeats <= 10:
         parser.error("--repeats must be between 1 and 10")
+    try:
+        roots = repository_roots(args.repository_root)
+    except ValueError as error:
+        parser.error(str(error))
     if args.freeze_from:
         freeze_snapshot(args.freeze_from, args.snapshot)
     snapshot_hash = sha256(args.snapshot)
@@ -269,7 +335,8 @@ def main():
         "case_sha256": sha256(args.cases), "daemon_sha256": sha256(daemon),
         "harness_sha256": sha256(Path(__file__)),
         "daemon_release": daemon.parent.parent.name, "repeats": args.repeats,
-        "isolation": {"repository_root": None, "head": None, "live_repository_resolution": False, "background_jobs": False, "watch": False, "web": False, "vault": False, "judge": False, "architect": "off"},
+        "isolation": {"repository_root": None, "head": None, "live_repository_resolution": False, "background_jobs": False, "watch": False, "web": False, "vault": False, "judge": False, "architect": "off",
+                      "checkout_roots_for_projects": sorted(roots)},
         "definitions_verified_in_snapshot": definitions,
         "limitations": [
             "Synthetic source-navigation probes over a real frozen index; not an end-to-end coding or savings benchmark.",
@@ -280,6 +347,7 @@ def main():
             "Latency is measured locally with no LLM. All fresh-request trials, including initial cold queries and failed trials, are retained; medians explicitly cover successful calls only.",
             "The same frozen index is copied for each invocation; migrations and context persistence affect only the disposable copy. Repository files and the snapshot are never modified by the evaluation daemon.",
             "Project checkout aliases are removed from the disposable copy before startup so linked-memory retrieval cannot inspect live Git state. Indexed project links remain available to both binaries.",
+            "Projects listed in checkout_roots_for_projects send that checkout as the request root: the daemon reads its files to check line ranges and detect the stack, so those results depend on the checkout state at run time. Other projects send no root and receive no line ranges.",
         ],
     }
     with tempfile.TemporaryDirectory(prefix="ecq-", dir="/tmp") as temp:
@@ -309,7 +377,7 @@ def main():
                         for case_result in results:
                             budget = case_result.get("token_budget", cases_document["default_token_budget"])
                             for mode in ("brain", "off"):
-                                case_result["trials"].append(run_trial(database, socket_path, case_result, projects[case_result["project"]], definitions.get(case_result["id"], []), repeat, budget, mode))
+                                case_result["trials"].append(run_trial(database, socket_path, case_result, projects[case_result["project"]], definitions.get(case_result["id"], []), repeat, budget, mode, roots.get(case_result["project"])))
                     result["results"] = results
                     result["summary"] = summary(results)
             finally:

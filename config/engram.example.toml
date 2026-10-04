@@ -36,6 +36,14 @@ review_standards_section = true
 # Canonical memory text and context provenance are unchanged. Off by default so
 # verbose-vs-compact benchmarks differ by exactly this flag.
 compact_injection = false
+# Task source pointers name `path:start-end` (1-based, inclusive) when the
+# request's checkout file still has the indexed digest; a changed or unreadable
+# file keeps a file-level pointer. Ranges never change which sources are chosen.
+source_line_ranges = true
+# After all direct source pointers, list up to six resolved callers and
+# same-file shared-call users of definitions the task names, within the
+# remaining source budget. Retrieval-level diagnostics only; set false to ablate.
+related_use_cues = true
 
 [daemon]
 socket_path = "~/.engram/engramd.sock"

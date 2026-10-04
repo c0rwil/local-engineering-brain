@@ -2930,6 +2930,9 @@ async fn compile_context(
         .map_or(state.config.context.compact_injection, |config| {
             config.context.compact_injection
         });
+    let source_context = scoped
+        .as_ref()
+        .map_or(&state.config.context, |c| &c.context);
     let compiler = (if semantic_enabled {
         let semantic = scoped
             .as_ref()
@@ -2964,7 +2967,9 @@ async fn compile_context(
             .map_or(state.config.context.include_linked_projects, |config| {
                 config.context.include_linked_projects
             }),
-    );
+    )
+    .with_source_line_ranges(source_context.source_line_ranges)
+    .with_related_use_cues(source_context.related_use_cues);
     let prepare_compiler = compiler.clone();
     let request_mode = request.mode;
     let retrieval_started = Instant::now();

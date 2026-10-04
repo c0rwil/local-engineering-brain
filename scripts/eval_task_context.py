@@ -3,6 +3,8 @@
 
 No coding model is called. Existing pilot snapshots and checkouts remain intact.
 Output contains source metadata and coverage, never compiled context or bodies.
+With --live-checkout, the disposable reindexed clone stays in place during
+queries and is sent as the request root, so line ranges can be checked.
 """
 
 import argparse
@@ -20,7 +22,7 @@ import uuid
 
 sys.dont_write_bytecode = True
 from capture_eval import api  # noqa: E402
-from eval_context_quality import config_text, isolate_checkout_aliases, read_only, sha256, wait_ready  # noqa: E402
+from eval_context_quality import config_text, isolate_checkout_aliases, pointer_counts, read_only, sha256, wait_ready  # noqa: E402
 
 
 def definitions(database, project, components):
@@ -38,13 +40,13 @@ def definitions(database, project, components):
     return result
 
 
-def trial(database, socket, project, case, budget, repeat, mode):
+def trial(database, socket, project, case, budget, repeat, mode, repository_root=None):
     targets = definitions(database, project, case["components"])
     started = time.perf_counter()
     response = api(str(socket), "/api/v1/context/compile", {
         "request_id": str(uuid.uuid4()), "project_id": project,
         "task_text": case["query"], "current_paths": [], "token_budget": budget,
-        "mode": mode, "repository_root": None, "head": None, "task_id": None,
+        "mode": mode, "repository_root": repository_root, "head": None, "task_id": None,
     })
     elapsed = (time.perf_counter() - started) * 1000
     selected = []
@@ -54,15 +56,20 @@ def trial(database, socket, project, case, budget, repeat, mode):
         ).fetchone()
         if row:
             selected.append({"id": item["source_id"], "project_id": row[0], "path": row[1],
-                             "kind": row[2], "label": row[3], "tokens": item["tokens"]})
+                             "kind": row[2], "label": row[3], "tokens": item["tokens"],
+                             "source_type": item.get("source_type")})
     paths = sorted({target["path"] for target in targets})
     coverage = []
     for target in targets:
         ranks = [rank for rank, item in enumerate(selected, 1) if item["id"] in target["ids"]]
-        coverage.append({**target, "rank": min(ranks, default=None)})
+        rank = min(ranks, default=None)
+        coverage.append({**target, "rank": rank,
+                         "source_type": selected[rank - 1]["source_type"] if rank else None})
     text = response["stable_prefix"] + response["dynamic_context"]
     return {
         "repeat": repeat, "mode": mode, "selected": selected, "components": coverage,
+        **pointer_counts(text),
+        "related_use_items": sum(item["source_type"] == "code_use" for item in selected),
         "required_files": paths,
         "files_at5": [path for path in paths if any(item["project_id"] == project and item["path"] == path for item in selected[:5])],
         "files_in_pack": [path for path in paths if any(item["project_id"] == project and item["path"] == path for item in selected)],
@@ -81,6 +88,12 @@ def summarize(cases):
         "brain_trials": len(trials), "components": len(components),
         "definitions_at5": sum(component["rank"] is not None and component["rank"] <= 5 for component in components),
         "definitions_in_pack": sum(component["rank"] is not None for component in components),
+        "definitions_via_related_use": sum(component.get("source_type") == "code_use" for component in components),
+        "related_use_items": sum(trial.get("related_use_items", 0) for trial in trials),
+        **{key: sum(trial.get(key, 0) for trial in trials) for key in (
+            "pointer_lines", "ranged_pointer_lines", "direct_pointer_lines",
+            "ranged_direct_pointer_lines", "related_use_lines")},
+        "source_tokens": sum(item["tokens"] for trial in trials for item in trial["selected"]),
         "required_files": sum(len(trial["required_files"]) for trial in trials),
         "files_at5": sum(len(trial["files_at5"]) for trial in trials),
         "files_in_pack": sum(len(trial["files_in_pack"]) for trial in trials),
@@ -123,6 +136,7 @@ def evaluate_task(args, task, budget):
                 if Path(healthy["database"]).resolve() != copied.resolve():
                     raise ValueError("Daemon did not open the isolated database")
                 result["build_id"] = healthy["build_id"]
+                request_root = None
                 if args.reindex:
                     checkout = root / "work"
                     subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", str(fixture / "work"), str(checkout)], check=True)
@@ -138,8 +152,13 @@ def evaluate_task(args, task, budget):
                         raise ValueError("Reindex changed project identity")
                     result["reindex"] = {"seconds": round(time.perf_counter() - started, 3), **indexed["index"]}
                     isolate_checkout_aliases(copied)
-                    # Query requests cannot read source files even accidentally.
-                    shutil.rmtree(checkout)
+                    if args.live_checkout:
+                        # The clone matches the fresh index; requests name it
+                        # as their root so the daemon can check line ranges.
+                        request_root = str(checkout.resolve())
+                    else:
+                        # Query requests cannot read source files even accidentally.
+                        shutil.rmtree(checkout)
                 with read_only(copied) as database:
                     result["schema_version"] = database.execute("SELECT max(version) FROM schema_migrations").fetchone()[0]
                     columns = {row[1] for row in database.execute("PRAGMA table_info(nodes)")}
@@ -149,7 +168,7 @@ def evaluate_task(args, task, budget):
                     for repeat in range(1, args.repeats + 1):
                         for case in cases:
                             for mode in ("brain", "off"):
-                                case["trials"].append(trial(database, socket, ready["project_id"], case, budget, repeat, mode))
+                                case["trials"].append(trial(database, socket, ready["project_id"], case, budget, repeat, mode, request_root))
                     result["cases"] = cases
                     result["summary"] = summarize(cases)
             finally:
@@ -173,10 +192,14 @@ def main():
     parser.add_argument("--cases", type=Path, default=Path(__file__).resolve().parents[1] / "tests/fixtures/task_context_cases.json")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--reindex", action="store_true")
+    parser.add_argument("--live-checkout", action="store_true",
+                        help="keep the reindexed disposable clone during queries and send it as the request root (requires --reindex)")
     parser.add_argument("--repeats", type=int, default=3)
     args = parser.parse_args()
     if args.output.exists() or not 1 <= args.repeats <= 10:
         parser.error("Use a new output path and 1–10 repeats")
+    if args.live_checkout and not args.reindex:
+        parser.error("--live-checkout requires --reindex")
     args.daemon = args.daemon.resolve(strict=True)
     document = json.loads(args.cases.read_text())
     report = {
@@ -184,8 +207,11 @@ def main():
         "daemon_sha256": sha256(args.daemon), "harness_sha256": sha256(Path(__file__)),
         "helpers_sha256": sha256(Path(__file__).with_name("eval_context_quality.py")),
         "case_sha256": sha256(args.cases), "reindex": args.reindex, "repeats": args.repeats,
+        "live_checkout": args.live_checkout,
         "token_budget": document["default_token_budget"], "limitations": document["purpose"],
-        "isolation": "Copied databases and historical checkouts; checkout deleted before queries; no live roots, background jobs, network models or source payload export.",
+        "isolation": ("Copied databases and historical checkouts; the disposable reindexed clone is the request root during queries; no other live roots, background jobs, network models or source payload export."
+                      if args.live_checkout else
+                      "Copied databases and historical checkouts; checkout deleted before queries; no live roots, background jobs, network models or source payload export."),
         "tasks": [],
     }
     for task in document["tasks"]:

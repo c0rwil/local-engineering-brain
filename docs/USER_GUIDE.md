@@ -131,6 +131,35 @@ already registered in the brain and silently no-op everywhere else — a
 repo joins the brain only when you `engram index` it. Every hook fails open;
 a broken brain can never break a coding session.
 
+**Task source map.** Task context ends with up to 12 indexed source pointers,
+one per file, ranked by task identifiers, paths and terms. They are reference
+data, not verified lessons. A definition pointer names its lines as
+`path:start-end` (1-based, inclusive): the daemon reads the file in the
+request's checkout and shows the range only when the file still has the
+digest recorded at indexing. A file changed since then, a linked repository,
+or an unreadable file gets a file-level pointer instead; a refresh restores
+the range. Markdown sections span to the next heading of the same or a higher
+level, and definition ranges include attributes, decorators and comments
+directly above them.
+
+After every direct pointer, up to six `Related use:` lines may follow, only
+within the remaining source budget. They come from the definitions the task
+names (an identifier or an explicit path). A caller is listed only when its
+call text names that definition exactly. From another file, the name must also
+be unique in the repository and imported by the calling file (Kotlin, Java,
+Scala, C# and Go files in the same directory need no import). Method calls on
+values, ambiguous or unimported names and calls across languages are never
+treated as dependencies. A shared use is another definition in the same file
+that makes the same specific call, for example taking the same lock; it is not
+a dependency between the two. The native indexer does not record Python call
+sites or calls written inside macro arguments, so those produce no related
+uses. Ranges and related uses do not change which direct pointers are chosen.
+A pack is not delivered again just because a range moved or fell back to the
+file; new or changed sources are. `context.source_line_ranges` and
+`context.related_use_cues` turn each part off. Their effect on agent cost or
+correctness has not been measured in a paired agent run; see
+[perf evidence](perf-evidence/2026-10-04-line-ranges/README.md).
+
 MCP exposes the episode lifecycle to agents; clients without native hooks must
 call those tools to capture it. Optional local-model proxy injection runs through
 `engram-proxy` on 127.0.0.1:11435 (`x-engram-mode: off` is a true control).

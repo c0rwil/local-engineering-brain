@@ -362,6 +362,14 @@ pub struct ContextConfig {
     /// Default ON: links themselves are always an explicit operator action,
     /// and unlinked projects are never eligible.
     pub include_linked_projects: bool,
+    /// Render task source pointers as `path:start-end` (1-based, inclusive)
+    /// when the request's checkout file still has the indexed digest; changed
+    /// or unreadable files keep a file-level pointer. Disable for ablation.
+    pub source_line_ranges: bool,
+    /// Append up to six related uses of the top direct definitions (resolved
+    /// callers and same-file shared calls) after all direct source pointers,
+    /// within the remaining source budget. Disable for ablation.
+    pub related_use_cues: bool,
 }
 
 /// Bounds for the optional deterministic semantic retrieval stage. The stage
@@ -518,6 +526,8 @@ impl Default for ContextConfig {
             review_standards_section: true,
             compact_injection: true,
             include_linked_projects: true,
+            source_line_ranges: true,
+            related_use_cues: true,
         }
     }
 }
@@ -1322,6 +1332,25 @@ mod tests {
         )
         .expect("compact injection is configurable");
         assert!(!config.context.compact_injection);
+    }
+
+    #[test]
+    fn source_line_ranges_and_related_use_cues_default_on_and_stay_ablatable() {
+        let defaults = Config::default().context;
+        assert!(defaults.source_line_ranges && defaults.related_use_cues);
+        let temp = TempDir::new().expect("temp dir");
+        for (body, ranges, uses) in [
+            ("source_line_ranges = false", false, true),
+            ("related_use_cues = false", true, false),
+        ] {
+            let path = temp.path().join("sources.toml");
+            fs::write(&path, format!("[context]\n{body}\n")).expect("config");
+            let config =
+                Config::load_layers(Some(&path), None, &ConfigOverrides::default(), temp.path())
+                    .expect("source map options are configurable");
+            assert_eq!(config.context.source_line_ranges, ranges, "{body}");
+            assert_eq!(config.context.related_use_cues, uses, "{body}");
+        }
     }
 
     #[test]
