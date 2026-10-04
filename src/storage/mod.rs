@@ -89,13 +89,13 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         include_str!("migrations/0016_source_aliases_delivery.sql"),
     ),
     (
-        19,
+        17,
         "tool_observations",
-        include_str!("migrations/0019_tool_observations.sql"),
+        include_str!("migrations/0017_tool_observations.sql"),
     ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 19;
+pub const LATEST_MIGRATION_VERSION: i64 = 17;
 
 /// Reopenable handle to the canonical database.
 ///
