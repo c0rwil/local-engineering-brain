@@ -216,6 +216,41 @@ fn passing_checks_after_a_failed_test_close_the_episode_as_failure() {
     );
 }
 
+/// User- and project-level hooks run concurrently for one tool call; the call
+/// is recorded once and its result stays known.
+#[test]
+fn concurrent_hooks_for_one_call_record_it_once() {
+    let f = Fixture::new(&["repo"]);
+    let repo = f.repo("repo");
+    f.prompt("dual", &repo);
+    // The episode exists before the race, as it does for every call after a
+    // session's first: both hooks load the same session state at once.
+    f.bash("dual", &repo, "t0", "cargo check", &Run::Pass("ok"));
+    for round in 1..=5 {
+        let payload = json!({"session_id":"dual","cwd":repo,
+            "hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":format!("t{round}"),
+            "tool_input":{"command":"cargo test"},
+            "tool_response":{"stdout":"test result: ok","stderr":"","interrupted":false,"isImage":false}});
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    cli(f.root(), &["hook", "bash"], Some(&payload))
+                });
+            }
+        });
+    }
+    let tests = f
+        .evidence()
+        .into_iter()
+        .filter(|(kind, _)| kind == "test_result")
+        .count();
+    assert_eq!(tests, 5, "each of the five calls is recorded exactly once");
+    f.end("dual", &repo);
+    assert_eq!(f.outcome("dual"), "success");
+}
+
 /// Item 2: every verification in a command must carry its own status; a
 /// passing exit after `;` says nothing about the tests before it.
 #[test]

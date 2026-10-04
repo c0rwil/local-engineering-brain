@@ -2960,7 +2960,11 @@ fn run_hook_payload(
             // Write-ahead before any daemon call can fail or time out: a
             // recognized verification's result is unknown until its evidence
             // is recorded, so an older pass cannot close the episode.
-            let pending = engram::agenthooks::pending_verification(payload, &cwd);
+            // When user- and project-level hooks both handle this call, only the
+            // one that claims it touches its verification state.
+            let pending = engram::agenthooks::pending_verification(payload, &cwd).filter(|_| {
+                engram::agenthooks::claim_verification(&state_dir, &session_id, payload)
+            });
             if let Some(pending) = &pending {
                 engram::agenthooks::mark_verification_unknown(&state_dir, &session_id, pending);
             }
@@ -3376,6 +3380,16 @@ fn hook_episode(
     }
     let prompt = engram::agenthooks::pending_prompt(state_dir, session_id)?;
     if !engram::agenthooks::claim_once(state_dir, &scope, "episode") {
+        // A concurrent hook for this session (user- and project-level hooks
+        // run together) is creating the episode. Wait briefly for it, so this
+        // call's capture is not dropped; give up if the creator failed.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            if let Some(session) = engram::agenthooks::load_session(state_dir, &scope) {
+                return Some((scope, session));
+            }
+        }
         return None;
     }
     let Ok(task) = block_on(

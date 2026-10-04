@@ -378,6 +378,25 @@ pub fn claim_once(state_dir: &Path, session_id: &str, tag: &str) -> bool {
         .is_ok()
 }
 
+/// Claim one tool call's verification for this hook process. Claude Code runs
+/// user- and project-level hooks concurrently, so two processes can handle the
+/// same call; exactly one records its verification and writes its result.
+/// Calls without an id cannot be told apart and are always handled. Claim
+/// files age out with the session's other hook files.
+#[must_use]
+pub fn claim_verification(state_dir: &Path, session_id: &str, payload: &serde_json::Value) -> bool {
+    let Some(id) = payload
+        .get("tool_use_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())
+    else {
+        return true;
+    };
+    let digest = crate::experience::sha256(format!("tool:{id}").as_bytes());
+    let digest = digest.get(..32).unwrap_or(&digest);
+    claim_once(state_dir, session_id, &format!("verification-{digest}"))
+}
+
 /// Remove a session's claim files (session end).
 pub fn clear_claims(state_dir: &Path, session_id: &str) {
     for tag in ["brief", "prompt", "episode", "context"] {
@@ -3026,6 +3045,28 @@ mod tests {
         assert!(
             claim_once(temp.path(), "s1", "prompt"),
             "cleared at session end"
+        );
+    }
+
+    #[test]
+    fn each_tool_call_verification_is_claimed_once() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let call = serde_json::json!({"tool_use_id":"toolu_1","tool_name":"Bash"});
+        assert!(claim_verification(temp.path(), "s1", &call));
+        assert!(
+            !claim_verification(temp.path(), "s1", &call),
+            "the concurrent second hook for the same call loses"
+        );
+        let next = serde_json::json!({"tool_use_id":"toolu_2","tool_name":"Bash"});
+        assert!(
+            claim_verification(temp.path(), "s1", &next),
+            "new calls are new"
+        );
+        let anonymous = serde_json::json!({"tool_name":"Bash"});
+        assert!(claim_verification(temp.path(), "s1", &anonymous));
+        assert!(
+            claim_verification(temp.path(), "s1", &anonymous),
+            "calls without an id are always handled"
         );
     }
 
