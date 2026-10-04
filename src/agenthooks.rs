@@ -1319,6 +1319,11 @@ pub enum StatusHidden {
     Pipe,
     /// A directory change that may not take effect before the verification.
     Directory,
+    /// Not the shell: the coding client reported no exit status for the run
+    /// (a Codex command without a rollout record, a failure without an exit
+    /// code, an interrupted call). The ledger counts it; hooks note only
+    /// shell causes, which the agent can change.
+    Unreported,
 }
 
 impl StatusHidden {
@@ -1332,6 +1337,7 @@ impl StatusHidden {
             Self::Sequence => "sequence",
             Self::Pipe => "pipe",
             Self::Directory => "directory",
+            Self::Unreported => "unreported",
         }
     }
 }
@@ -1800,6 +1806,34 @@ pub fn mark_verification_unknown(
     }
 }
 
+/// Write-ahead for a run whose directory is unknown: every earlier result of
+/// the same verification commands, under any directory, becomes unknown in
+/// each episode of the session.
+pub fn mark_verification_unknown_anywhere(
+    state_dir: &Path,
+    session_id: &str,
+    pending: &PendingVerification,
+) {
+    // A key is the directory, a newline, then the normalized commands.
+    fn commands(key: &str) -> Option<&str> {
+        key.split_once('\n').map(|(_, commands)| commands)
+    }
+    let wanted = commands(&pending.key);
+    for (scope, mut session) in project_sessions(state_dir, session_id) {
+        let mut changed = false;
+        for result in &mut session.verification_results {
+            if result.exit_code.is_some() && commands(&result.key) == wanted {
+                result.exit_code = None;
+                changed = true;
+            }
+        }
+        if changed {
+            session.last_verification_exit = None;
+            let _ = save_session(state_dir, &scope, &session);
+        }
+    }
+}
+
 /// Longest status note, well inside Codex's per-message and Cursor's context
 /// limits.
 const STATUS_NOTE_BYTES: usize = 900;
@@ -1870,8 +1904,12 @@ pub fn status_note(command: &str, reason: StatusHidden) -> String {
             "the repository it ran in",
             "a directory change before it may not take effect",
         ),
+        StatusHidden::Unreported => (status, "the coding client reported none for it"),
     };
-    let advice = match recordable_form(command)
+    // Running the command again changes nothing the client reports.
+    let advice = match (reason != StatusHidden::Unreported)
+        .then(|| recordable_form(command))
+        .flatten()
         .filter(|(form, _)| form.len() <= STATUS_NOTE_COMMAND_BYTES)
     {
         Some((form, replaced)) => {
@@ -1896,6 +1934,9 @@ pub fn status_note(command: &str, reason: StatusHidden) -> String {
             StatusHidden::Background => "run it in the foreground",
             StatusHidden::Directory => "put `cd <path> &&` with a fixed path right before it",
             StatusHidden::Syntax => "run the verification as a plain command",
+            StatusHidden::Unreported => {
+                "record the result with Engram's `engram_record_evidence` tool"
+            }
         }
         .to_owned(),
     };
@@ -2124,9 +2165,10 @@ fn shell_commands(text: &str) -> Option<Vec<(String, Option<ShellOperator>)>> {
 /// reports every non-zero exit as a failure event, so only `claude_code`
 /// payloads may infer 0). Interrupted, backgrounded or reinterpreted
 /// (`returnCodeInterpretation`) calls, and failures without an exit code,
-/// have no known status. Neither does a Codex (0.155) shell call: its
+/// have no known status. Neither does a Codex (0.155) shell payload: its
 /// `PostToolUse` `tool_response` is the command's output text, and Codex
-/// runs the hook for failing commands too.
+/// runs the hook for failing commands too. Its status comes from the
+/// rollout instead (see [`codex::command_record`]).
 #[must_use]
 pub fn observed_exit_status(
     payload: &serde_json::Value,
@@ -2400,6 +2442,8 @@ pub struct ObservedVerification {
 /// reported. `None` for ordinary commands, an unknown status, or a status the
 /// shell syntax hides. `source` is the client's hook label (for example
 /// `CLAUDE_HOOK_SOURCE`); `session_paths` are paths this session touched.
+/// `reported` is a status the client reported outside the payload, with how
+/// (`codex_rollout`); the payload's own status takes precedence.
 #[must_use]
 pub fn observe_verification(
     payload: &serde_json::Value,
@@ -2407,6 +2451,7 @@ pub fn observe_verification(
     root: &Path,
     git: Option<&crate::projects::GitState>,
     session_paths: &[String],
+    reported: Option<(i32, &'static str)>,
 ) -> Option<ObservedVerification> {
     let input = payload
         .get("tool_input")
@@ -2416,7 +2461,8 @@ pub fn observe_verification(
     if !verification.status_bearing {
         return None;
     }
-    let (exit_code, exit_status) = observed_exit_status(payload, source == CLAUDE_HOOK_SOURCE)?;
+    let (exit_code, exit_status) =
+        observed_exit_status(payload, source == CLAUDE_HOOK_SOURCE).or(reported)?;
     let mut candidates = session_paths.to_vec();
     if let Some(git) = git {
         candidates.extend(git.changed_paths.iter().filter_map(|changed| {
@@ -3951,6 +3997,10 @@ mod tests {
              `set -o pipefail; cargo test 2>&1 | tail -20`. This note appears once per session \
              for this cause.\n"
         );
+        // Rerunning cannot help when the client reports no status.
+        let unreported = status_note("cargo test", StatusHidden::Unreported);
+        assert!(unreported.contains("the coding client reported none for it"));
+        assert!(unreported.contains("`engram_record_evidence`") && !unreported.contains("run `"));
         for reason in [
             StatusHidden::Syntax,
             StatusHidden::Background,
@@ -3958,6 +4008,7 @@ mod tests {
             StatusHidden::Sequence,
             StatusHidden::Pipe,
             StatusHidden::Directory,
+            StatusHidden::Unreported,
         ] {
             for command in [
                 "y".repeat(5_000),
@@ -4189,10 +4240,11 @@ mod tests {
         // Other clients' failure text is command output; a first line that
         // happens to read "Exit code N" must not become a recorded status.
         assert_eq!(observed_exit_status(&failure, false), None);
-        let codex = json!({"hook_event_name":"PostToolUse","tool_name":"exec_command",
+        // A client that puts an explicit code in its result object.
+        let explicit = json!({"hook_event_name":"PostToolUse","tool_name":"Bash",
             "tool_response":{"exit_code":3,"stdout":""}});
         assert_eq!(
-            observed_exit_status(&codex, false),
+            observed_exit_status(&explicit, false),
             Some((3, "tool_response"))
         );
         let legacy =
@@ -4405,6 +4457,7 @@ mod tests {
             root,
             None,
             &touched,
+            None,
         )
         .expect("observed");
         assert_eq!((observed.kind, observed.exit_code), ("test_result", 0));
@@ -4419,8 +4472,15 @@ mod tests {
         );
         for hidden in ["cargo test | tail -3", "cargo test || true", "git status"] {
             assert!(
-                observe_verification(&payload(hidden), CLAUDE_HOOK_SOURCE, root, None, &touched)
-                    .is_none(),
+                observe_verification(
+                    &payload(hidden),
+                    CLAUDE_HOOK_SOURCE,
+                    root,
+                    None,
+                    &touched,
+                    None
+                )
+                .is_none(),
                 "{hidden}"
             );
         }
@@ -4430,6 +4490,7 @@ mod tests {
             root,
             None,
             &touched,
+            None,
         )
         .expect("repeat");
         assert_eq!(
@@ -4438,8 +4499,8 @@ mod tests {
         );
         let mut rerun = payload("cargo test");
         rerun["tool_use_id"] = json!("toolu_2");
-        let rerun =
-            observe_verification(&rerun, CLAUDE_HOOK_SOURCE, root, None, &touched).expect("rerun");
+        let rerun = observe_verification(&rerun, CLAUDE_HOOK_SOURCE, root, None, &touched, None)
+            .expect("rerun");
         assert_ne!(
             rerun.fingerprint, observed.fingerprint,
             "a new tool call with identical output is a new observation"
@@ -4449,14 +4510,64 @@ mod tests {
             .as_object_mut()
             .expect("payload")
             .remove("tool_use_id");
-        let before = observe_verification(&legacy, CLAUDE_HOOK_SOURCE, root, None, &touched)
+        let before = observe_verification(&legacy, CLAUDE_HOOK_SOURCE, root, None, &touched, None)
             .expect("legacy");
         std::fs::write(root.join("lib.rs"), b"pub fn a() { changed() }").expect("edit");
-        let after = observe_verification(&legacy, CLAUDE_HOOK_SOURCE, root, None, &touched)
+        let after = observe_verification(&legacy, CLAUDE_HOOK_SOURCE, root, None, &touched, None)
             .expect("legacy edit");
         assert_ne!(
             before.fingerprint, after.fingerprint,
             "without call ids, a rerun on edited source is a new observation"
+        );
+    }
+
+    /// Codex sends output text; its rollout supplies the status, unless the
+    /// shell hides it.
+    #[test]
+    fn codex_verifications_take_their_status_from_the_rollout() {
+        use serde_json::json;
+        let temp = tempfile::tempdir().expect("temp");
+        let root = temp.path();
+        let touched: [String; 0] = [];
+        let codex = |command: &str| {
+            json!({"hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"exec-1",
+                "tool_input":{"command":command},"tool_response":"test result: FAILED"})
+        };
+        let reported = Some((101, "codex_rollout"));
+        let failed = observe_verification(
+            &codex("cargo test"),
+            CODEX_HOOK_SOURCE,
+            root,
+            None,
+            &touched,
+            reported,
+        )
+        .expect("rollout status");
+        assert_eq!(failed.exit_code, 101);
+        assert_eq!(failed.metadata["exit_status"], "codex_rollout");
+        assert_eq!(failed.artifact, "test result: FAILED");
+        assert!(
+            observe_verification(
+                &codex("cargo test | tail -3"),
+                CODEX_HOOK_SOURCE,
+                root,
+                None,
+                &touched,
+                reported
+            )
+            .is_none()
+        );
+        assert!(
+            observe_verification(
+                &codex("cargo test"),
+                CODEX_HOOK_SOURCE,
+                root,
+                None,
+                &touched,
+                None
+            )
+            .is_none(),
+            "no record, no status"
         );
     }
 }

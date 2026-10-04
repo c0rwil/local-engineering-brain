@@ -291,26 +291,48 @@ fn brain_off_mode_gives_no_note() {
     assert_eq!(f.ledger(2), vec![(pipe.clone(), 0), (pipe, 1)]);
 }
 
+/// Codex 0.155 sends a shell command's output text as `tool_response`; its
+/// paginated rollout records the exit code and directory (see
+/// `verification_outcomes.rs` for the rollout itself).
 #[test]
 fn codex_post_tool_use_carries_the_note() {
     let f = Fixture::new();
+    let rollout = f.root().join("rollout-notes.jsonl");
+    std::fs::write(
+        &rollout,
+        format!(
+            "{}\n",
+            json!({"type":"session_meta","payload":{"id":"codex-notes",
+                "session_id":"codex-notes","source":"vscode","history_mode":"paginated"}})
+        ),
+    )
+    .unwrap();
     f.prompt(&["--codex"], "codex-notes");
-    let bash = |id: &str, command: &str, exit: i32| {
+    let bash = |id: &str, command: &str| {
+        let finished = json!({"type":"event_msg","payload":{"type":"item_completed",
+            "item":{"type":"CommandExecution","id":id,"status":"completed","exit_code":0,
+                "cwd":format!("file://{}", f.repo().display())}}});
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&rollout)
+            .unwrap();
+        writeln!(file, "{finished}").unwrap();
         f.cli(
             &["hook", "bash", "--codex"],
             Some(
                 &json!({"session_id":"codex-notes","turn_id":"turn-1","cwd":f.repo(),
-                "hook_event_name":"PostToolUse","model":"gpt-test","tool_name":"Bash",
+                "hook_event_name":"PostToolUse","model":"gpt-test",
+                "permission_mode":"default","transcript_path":rollout,"tool_name":"Bash",
                 "tool_use_id":id,"tool_input":{"command":command},
-                "tool_response":{"exit_code":exit,"stdout":"test result: ok"}}),
+                "tool_response":"test result: ok"}),
             ),
         )
     };
-    let note = hook_note(&bash("c1", "cargo test -q || true", 0), "PostToolUse");
+    let note = hook_note(&bash("c1", "cargo test -q || true"), "PostToolUse");
     assert!(note.contains("`||` replaces a failure"), "{note}");
     assert!(note.contains("run `cargo test -q`"), "{note}");
-    assert_eq!(bash("c2", "cargo build || echo failed", 0), "");
-    assert_eq!(bash("c3", "cargo test", 0), "");
+    assert_eq!(bash("c2", "cargo build || echo failed"), "");
+    assert_eq!(bash("c3", "cargo test"), "");
     let or = Some("or".to_owned());
     assert_eq!(f.ledger(3), vec![(or.clone(), 1), (or, 0), (None, 0)]);
 }
@@ -318,8 +340,9 @@ fn codex_post_tool_use_carries_the_note() {
 /// Codex 0.155 runs no hook for a code-mode `exec` cell and reports each
 /// shell command the cell runs as its own `Bash` call, like a direct
 /// `exec_command`: `tool_input.command`, and the output text as
-/// `tool_response`, without an exit code. Those runs get notes and ledger
-/// rows, but no status is inferred, so none becomes evidence and the episode
+/// `tool_response`, without an exit code. Without a rollout record those
+/// runs get notes and ledger rows, but no status is inferred: none becomes
+/// evidence, the ledger says the client reported none, and the episode
 /// cannot close as a success.
 #[test]
 fn codex_code_mode_commands_are_noted_but_never_inferred_to_pass() {
@@ -349,7 +372,10 @@ fn codex_code_mode_commands_are_noted_but_never_inferred_to_pass() {
     let cell = "const r = await tools.exec_command({ cmd: \"cargo test || true\" });";
     assert_eq!(post("exec", "cell-1", cell), "");
     let pipe = Some("pipe".to_owned());
-    assert_eq!(f.ledger(2), vec![(pipe, 1), (None, 0)]);
+    assert_eq!(
+        f.ledger(2),
+        vec![(pipe, 1), (Some("unreported".to_owned()), 0)]
+    );
     let evidence: i64 = f
         .db()
         .query_row("SELECT count(*) FROM evidence", [], |row| row.get(0))

@@ -2802,6 +2802,24 @@ fn run_hook_payload(
         .get("cwd")
         .and_then(serde_json::Value::as_str)
         .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    // Codex tells hooks neither a shell command's exit status nor the
+    // directory it ran in; the calling thread's rollout records both. A
+    // recognized verification waits briefly for that record.
+    let codex_command = (event == "bash"
+        && agent == engram::agenthooks::HookClient::Codex
+        && engram::agenthooks::is_shell_tool(payload))
+    .then(|| {
+        let wait = if engram::agenthooks::pending_verification(payload, &cwd).is_some() {
+            engram::agenthooks::codex::ROLLOUT_WAIT
+        } else {
+            Duration::ZERO
+        };
+        engram::agenthooks::codex::command_record(payload, wait)
+    })
+    .flatten();
+    let cwd = codex_command
+        .as_ref()
+        .map_or(cwd, |command| command.cwd.clone());
     let tool_input = payload.get("tool_input").cloned().unwrap_or_default();
     let tool_paths = engram::agenthooks::resolve_tool_paths(&cwd, &tool_input);
     let target_dir = tool_paths.first().map_or_else(
@@ -3210,7 +3228,23 @@ fn run_hook_payload(
             });
             if let Some(pending) = &pending {
                 engram::agenthooks::mark_verification_unknown(&state_dir, &session_id, pending);
+                // Without its rollout record, a Codex command's directory is
+                // unknown too: no earlier result of it may stand anywhere.
+                if agent == engram::agenthooks::HookClient::Codex && codex_command.is_none() {
+                    engram::agenthooks::mark_verification_unknown_anywhere(
+                        &state_dir,
+                        &session_id,
+                        pending,
+                    );
+                }
             }
+            // Codex runs this hook for failed commands too; the rollout
+            // record says whether the command failed.
+            let phase = if codex_command.as_ref().is_some_and(|command| command.failed) {
+                engram::effectiveness::ToolPhase::Failure
+            } else {
+                engram::effectiveness::post_tool_phase(payload)
+            };
             let mut primary = None;
             for (resolved, paths) in hook_tool_projects(&client, &target_dir, &tool_paths) {
                 let Some((scope, session)) = hook_episode(
@@ -3224,14 +3258,7 @@ fn run_hook_payload(
                 // PostToolUse can be the only observed event for an edit.
                 let _ = engram::agenthooks::remember_paths(&state_dir, &scope, &paths);
                 record_hook_tool_observation(
-                    &client,
-                    &state_dir,
-                    &scope,
-                    &session,
-                    payload,
-                    &paths,
-                    engram::effectiveness::post_tool_phase(payload),
-                    agent,
+                    &client, &state_dir, &scope, &session, payload, &paths, phase, agent,
                 );
                 if primary.is_none() {
                     primary = Some((scope, session, resolved));
@@ -3252,7 +3279,11 @@ fn run_hook_payload(
                 );
             } else if let Some(pending) = &pending {
                 // Only shell verification results can become deterministic evidence.
-                record_hook_verification(
+                let reported = codex_command
+                    .as_ref()
+                    .and_then(|command| command.exit_code)
+                    .map(|code| (code, "codex_rollout"));
+                let observed = record_hook_verification(
                     &client,
                     &state_dir,
                     &scope,
@@ -3261,12 +3292,18 @@ fn run_hook_payload(
                     payload,
                     agent,
                     pending,
+                    reported,
                 );
                 // A hidden exit status recorded nothing: say so once, then
-                // count the run for the effectiveness report.
+                // count the run for the effectiveness report. A run whose
+                // shell kept its status is still unrecordable when the
+                // client reported none.
                 let noted = deliver_status_note(&state_dir, &session_id, payload, pending, emit);
+                let hidden = pending.hidden.or_else(|| {
+                    (!observed).then_some(engram::agenthooks::StatusHidden::Unreported)
+                });
                 record_hook_verification_observation(
-                    &client, &session, payload, agent, pending, noted,
+                    &client, &session, payload, agent, pending, hidden, noted,
                 );
             }
             // All tools contribute actual call counts. A multi-repository patch
@@ -3281,7 +3318,9 @@ fn run_hook_payload(
 
 /// Record a shell verification on the declared task or the session's episode,
 /// then set its result. The write-ahead already marked the result unknown, so
-/// an unobserved status or a failed record leaves it unknown.
+/// an unobserved status or a failed record leaves it unknown. `reported` is
+/// an exit status the client reported outside the payload (Codex's rollout).
+/// Returns whether the run's own exit status was observed.
 #[allow(clippy::too_many_arguments)]
 fn record_hook_verification(
     client: &engram::daemon::DaemonClient,
@@ -3292,7 +3331,8 @@ fn record_hook_verification(
     payload: &serde_json::Value,
     agent: engram::agenthooks::HookClient,
     pending: &engram::agenthooks::PendingVerification,
-) {
+    reported: Option<(i32, &'static str)>,
+) -> bool {
     session.root = Some(resolved.resolved.root.clone());
     // Only a harness-reported status that belongs to the verification itself
     // is recorded; pipes and `||` hide it. The record carries digests of the
@@ -3304,6 +3344,7 @@ fn record_hook_verification(
         &resolved.resolved.root,
         resolved.resolved.git.as_ref(),
         &session_paths,
+        reported,
     ) else {
         // Hidden by the shell, interrupted, or failed without an exit code:
         // the result is unknown and neither an older pass nor the duplicate
@@ -3311,7 +3352,7 @@ fn record_hook_verification(
         session.set_verification_result(&pending.key, pending.tests, None);
         session.forget_last_result();
         let _ = engram::agenthooks::save_session(state_dir, scope, &session);
-        return;
+        return false;
     };
     // A hook fired twice for one tool call restores the recorded result.
     if session.last_evidence_fingerprint.as_deref() != Some(observed.fingerprint.as_str()) {
@@ -3339,7 +3380,8 @@ fn record_hook_verification(
         let declared = open_declared_task(client, state_dir, scope, &session);
         if !declared.as_ref().is_some_and(&record) {
             if !record(&session.task_id) {
-                return;
+                // Observed but refused: the result stays unknown.
+                return true;
             }
             // A declared task that refuses evidence this project's episode
             // accepts (another project, or gone) is not this scope's task.
@@ -3352,6 +3394,7 @@ fn record_hook_verification(
     session.last_verification_exit = Some(observed.exit_code);
     session.last_evidence_fingerprint = Some(observed.fingerprint);
     let _ = engram::agenthooks::save_session(state_dir, scope, &session);
+    true
 }
 
 /// Coach the agent when the shell hid a recognized verification's exit
@@ -3396,15 +3439,16 @@ fn deliver_status_note(
 }
 
 /// Count one recognized verification run for `engram effectiveness`: its
-/// kind, whether its exit status could be recorded, the cause when not, and
-/// whether a note went out. Never the command or its output. Calls without
-/// agent-reported session and tool-use IDs are not counted.
+/// kind, whether its exit status could be recorded, the cause (`hidden`)
+/// when not, and whether a note went out. Never the command or its output.
+/// Calls without agent-reported session and tool-use IDs are not counted.
 fn record_hook_verification_observation(
     client: &engram::daemon::DaemonClient,
     session: &engram::agenthooks::HookSession,
     payload: &serde_json::Value,
     agent: engram::agenthooks::HookClient,
     pending: &engram::agenthooks::PendingVerification,
+    hidden: Option<engram::agenthooks::StatusHidden>,
     note_delivered: bool,
 ) {
     // The daemon acknowledges once the write is queued; bound the wait anyway
@@ -3432,7 +3476,7 @@ fn record_hook_verification_observation(
         task_id: Some(session.task_id.clone()),
         source: agent.usage_source().to_owned(),
         kind: pending.kind.to_owned(),
-        hidden: pending.hidden,
+        hidden,
         note_delivered,
     };
     let _ = block_on(async {

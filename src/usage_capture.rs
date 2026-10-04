@@ -290,6 +290,10 @@ pub struct CodexSessionMeta {
     pub session_id: Option<String>,
     /// Immediate parent thread of a sub-session.
     pub parent_thread_id: Option<String>,
+    /// How the thread stores history: `paginated` rollouts also record each
+    /// finished item, including shell commands and their exit codes;
+    /// `legacy` rollouts do not.
+    pub history_mode: Option<String>,
     pub kind: CodexThreadKind,
 }
 
@@ -335,6 +339,7 @@ pub fn codex_session_meta(path: &Path) -> Option<CodexSessionMeta> {
         thread_id: text_field(payload, "id"),
         session_id: text_field(payload, "session_id"),
         parent_thread_id: text_field(payload, "parent_thread_id"),
+        history_mode: text_field(payload, "history_mode"),
         kind: codex_thread_kind(payload),
     })
 }
