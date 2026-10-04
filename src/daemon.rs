@@ -2623,7 +2623,10 @@ async fn file_shape(
             // Tree-sitter records a CALLS target as an ExternalReference in
             // the REFERENCING file; recover this file's callers by matching
             // reference labels to the definitions here (same resolution the
-            // vault uses). Drive the join FROM this file's few definitions —
+            // vault uses). A name that another file also defines is skipped:
+            // the label alone cannot say which definition a call means, and
+            // duplicate private helpers or per-script `main`s made most such
+            // matches coincidental. Drive the join FROM this file's few definitions —
             // label-first — so every step is index-covered; joining from the
             // edge side scans the whole project's CALLS set and times out on
             // large graphs (observed on a 41k-node monorepo).
@@ -2636,7 +2639,7 @@ async fn file_shape(
             // otherwise `target` is read through `nodes_project_active`
             // (every reference of the kind, per definition), which reached
             // seconds per call once Python call sites were indexed.
-            let mut statement = connection.prepare(
+            let mut statement = connection.prepare(&format!(
                 "SELECT caller_label, caller_path FROM (
                      SELECT DISTINCT caller.label AS caller_label,
                             caller.file_path AS caller_path
@@ -2647,6 +2650,7 @@ async fn file_shape(
                      WHERE defined.project_id = ?1 AND defined.file_path = ?2
                        AND defined.kind IN ('Function', 'Type', 'Interface', 'Method')
                        AND defined.tombstoned_at_ms IS NULL
+                       AND {only}
                        AND target.project_id = defined.project_id
                        AND target.kind = 'ExternalReference'
                        AND target.label = defined.label
@@ -2672,7 +2676,8 @@ async fn file_shape(
                        AND caller.tombstoned_at_ms IS NULL
                        AND caller.file_path IS NOT NULL AND caller.file_path != ?2
                  ) ORDER BY caller_path, caller_label LIMIT 25",
-            )?;
+                only = crate::vault::defined_in_one_file("defined"),
+            ))?;
             let callers = statement
                 .query_map(
                     rusqlite::params![request.project_id.as_str(), request.file_path],
@@ -3805,35 +3810,43 @@ async fn project_module_symbols(
                 // the project's edge count. Driving from the project's edges
                 // instead took 1.3-1.7 s per call with pinned indexes, and up
                 // to 74 s unpinned, on a 50k-edge index with Python calls.
+                // As in the file shape, only names defined in one file count.
                 let sql = if outbound {
-                    "WITH targets AS MATERIALIZED (
-                         SELECT DISTINCT t.label FROM nodes s INDEXED BY nodes_project_file
-                         CROSS JOIN edges e INDEXED BY edges_source_active
-                            ON e.project_id = s.project_id AND e.source_id = s.id
-                         CROSS JOIN nodes t ON t.id = e.target_id
-                         WHERE s.project_id = ?1 AND (s.file_path LIKE ?2 OR s.file_path = ?3)
-                           AND e.tombstoned_at_ms IS NULL AND t.kind = 'ExternalReference')
-                     SELECT DISTINCT d.file_path FROM targets
-                     CROSS JOIN nodes d INDEXED BY nodes_project_label
-                        ON d.project_id = ?1 AND d.label = targets.label
-                     WHERE d.kind IN ('Function', 'Type', 'Module', 'Interface')
-                       AND d.tombstoned_at_ms IS NULL AND d.file_path IS NOT NULL LIMIT 400"
+                    format!(
+                        "WITH targets AS MATERIALIZED (
+                             SELECT DISTINCT t.label FROM nodes s INDEXED BY nodes_project_file
+                             CROSS JOIN edges e INDEXED BY edges_source_active
+                                ON e.project_id = s.project_id AND e.source_id = s.id
+                             CROSS JOIN nodes t ON t.id = e.target_id
+                             WHERE s.project_id = ?1 AND (s.file_path LIKE ?2 OR s.file_path = ?3)
+                               AND e.tombstoned_at_ms IS NULL AND t.kind = 'ExternalReference')
+                         SELECT DISTINCT d.file_path FROM targets
+                         CROSS JOIN nodes d INDEXED BY nodes_project_label
+                            ON d.project_id = ?1 AND d.label = targets.label
+                         WHERE d.kind IN ('Function', 'Type', 'Module', 'Interface')
+                           AND d.tombstoned_at_ms IS NULL AND d.file_path IS NOT NULL
+                           AND {only} LIMIT 400",
+                        only = crate::vault::defined_in_one_file("d"),
+                    )
                 } else {
-                    "WITH defined AS MATERIALIZED (
-                         SELECT DISTINCT d.label FROM nodes d INDEXED BY nodes_project_file
-                         WHERE d.project_id = ?1 AND (d.file_path LIKE ?2 OR d.file_path = ?3)
-                           AND d.kind IN ('Function', 'Type', 'Module', 'Interface')
-                           AND d.tombstoned_at_ms IS NULL)
-                     SELECT DISTINCT s.file_path FROM defined
-                     CROSS JOIN nodes t INDEXED BY nodes_project_label
-                        ON t.project_id = ?1 AND t.label = defined.label
-                     CROSS JOIN edges e INDEXED BY edges_target_active
-                        ON e.project_id = ?1 AND e.target_id = t.id
-                     CROSS JOIN nodes s ON s.id = e.source_id
-                     WHERE t.kind = 'ExternalReference' AND e.tombstoned_at_ms IS NULL
-                       AND s.file_path IS NOT NULL LIMIT 400"
+                    format!(
+                        "WITH defined AS MATERIALIZED (
+                             SELECT DISTINCT d.label FROM nodes d INDEXED BY nodes_project_file
+                             WHERE d.project_id = ?1 AND (d.file_path LIKE ?2 OR d.file_path = ?3)
+                               AND d.kind IN ('Function', 'Type', 'Module', 'Interface')
+                               AND d.tombstoned_at_ms IS NULL AND {only})
+                         SELECT DISTINCT s.file_path FROM defined
+                         CROSS JOIN nodes t INDEXED BY nodes_project_label
+                            ON t.project_id = ?1 AND t.label = defined.label
+                         CROSS JOIN edges e INDEXED BY edges_target_active
+                            ON e.project_id = ?1 AND e.target_id = t.id
+                         CROSS JOIN nodes s ON s.id = e.source_id
+                         WHERE t.kind = 'ExternalReference' AND e.tombstoned_at_ms IS NULL
+                           AND s.file_path IS NOT NULL LIMIT 400",
+                        only = crate::vault::defined_in_one_file("d"),
+                    )
                 };
-                let mut statement = connection.prepare(sql)?;
+                let mut statement = connection.prepare(&sql)?;
                 let rows = statement
                     .query_map(
                         rusqlite::params![request.project_id.as_str(), prefix, request.group],
@@ -5411,10 +5424,13 @@ mod tests {
         std::fs::create_dir_all(&project).expect("project dir");
         std::fs::write(
             project.join("engine.rs"),
-            "pub fn run() {}\npub struct Engine;\n",
+            "pub fn run() {}\npub struct Engine;\npub fn helper() {}\n",
         )
         .expect("engine");
         std::fs::write(project.join("caller.rs"), "fn boot() { run(); }\n").expect("caller");
+        // `helper` is defined twice, so its call resolves to neither.
+        std::fs::write(project.join("spare.rs"), "pub fn helper() {}\n").expect("spare");
+        std::fs::write(project.join("guess.rs"), "fn start() { helper(); }\n").expect("guess");
         let config = test_config(&temp);
         let socket_path = config.daemon.socket_path.clone();
         let client = DaemonClient::new(&socket_path, Duration::from_secs(2));
@@ -5437,17 +5453,21 @@ mod tests {
             .expect("file shape");
         assert!(shape.symbols.iter().any(|s| s.label == "run"));
         assert!(shape.symbols.iter().any(|s| s.label == "Engine"));
-        assert!(
-            shape
-                .callers
-                .iter()
-                .any(|c| c.label == "boot" && c.file_path == "caller.rs"),
-            "cross-file caller resolved by label: {:?}",
-            shape.callers
+        let callers = shape
+            .callers
+            .iter()
+            .map(|caller| (caller.label.as_str(), caller.file_path.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            callers,
+            [("boot", "caller.rs")],
+            "cross-file caller resolved by a name only this file defines"
         );
         for (group, depends_on, used_by) in [
             ("engine.rs", &[][..], &["caller.rs"][..]),
             ("caller.rs", &["engine.rs"][..], &[][..]),
+            ("guess.rs", &[][..], &[][..]),
+            ("spare.rs", &[][..], &[][..]),
         ] {
             let module = client
                 .module_symbols(&ModuleSymbolsRequest {
