@@ -865,6 +865,15 @@ impl MemoryStore {
                     &kind,
                     &claim,
                 )?;
+                crate::semantic::replace_memory_vectors(
+                    transaction,
+                    &MemoryId::parse(&id)?,
+                    project_id,
+                    &claim,
+                    &rationale,
+                    &tags,
+                    now,
+                )?;
                 Ok(())
             })?;
             return Ok(ReplicaOutcome::Updated);
@@ -921,6 +930,15 @@ impl MemoryStore {
                 &MemoryId::parse(&id)?,
                 &kind,
                 &claim,
+            )?;
+            crate::semantic::replace_memory_vectors(
+                transaction,
+                &MemoryId::parse(&id)?,
+                project_id,
+                &claim,
+                &rationale,
+                &tags,
+                now,
             )?;
             Ok(())
         })?;
