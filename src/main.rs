@@ -2434,10 +2434,15 @@ fn run_hook_event(
     }
     // One emitter for every context-bearing event: plain stdout for Claude
     // Code (its native contract for SessionStart/UserPromptSubmit), the
-    // additionalContext envelope for Codex — and for PreToolUse everywhere,
-    // where plain stdout is not read back into context.
+    // additionalContext envelope for Codex — and for tool events everywhere
+    // (PreToolUse, PostToolUse, PostToolUseFailure), where plain stdout is
+    // not read back into context.
     let emit = |event_name: &str, context: &str| {
-        let output = if codex || event_name == "PreToolUse" {
+        let output = if codex
+            || matches!(
+                event_name,
+                "PreToolUse" | "PostToolUse" | "PostToolUseFailure"
+            ) {
             engram::agenthooks::additional_context_output(event_name, context)
         } else {
             context.to_owned()
@@ -2488,12 +2493,25 @@ fn run_cursor_hook(
     } else {
         String::new()
     };
+    // A status note from the shell step waits for the context the pre-tool
+    // step may add, so the call still gets exactly one response. Relay
+    // messages, repository context and a note together stay within the
+    // response size Cursor accepts (checked in `agenthooks`).
+    let defer_notes = steps.contains(&"pretool");
+    let note = std::cell::RefCell::new(String::new());
     let printed = std::cell::Cell::new(false);
-    let emit = |_event_name: &str, context: &str| {
+    let emit = |event_name: &str, context: &str| {
+        if defer_notes && matches!(event_name, "PostToolUse" | "PostToolUseFailure") {
+            note.borrow_mut().push_str(context);
+            return true;
+        }
         if printed.replace(true) {
             return false;
         }
-        write(&cursor::response(event, Some(&format!("{relay}{context}"))))
+        write(&cursor::response(
+            event,
+            Some(&format!("{relay}{context}{}", note.borrow())),
+        ))
     };
     for step in steps {
         let daemon_available = run_hook_payload(
@@ -2513,7 +2531,10 @@ fn run_cursor_hook(
         forget_last_verification(overrides, &payload);
     }
     if !printed.get() {
-        write(&cursor::response(event, Some(&relay)));
+        write(&cursor::response(
+            event,
+            Some(&format!("{relay}{}", note.borrow())),
+        ));
     }
 }
 
@@ -3019,6 +3040,12 @@ fn run_hook_payload(
                     agent,
                     pending,
                 );
+                // A hidden exit status recorded nothing: say so once, then
+                // count the run for the effectiveness report.
+                let noted = deliver_status_note(&state_dir, &session_id, payload, pending, emit);
+                record_hook_verification_observation(
+                    &client, &session, payload, agent, pending, noted,
+                );
             }
             // All tools contribute actual call counts. A multi-repository patch
             // is still one tool call: attribute its receipt once to the first
@@ -3103,6 +3130,97 @@ fn record_hook_verification(
     session.last_verification_exit = Some(observed.exit_code);
     session.last_evidence_fingerprint = Some(observed.fingerprint);
     let _ = engram::agenthooks::save_session(state_dir, scope, &session);
+}
+
+/// Coach the agent when the shell hid a recognized verification's exit
+/// status: one short reference-data note in this hook's own output, at most
+/// once per conversation (the session, or a subagent thread in it) and cause,
+/// never in brain-off mode. Returns whether the note was delivered; an
+/// undelivered note stays available for a later run.
+fn deliver_status_note(
+    state_dir: &Path,
+    session_id: &str,
+    payload: &serde_json::Value,
+    pending: &engram::agenthooks::PendingVerification,
+    emit: &dyn Fn(&str, &str) -> bool,
+) -> bool {
+    let Some(reason) = pending.hidden else {
+        return false;
+    };
+    if !engram::agenthooks::status_notes_enabled() || session_id == "unknown-session" {
+        return false;
+    }
+    let conversation = engram::agenthooks::thread_scope(session_id, payload);
+    if !engram::agenthooks::claim_status_note(state_dir, &conversation, reason) {
+        return false;
+    }
+    let input = payload
+        .get("tool_input")
+        .unwrap_or(&serde_json::Value::Null);
+    let note = engram::agenthooks::status_note(engram::agenthooks::tool_command(input), reason);
+    // The note answers the event that reported the call.
+    let event = match payload
+        .get("hook_event_name")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("PostToolUseFailure") => "PostToolUseFailure",
+        _ => "PostToolUse",
+    };
+    let delivered = emit(event, &note);
+    if !delivered {
+        engram::agenthooks::release_status_note(state_dir, &conversation, reason);
+    }
+    delivered
+}
+
+/// Count one recognized verification run for `engram effectiveness`: its
+/// kind, whether its exit status could be recorded, the cause when not, and
+/// whether a note went out. Never the command or its output. Calls without
+/// agent-reported session and tool-use IDs are not counted.
+fn record_hook_verification_observation(
+    client: &engram::daemon::DaemonClient,
+    session: &engram::agenthooks::HookSession,
+    payload: &serde_json::Value,
+    agent: engram::agenthooks::HookClient,
+    pending: &engram::agenthooks::PendingVerification,
+    note_delivered: bool,
+) {
+    // The daemon acknowledges once the write is queued; bound the wait anyway
+    // so measurement never holds up the agent. A dropped row fails open.
+    const OBSERVATION_WAIT: Duration = Duration::from_millis(500);
+    let Some(tool_use_id) = payload
+        .get("tool_use_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())
+    else {
+        return;
+    };
+    let Some(session_id) = session
+        .session_id
+        .as_ref()
+        .filter(|id| id.as_str() != "unknown-session")
+    else {
+        return;
+    };
+    let request = engram::effectiveness::VerificationObservationRequest {
+        project_id: session.project_id.clone(),
+        session_id: session_id.clone(),
+        tool_use_id: tool_use_id.to_owned(),
+        conversation_id: engram::agenthooks::thread_scope(session_id, payload),
+        task_id: Some(session.task_id.clone()),
+        source: agent.usage_source().to_owned(),
+        kind: pending.kind.to_owned(),
+        hidden: pending.hidden,
+        note_delivered,
+    };
+    let _ = block_on(async {
+        tokio::time::timeout(
+            OBSERVATION_WAIT,
+            client.record_verification_observation(&request),
+        )
+        .await
+        .map_err(|_| engram::Error::Daemon("verification observation timed out".to_owned()))?
+    });
 }
 
 /// The task the agent declared in this session for this scope, while the
@@ -4547,6 +4665,9 @@ fn run_effectiveness(
                 .cost_usd
                 .map_or_else(|| "unknown".into(), |n| format!("${n:.4}"))
         );
+        for line in report.verification_status.summary_lines() {
+            println!("{line}");
+        }
         for project in &report.projects {
             println!(
                 "{}: {} context runs, {} with lessons; {} active validated, {} pending reviews",

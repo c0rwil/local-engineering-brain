@@ -145,6 +145,17 @@ not yet stable, and the schema version is 7.
 - Projects registered without Git identity record their root commit and,
   when no other active project could be the same repository, their canonical
   remote once Git is readable (`PROJECT_IDENTITY_OBSERVED`); ids never change.
+- Status notes. When the shell hides a recognized verification's exit status,
+  the post-tool hook says so in its own output: a pipe without `pipefail`,
+  `;` or a newline after it, `||`, a background run, an unmodeled `cd` or
+  unread syntax. The note shows the same command in a checked recordable
+  form. It goes at most once per conversation and cause, never with
+  `ENGRAM_MODE=off`, through Claude Code's and Codex's
+  `hookSpecificOutput.additionalContext` and Cursor's `additional_context`.
+  The effectiveness ledger counts every recognized run (schema 20,
+  `verification_observations`: kind, cause and note only). `engram
+  effectiveness` reports the recordable share overall and before and after
+  each conversation's first note.
 
 ### Changed
 

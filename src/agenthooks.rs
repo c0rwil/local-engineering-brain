@@ -1221,6 +1221,43 @@ pub struct ShellVerification {
     /// of them run in one modeled directory: a zero status then proves that
     /// every recognized verification exited 0 there.
     pub status_bearing: bool,
+    /// Why the status is hidden; `None` exactly when `status_bearing`.
+    pub hidden: Option<StatusHidden>,
+}
+
+/// Why a recognized verification's exit status cannot be recorded, in the
+/// order the hook reports it.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StatusHidden {
+    /// Shell syntax the hook does not model: subshells, groups,
+    /// here-documents, backquotes or unbalanced quotes.
+    Syntax,
+    /// A background job (`&`) or a tool call run in the background.
+    Background,
+    /// `||` replaces a failure with another command's status.
+    Or,
+    /// A command after the first verification, joined by `;` or a newline.
+    Sequence,
+    /// A pipe after the verification without an unconditional `pipefail`.
+    Pipe,
+    /// A directory change that may not take effect before the verification.
+    Directory,
+}
+
+impl StatusHidden {
+    /// Stable label for claims, the ledger and reports.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Syntax => "syntax",
+            Self::Background => "background",
+            Self::Or => "or",
+            Self::Sequence => "sequence",
+            Self::Pipe => "pipe",
+            Self::Directory => "directory",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1251,6 +1288,7 @@ pub fn classify_verification(command: &str) -> Option<ShellVerification> {
             kind,
             tests: kind == "test_result",
             status_bearing: false,
+            hidden: Some(StatusHidden::Syntax),
         });
     };
     let verifications: Vec<(usize, &'static str)> = commands
@@ -1260,12 +1298,16 @@ pub fn classify_verification(command: &str) -> Option<ShellVerification> {
         .collect();
     let (first, _) = *verifications.first()?;
     let (_, kind) = *verifications.last()?;
-    let status_bearing = statuses_reach_shell(&commands, &verifications)
-        && workdir_changes(&commands, first).is_some();
+    let hidden = hidden_status(&commands, &verifications).or_else(|| {
+        workdir_changes(&commands, first)
+            .is_none()
+            .then_some(StatusHidden::Directory)
+    });
     Some(ShellVerification {
         kind,
         tests: verifications.iter().any(|(_, kind)| *kind == "test_result"),
-        status_bearing,
+        status_bearing: hidden.is_none(),
+        hidden,
     })
 }
 
@@ -1295,23 +1337,38 @@ fn pipeline_end(commands: &ShellCommands, index: usize) -> usize {
     end
 }
 
-/// Whether every verification's own exit status determines the shell's.
-fn statuses_reach_shell(commands: &ShellCommands, verifications: &[(usize, &str)]) -> bool {
+/// The first reason why some verification's own exit status does not
+/// determine the shell's, or `None` when every one does.
+fn hidden_status(
+    commands: &ShellCommands,
+    verifications: &[(usize, &str)],
+) -> Option<StatusHidden> {
     use ShellOperator::{And, Background, Or, Pipe};
     let Some(&(first, _)) = verifications.first() else {
-        return false;
+        return Some(StatusHidden::Syntax);
     };
-    let joined_by_and = commands[pipeline_end(commands, first)..]
-        .iter()
-        .all(|(_, operator)| matches!(operator, None | Some(And | Pipe)));
-    joined_by_and
-        && !commands
+    let any = |wanted: ShellOperator| {
+        commands
             .iter()
-            .any(|(_, operator)| matches!(operator, Some(Or | Background)))
-        && verifications.iter().all(|&(index, _)| {
-            pipeline_end(commands, index) == index
-                || pipefail_before(commands, pipeline_start(commands, index))
-        })
+            .any(|(_, operator)| *operator == Some(wanted))
+    };
+    if any(Background) {
+        Some(StatusHidden::Background)
+    } else if any(Or) {
+        Some(StatusHidden::Or)
+    } else if !commands[pipeline_end(commands, first)..]
+        .iter()
+        .all(|(_, operator)| matches!(operator, None | Some(And | Pipe)))
+    {
+        Some(StatusHidden::Sequence)
+    } else if !verifications.iter().all(|&(index, _)| {
+        pipeline_end(commands, index) == index
+            || pipefail_before(commands, pipeline_start(commands, index))
+    }) {
+        Some(StatusHidden::Pipe)
+    } else {
+        None
+    }
 }
 
 /// Whether `pipefail` is on before command `start`. Only an unconditional
@@ -1569,10 +1626,15 @@ pub struct PendingVerification {
     /// Directory and normalized verification commands; its latest result is
     /// tracked per episode.
     pub key: String,
+    /// Evidence kind of the last recognized verification.
+    pub kind: &'static str,
     /// Whether the command runs tests.
     pub tests: bool,
     /// The modeled directory the verifications run in.
     pub workdir: Option<PathBuf>,
+    /// Why the command hides the exit status, including a tool call the agent
+    /// ran in the background; `None` when the status can be observed.
+    pub hidden: Option<StatusHidden>,
 }
 
 /// Whether the tool runs shell text that can carry a verification.
@@ -1607,10 +1669,19 @@ pub fn pending_verification(
     let verification = classify_verification(command)?;
     let workdir = shell_workdir(command, &tool_base_dir(cwd, input))
         .map(|directory| normalize_tool_path(&directory));
+    // Claude Code's `run_in_background` returns before the command exits.
+    let backgrounded = input
+        .get("run_in_background")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true);
     Some(PendingVerification {
         key: verification_key(command, workdir.as_deref()),
+        kind: verification.kind,
         tests: verification.tests,
         workdir,
+        hidden: verification
+            .hidden
+            .or_else(|| backgrounded.then_some(StatusHidden::Background)),
     })
 }
 
@@ -1643,6 +1714,183 @@ pub fn mark_verification_unknown(
         session.last_verification_exit = None;
         let _ = save_session(state_dir, &scope, &session);
     }
+}
+
+/// Longest status note, well inside Codex's per-message and Cursor's context
+/// limits.
+const STATUS_NOTE_BYTES: usize = 900;
+// A Cursor note shares one response with relay messages and repository
+// context; together they stay under the 10,000 characters Cursor accepts.
+const _: () = assert!(cursor::RELAY_BYTES + cursor::CONTEXT_BYTES + STATUS_NOTE_BYTES < 10_000);
+/// Longest command a note quotes, in bytes; longer ones get the general
+/// advice only, so a note stays well under [`STATUS_NOTE_BYTES`].
+const STATUS_NOTE_COMMAND_BYTES: usize = 240;
+/// Filters that read all of their input and exit 0, so with `pipefail` a
+/// zero status still proves the verification passed and a failure is the
+/// verification's. `head` can stop the producer early and `grep` fails when
+/// nothing matches, so those are replaced in a suggested form.
+const SAFE_FILTERS: &[&str] = &[
+    "tail", "tee", "cat", "sed", "awk", "cut", "tr", "sort", "uniq", "wc",
+];
+
+/// Whether this hook may coach the agent: never in brain-off mode
+/// (`ENGRAM_MODE=off`, as `engram eval run` and the launchers set it).
+#[must_use]
+pub fn status_notes_enabled() -> bool {
+    !std::env::var("ENGRAM_MODE").is_ok_and(|mode| mode.trim().eq_ignore_ascii_case("off"))
+}
+
+/// Claim the session's single note for `reason`; `false` when it was given.
+#[must_use]
+pub fn claim_status_note(state_dir: &Path, session_id: &str, reason: StatusHidden) -> bool {
+    claim_once(state_dir, session_id, &status_note_tag(reason))
+}
+
+/// Release a claimed note that could not be delivered, so it can be retried.
+pub fn release_status_note(state_dir: &Path, session_id: &str, reason: StatusHidden) {
+    release_claim(state_dir, session_id, &status_note_tag(reason));
+}
+
+fn status_note_tag(reason: StatusHidden) -> String {
+    format!("status-note-{}", reason.as_str())
+}
+
+/// One short reference-data paragraph telling the agent why Engram could not
+/// record this verification's result and how to run the same command so it
+/// can: the recordable form when this reader can build and check one.
+#[must_use]
+pub fn status_note(command: &str, reason: StatusHidden) -> String {
+    let status = "its exit status";
+    let (hidden, cause) = match reason {
+        StatusHidden::Syntax => (
+            status,
+            "Engram does not read subshells, groups, here-documents or backquotes",
+        ),
+        StatusHidden::Background => (
+            status,
+            "it ran in the background, so no exit status came back",
+        ),
+        StatusHidden::Or => (
+            status,
+            "`||` replaces a failure with another command's exit status",
+        ),
+        StatusHidden::Sequence => (
+            status,
+            "a command after it, joined by `;` or a newline, sets the exit status",
+        ),
+        StatusHidden::Pipe => (
+            status,
+            "a pipe reports its last command's exit status, not the verification's",
+        ),
+        StatusHidden::Directory => (
+            "the repository it ran in",
+            "a directory change before it may not take effect",
+        ),
+    };
+    let advice = match recordable_form(command)
+        .filter(|(form, _)| form.len() <= STATUS_NOTE_COMMAND_BYTES)
+    {
+        Some((form, replaced)) => {
+            let foreground = if reason == StatusHidden::Background {
+                " in the foreground"
+            } else {
+                ""
+            };
+            let filters = if replaced {
+                " (`head` can stop the run early and `grep` fails when nothing matches)"
+            } else {
+                ""
+            };
+            format!("run `{form}`{foreground}{filters}")
+        }
+        None => match reason {
+            StatusHidden::Pipe => "start the command with `set -o pipefail;` or drop the pipe",
+            StatusHidden::Sequence => {
+                "run the verification on its own, or join the commands with `&&`"
+            }
+            StatusHidden::Or => "run it without the `||` part",
+            StatusHidden::Background => "run it in the foreground",
+            StatusHidden::Directory => "put `cd <path> &&` with a fixed path right before it",
+            StatusHidden::Syntax => "run the verification as a plain command",
+        }
+        .to_owned(),
+    };
+    let mut note = format!(
+        "# Engram verification note (reference data)\nEngram did not record this \
+         verification's result because {hidden} was hidden: {cause}. To record it, {advice}. \
+         This note appears once per session for this cause.\n"
+    );
+    if note.len() > STATUS_NOTE_BYTES {
+        let mut end = STATUS_NOTE_BYTES;
+        while !note.is_char_boundary(end) {
+            end -= 1;
+        }
+        note.truncate(end);
+    }
+    note
+}
+
+/// The same command in a recordable shape, checked by this reader: setup
+/// before the first verification and the verifications joined by `&&`,
+/// anything after the last verification's pipeline dropped, unsafe filters
+/// replaced by `tail -n 40`, and `set -o pipefail;` first when a
+/// verification's output is still piped. The flag says filters were replaced.
+fn recordable_form(command: &str) -> Option<(String, bool)> {
+    let commands = shell_commands(command)?;
+    let positions: Vec<usize> = (0..commands.len())
+        .filter(|&index| detect_verification(&commands[index].0).is_some())
+        .collect();
+    let first_start = pipeline_start(&commands, *positions.first()?);
+    let last_end = pipeline_end(&commands, *positions.last()?);
+    let joined = |members: &[(String, Option<ShellOperator>)]| {
+        members
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let mut pipelines = Vec::new();
+    let (mut piped, mut replaced) = (false, false);
+    let mut start = 0;
+    while start <= last_end {
+        let end = pipeline_end(&commands, start);
+        let members = &commands[start..=end];
+        // Any earlier pipefail setting is replaced by one that counts.
+        let setting =
+            start < first_start && members.len() == 1 && pipefail_setting(&members[0].0).is_some();
+        if !setting {
+            match (start..=end).rev().find(|index| positions.contains(index)) {
+                Some(verification) if verification < end => {
+                    let (producer, filters) = members.split_at(verification - start + 1);
+                    let safe = filters.iter().all(|(filter, _)| {
+                        filter
+                            .split_whitespace()
+                            .next()
+                            .is_some_and(|name| SAFE_FILTERS.contains(&name))
+                    });
+                    let filters = if safe {
+                        joined(filters)
+                    } else {
+                        replaced = true;
+                        "tail -n 40".to_owned()
+                    };
+                    pipelines.push(format!("{} | {filters}", joined(producer)));
+                    piped = true;
+                }
+                _ => pipelines.push(joined(members)),
+            }
+        }
+        start = end + 1;
+    }
+    let form = pipelines.join(" && ");
+    let form = if piped {
+        format!("set -o pipefail; {form}")
+    } else {
+        form
+    };
+    classify_verification(&form)
+        .is_some_and(|verification| verification.status_bearing)
+        .then_some((form, replaced))
 }
 
 /// Copies opaque shell spans (quotes, substitutions) into the current command.
@@ -3200,7 +3448,8 @@ mod tests {
                 Some(ShellVerification {
                     kind: "test_result",
                     tests: true,
-                    status_bearing: true
+                    status_bearing: true,
+                    hidden: None,
                 }),
                 "{command}"
             );
@@ -3250,6 +3499,168 @@ mod tests {
         assert_eq!(both.kind, "test_result");
         let lint_only = classify_verification("cargo fmt --check && cargo clippy").expect("lint");
         assert!(lint_only.status_bearing && !lint_only.tests);
+    }
+
+    /// Each hidden status names its first cause, in the order the note
+    /// reports it.
+    #[test]
+    fn hidden_statuses_name_their_cause() {
+        use StatusHidden::{Background, Directory, Or, Pipe, Sequence, Syntax};
+        for (command, reason) in [
+            ("cargo test 'unterminated", Syntax),
+            ("cargo test <<EOF\nx\nEOF", Syntax),
+            ("cd sub && cargo test -- `cat names`", Syntax),
+            ("cargo test &", Background),
+            ("cargo test 2>&1 | tail -5 &", Background),
+            ("cargo test || true", Or),
+            ("cargo test | tail || true", Or),
+            ("cargo test; echo done", Sequence),
+            ("cargo test\necho $?", Sequence),
+            ("cargo test | tail; echo done", Sequence),
+            ("cargo test 2>&1 | tail -20", Pipe),
+            ("set -o pipefail; set +o pipefail; cargo test | tail", Pipe),
+            ("cd ../two; cargo test", Directory),
+            ("cd $REPO && cargo test", Directory),
+        ] {
+            let found = classify_verification(command).expect("recognized");
+            assert_eq!(found.hidden, Some(reason), "{command}");
+            assert!(!found.status_bearing, "{command}");
+        }
+        let plain = classify_verification("set -o pipefail; cargo test | tail").expect("plain");
+        assert_eq!((plain.status_bearing, plain.hidden), (true, None));
+    }
+
+    /// A pending verification run in the background (Claude Code's
+    /// `run_in_background`) hides its status even when its text does not.
+    #[test]
+    fn background_tool_calls_hide_the_status() {
+        let payload = serde_json::json!({"tool_name":"Bash",
+            "tool_input":{"command":"cargo test","run_in_background":true}});
+        let pending = pending_verification(&payload, Path::new("/work")).expect("pending");
+        assert_eq!(pending.hidden, Some(StatusHidden::Background));
+        assert_eq!(pending.kind, "test_result");
+        let payload = serde_json::json!({"tool_name":"Bash","tool_input":{"command":"cargo test"}});
+        let pending = pending_verification(&payload, Path::new("/work")).expect("pending");
+        assert_eq!(pending.hidden, None);
+    }
+
+    /// The suggested command is the same verification in a recordable shape,
+    /// checked by the classifier; unsafe filters are replaced.
+    #[test]
+    fn recordable_forms_are_checked_and_keep_safe_filters() {
+        for (command, form, replaced) in [
+            (
+                "cargo test 2>&1 | tail -20",
+                "set -o pipefail; cargo test 2>&1 | tail -20",
+                false,
+            ),
+            (
+                "cd repo && cargo test 2>&1 | grep -E 'test result|FAILED' | head",
+                "set -o pipefail; cd repo && cargo test 2>&1 | tail -n 40",
+                true,
+            ),
+            ("cargo test; echo done", "cargo test", false),
+            ("cargo test || true", "cargo test", false),
+            ("cargo test &", "cargo test", false),
+            ("cd ../two; cargo test", "cd ../two && cargo test", false),
+            (
+                "cargo build; cargo test | tee out.log | wc -l; echo $?",
+                "set -o pipefail; cargo build && cargo test | tee out.log | wc -l",
+                false,
+            ),
+            (
+                "set -o pipefail; cargo test | tail; echo done",
+                "set -o pipefail; cargo test | tail",
+                false,
+            ),
+            (
+                "git diff | wc -l; cargo test 2>&1 | head -50",
+                "set -o pipefail; git diff | wc -l && cargo test 2>&1 | tail -n 40",
+                true,
+            ),
+        ] {
+            assert_eq!(
+                recordable_form(command),
+                Some((form.to_owned(), replaced)),
+                "{command}"
+            );
+            assert!(classify_verification(form).is_some_and(|found| found.status_bearing));
+        }
+        for command in [
+            "(cargo test)",
+            "cd $REPO && cargo test",
+            "cargo build && cd sub && cargo test | tail",
+        ] {
+            assert_eq!(recordable_form(command), None, "{command}");
+        }
+    }
+
+    /// One short reference-data paragraph: the cause and the recordable form,
+    /// or general advice when no checked form exists.
+    #[test]
+    fn status_notes_explain_the_cause_and_the_recordable_form() {
+        let note = status_note("cargo test 2>&1 | grep FAILED", StatusHidden::Pipe);
+        assert!(note.starts_with("# Engram verification note (reference data)\n"));
+        assert!(note.contains("Engram did not record this verification's result"));
+        assert!(note.contains("a pipe reports its last command's exit status"));
+        assert!(note.contains("`set -o pipefail; cargo test 2>&1 | tail -n 40`"));
+        assert!(note.contains("`grep` fails when nothing matches"));
+        assert_eq!(note.lines().count(), 2, "{note}");
+        let background = status_note("cargo test", StatusHidden::Background);
+        assert!(background.contains("run `cargo test` in the foreground"));
+        let general = status_note("(cd sub && cargo test)", StatusHidden::Syntax);
+        assert!(general.contains("because its exit status was hidden: Engram does not read"));
+        assert!(general.contains("run the verification as a plain command"));
+        let directory = status_note("cd $REPO && cargo test", StatusHidden::Directory);
+        assert!(directory.contains("because the repository it ran in was hidden"));
+        assert!(directory.contains("put `cd <path> &&` with a fixed path right before it"));
+        let long = format!("cargo test {} | tail", "x".repeat(400));
+        let long = status_note(&long, StatusHidden::Pipe);
+        assert!(long.contains("start the command with `set -o pipefail;` or drop the pipe"));
+        let wide = format!("cargo test {} | tail", "\u{1d535}".repeat(60));
+        assert!(status_note(&wide, StatusHidden::Pipe).contains("drop the pipe"));
+        // The example in docs/USER_GUIDE.md.
+        assert_eq!(
+            status_note("cargo test 2>&1 | tail -20", StatusHidden::Pipe),
+            "# Engram verification note (reference data)\nEngram did not record this \
+             verification's result because its exit status was hidden: a pipe reports its \
+             last command's exit status, not the verification's. To record it, run \
+             `set -o pipefail; cargo test 2>&1 | tail -20`. This note appears once per session \
+             for this cause.\n"
+        );
+        for reason in [
+            StatusHidden::Syntax,
+            StatusHidden::Background,
+            StatusHidden::Or,
+            StatusHidden::Sequence,
+            StatusHidden::Pipe,
+            StatusHidden::Directory,
+        ] {
+            for command in [
+                "y".repeat(5_000),
+                format!("cargo test {}", "x".repeat(5_000)),
+            ] {
+                let note = status_note(&command, reason);
+                assert!(note.len() <= STATUS_NOTE_BYTES, "{reason:?}");
+            }
+        }
+    }
+
+    /// One note per session and cause: concurrent hooks race for one claim,
+    /// a failed delivery releases it, and another cause has its own.
+    #[test]
+    fn status_notes_are_claimed_once_per_session_and_cause() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        assert!(claim_status_note(temp.path(), "s1", StatusHidden::Pipe));
+        assert!(!claim_status_note(temp.path(), "s1", StatusHidden::Pipe));
+        assert!(claim_status_note(temp.path(), "s1", StatusHidden::Or));
+        assert!(claim_status_note(temp.path(), "s2", StatusHidden::Pipe));
+        release_status_note(temp.path(), "s1", StatusHidden::Pipe);
+        assert!(claim_status_note(temp.path(), "s1", StatusHidden::Pipe));
+        // Session-end cleanup keeps the note claims: a resumed session has
+        // already seen its notes.
+        clear_claims(temp.path(), "s1");
+        assert!(!claim_status_note(temp.path(), "s1", StatusHidden::Pipe));
     }
 
     /// Item 3: the directory comes from the same parse; a change that may not
