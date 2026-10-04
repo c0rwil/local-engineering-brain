@@ -64,7 +64,10 @@ poll_interval_ms = 5000
 # Allowed range: 1..=20.
 max_attempts = 5
 # context_runs/context_items older than this are deleted by the daily
-# consolidation_gc job in bounded batches. Allowed range: 1..=3650 days.
+# consolidation_gc job in bounded batches. Hook tool observations (paths,
+# Read flags and sizes; never content) follow the same window. Contexts
+# referenced by usage events, such as acknowledged deliveries, are kept.
+# Allowed range: 1..=3650 days.
 context_run_retention_days = 90
 
 [semantic]

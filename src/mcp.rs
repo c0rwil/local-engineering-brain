@@ -640,7 +640,7 @@ fn tool_catalog() -> Value {
                     "task_id": {"type": "string"}
                 }, "required": ["project_id", "task"], "additionalProperties": false
             })),
-            tool("engram_effectiveness", "Inspect measured usage, measurement coverage, retrieved context sources, learning state and controlled benchmark comparisons. Missing measurements are unknown; retrieval does not prove savings", &json!({
+            tool("engram_effectiveness", "Inspect measured usage, measurement coverage, retrieved context sources, hook-observed use of delivered file pointers and Read volume, learning state and controlled benchmark comparisons. Missing measurements are unknown; retrieval does not prove savings and context use is association, not causation", &json!({
                 "type":"object","properties":{"project_ids":{"type":"array","items":{"type":"string"}},"since_ms":{"type":"integer"},"until_ms":{"type":"integer"}},"additionalProperties":false
             })),
             tool("engram_record_usage", "Record actual provider or harness usage with a stable unique sample_id. Omit unknown metrics. Never estimate token counts, cost or avoided tool calls. Repeating an identical sample is safe", &json!({

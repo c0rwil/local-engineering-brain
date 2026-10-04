@@ -318,6 +318,7 @@ pub struct JobsConfig {
     pub max_attempts: u32,
     /// `context_runs`/`context_items` older than this are deleted by the
     /// daily `consolidation_gc` job in bounded batches (spec section 16).
+    /// Hook tool observations follow the same window.
     pub context_run_retention_days: u32,
 }
 

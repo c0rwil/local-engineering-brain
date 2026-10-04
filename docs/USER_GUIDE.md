@@ -138,7 +138,8 @@ call those tools to capture it. Optional local-model proxy injection runs throug
 ## 6. Day to day: what's automatic vs. what you do
 
 **Automatic with active native hooks:** context injection, evidence capture and
-episode bookkeeping, identifiable completed tool calls and available provider usage.
+episode bookkeeping, identifiable completed tool calls, the repository files they read
+or edit (paths and Read sizes, never content) and available provider usage.
 The **Effectiveness** tab shows measurements and gaps. An enabled evidence judge
 reviews pending lessons automatically. The daemon also handles
 re-indexing on commits and branch switches, origin refresh, guide regen,

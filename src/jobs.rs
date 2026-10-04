@@ -834,6 +834,27 @@ impl JobExecutor {
                 break;
             }
         }
+        // Hook tool observations follow the same retention window.
+        let mut deleted_observations = 0_u64;
+        let mut observations_truncated = true;
+        for _ in 0..GC_MAX_BATCHES {
+            let database = self.database.clone();
+            let batch = self
+                .scheduler
+                .submit(MutationPriority::BackgroundLearning, move || {
+                    crate::effectiveness::delete_tool_observation_batch(
+                        &database,
+                        cutoff_ms,
+                        GC_BATCH_ROWS,
+                    )
+                })?
+                .wait()?;
+            deleted_observations = deleted_observations.saturating_add(batch);
+            if usize::try_from(batch).unwrap_or(usize::MAX) < GC_BATCH_ROWS {
+                observations_truncated = false;
+                break;
+            }
+        }
         let gc_database = self.database.clone();
         let orphans_removed = self
             .scheduler
@@ -849,10 +870,11 @@ impl JobExecutor {
             self.gc_hook_sessions(now_ms);
         Ok(serde_json::json!({
             "context_runs_deleted": deleted_runs,
+            "tool_observations_deleted": deleted_observations,
             "orphan_blobs_removed": orphans_removed,
             "hook_session_files_removed": hook_session_files_removed,
             "stale_open_tasks_abandoned": stale_open_tasks_abandoned,
-            "truncated": truncated,
+            "truncated": truncated || observations_truncated,
         }))
     }
 
