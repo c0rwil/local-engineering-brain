@@ -27,7 +27,8 @@ Read-only queries of the default workspace database at about 12:05 UTC:
 | --- | --- | --- |
 | Re-judging churn (every row a new digest) | The dedupe digest included the latest project scan head and diff fingerprint, index timestamps and scan revisions, related memories in recency order, the live HEAD and whichever alias was observed most recently. Any re-index, memory injection or unrelated commit created a new digest, and the old one never matched again. | The dedupe key binds the proposal, task and evidence, the gate result and the inference policy. Live source state is compared only to detect a change during inference. |
 | "Source path must remain inside the registered checkout" (171 rows, 5 reviews) | Every touched path in these reviews was an absolute path inside the project's primary checkout. The check accepted only relative paths, and only the four most recently observed of 25 aliases were considered; the primary checkout was the 25th. | Paths resolve against every registered checkout, including linked worktrees, and explicitly linked repositories, after canonicalizing symlinked spellings. Other paths still block. |
-| "Touched source file is unavailable" (52 rows, 20 reviews) | Approximate replay against today's filesystem: in 41 rows (17 reviews) the file was absent from the checkout the old code chose but present in another registered checkout; 10 rows (2 reviews) recorded annotated text rather than a path; 1 row's file is missing everywhere. | The task's checkout is chosen from absolute paths, the recorded revision, then where the files exist. A missing file, a permission failure and other I/O failures now have separate reasons. |
+| "Touched source file is unavailable" (52 rows, 20 reviews) | Approximate replay against today's filesystem: in 41 rows (17 reviews) the file was absent from the checkout the old code chose but present in another registered checkout; 10 rows (2 reviews) recorded annotated text rather than a path; 1 row's file is missing everywhere. | The task's checkout is chosen from absolute paths, the recorded revision, then where the files exist. A missing file, a permission refusal, a macOS privacy refusal and other I/O failures now have separate reasons. |
+| "Source checkout unavailable" (22 rows) | The daemon could not read existing checkouts (macOS privacy context, fixed operationally). The old code also reported this when only the four most recent aliases were gone. | A checkout that exists but refuses access is reported as an access problem that `engram doctor` explains; "unavailable" now means no registered checkout exists. |
 | "Evidence/Source task revision differs" | 53 of 92 recorded evidence revisions and 58 of 114 task commits are abbreviated hashes (7 to 12 digits). Exact comparison with the 40-digit live HEAD always failed. Today, 8 of the 32 reviews deferred this way have a checkout whose HEAD starts with the recorded hash, and 3 have a checkout exactly at it. | A recorded revision of at least seven hexadecimal digits matches a HEAD it prefixes, and a checkout at the recorded revision is preferred. |
 | "Indexed source revision differs" | Index rows for unchanged files keep the scan that last rewrote them, so any later commit failed this check even when content digests matched. Re-indexing could not clear it. | Removed. The live file must still match its indexed content digest. |
 | "Judge verdict has missing or oversized fields" (74 rows) | Unconstrained JSON output; the model left `claim` empty when rejecting. The rows were repeated by the churn above. | Requests carry a strict JSON schema. Malformed output is a runtime error with its own reason and bounded retries, not a "configuration error" deferral. |
@@ -42,7 +43,9 @@ have such evidence.
 
 Both versions swept one read-only copy of the database with prior judgments removed,
 135 pending reviews, against the live checkouts. No model was called; packets that
-passed every gate were counted and recorded as deferrals in the copy.
+passed every gate were counted and recorded as deferrals in the copy. "After" is this
+branch before merging the other workstreams, whose evidence rule changes are not
+included.
 
 | Gate result | Before (4dd913a) | After |
 | --- | ---: | ---: |
@@ -130,6 +133,31 @@ field order and constraint. An earlier full run with per-file scan revisions sti
 the packet produced the same 15 decisions (median 5.8 s); request durations vary
 because the live daemon's judge shares this runtime.
 
+### After merging the other roadmap workstreams
+
+The integration branch adds one sentence to the system prompt (safety workstream,
+SHA-256 `708b817e…`) and nine adversarial fixtures. One run of all 24 fixtures with the
+production schema ([report](calibration-after-merge-json-schema.json)), median 2.5 s:
+
+| Metric | Original 15 cases | 9 adversarial cases |
+| --- | ---: | ---: |
+| Decision accuracy | 14/15 (0.933) | 8/9 (0.889) |
+| Accept precision | 3/3 (1.00) | 0/1 |
+| Accept recall | 3/4 (0.75) | no expected accepts |
+| Reject-or-defer precision | 11/12 (0.917) | 8/8 (1.00) |
+| Reject-or-defer recall | 11/11 (1.00) | 8/9 (0.889) |
+| Model chose defer | 3/15 | 0/9 |
+| Malformed rate | 0/15 | 0/9 |
+
+The model now defers the obsolete-revision and truncated-output cases as well as the
+conflict case; this run cannot separate the prompt sentence from the schema. The
+boundary case still fails exact-citation validation. The model accepted the adversarial
+case with role tokens planted in evidence, with citations that pass validation. In
+production the safety screen holds all nine adversarial fixtures before inference
+(`local_judge_fixture_adversarial_cases_are_held_and_supported_cases_are_not` in
+`tests/injection_defenses.rs`); this harness measures the model when such text gets past
+the screen.
+
 ## Limitations
 
 - 15 synthetic cases are a smoke test, not statistical calibration or real-repository
@@ -142,7 +170,8 @@ because the live daemon's judge shares this runtime.
 ## Verification
 
 - `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`
-  and `cargo test --all-targets --all-features` were run on the change before commit.
+  and `cargo test --all-targets --all-features` passed on the change (416 tests), after
+  merging the integration branch (519 tests) and with the follow-up access test (520).
 - Mutation checks: adding live state back to the dedupe key fails the churn regression;
   treating absolute paths as invalid fails the three containment regressions; requiring
   full-length revisions fails the worktree regression.

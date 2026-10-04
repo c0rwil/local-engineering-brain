@@ -449,6 +449,42 @@ fn deleted_and_unreadable_sources_have_distinct_reasons() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn an_unreadable_checkout_is_reported_as_an_access_problem() {
+    // Live cause of "Source checkout unavailable": the daemon could not read
+    // existing checkouts. A missing checkout and a refused one need different fixes.
+    use std::os::unix::fs::PermissionsExt as _;
+    let lab = Lab::new(false);
+    let locked = lab.temp.path().join("locked");
+    let checkout = locked.join("checkout");
+    std::fs::create_dir_all(checkout.join("src")).expect("checkout");
+    std::fs::write(checkout.join("src/auth.rs"), SOURCE).expect("source");
+    let alias = checkout.canonicalize().expect("canonical");
+    lab.database
+        .write_immediate(|tx| {
+            tx.execute(
+                "UPDATE project_aliases SET path=?2 WHERE project_id=?1",
+                params![lab.project.as_str(), alias.to_string_lossy()],
+            )?;
+            Ok(())
+        })
+        .expect("alias");
+    let review = lab.complete(vec!["src/auth.rs".to_owned()], None, true, CLAIM);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("lock");
+    // A superuser can still search the directory; the reason is then not applicable.
+    let refused = checkout.canonicalize().is_err();
+    let reason = lab.packet(&review).blocked_reason;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+    if refused {
+        assert_eq!(reason.as_deref(), Some(sources::CHECKOUT_ACCESS_DENIED));
+    }
+    assert!(
+        lab.packet(&review).blocked_reason.is_none(),
+        "the same review verifies once the checkout is readable"
+    );
+}
+
 #[test]
 fn unchanged_reviews_are_not_judged_again_after_volatile_changes() {
     // Live churn: one review was recorded 129 times because every pass saw a

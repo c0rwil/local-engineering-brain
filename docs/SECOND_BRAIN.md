@@ -239,8 +239,10 @@ use the checkout the task worked in: the one named by absolute paths, else a che
 whose HEAD matches the recorded task revision, else the checkout holding the recorded
 files, preferring the primary checkout. Abbreviated revisions of at least seven
 hexadecimal digits match. Each file must match its indexed content. Deferral reasons
-distinguish a missing file (deleted, renamed or not a path), a permission or I/O
-failure, a file that differs from the index and a file without an index anchor.
+distinguish a missing file (deleted, renamed or not a path), a checkout or file the
+daemon may not read (including macOS privacy refusals; `engram doctor` shows the fix),
+another I/O failure, a file that differs from the index and a file without an index
+anchor.
 
 Evidence must also have observed the indexed version of every touched file. It
 qualifies when it was recorded after that file was indexed, or when a native hook
