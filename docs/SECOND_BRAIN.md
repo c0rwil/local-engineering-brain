@@ -263,6 +263,13 @@ must be newer than every touched file's indexed version. The hook records only
 runs whose exit status the client reported; see the user guide on
 [verification evidence from hooks](USER_GUIDE.md#verification-evidence-from-hooks).
 
+Hook provenance (a hook `source` label and `source_digests`) is attached only
+through the daemon's hook evidence endpoint, which the CLI and MCP do not use;
+the generic evidence endpoint removes those keys from client-supplied metadata.
+This protects against accidental forgery, for example `engram task evidence
+--metadata` copying a hook record. It is not a security boundary: any process
+running as the same user can reach the daemon socket and its hook endpoint.
+
 Every decision, citation, attempt, error and reported usage is audited. A review is
 judged again only when its proposal, task or evidence changes, or when a source check
 reaches a different result. Index scans, memory recency and unrelated commits do not

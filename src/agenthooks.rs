@@ -15,11 +15,15 @@
 //! Only the harness's own report counts as the exit status: an explicit code,
 //! Claude Code's `PostToolUseFailure` "Exit code N", or a completed foreground
 //! `PostToolUse` (Claude Code reports every non-zero exit as a failure). The
-//! status must also belong to the verification: pipes, `||`, `;` after it and
-//! background jobs hide it, so those runs are not recorded. Each record carries
-//! content digests of the files the session touched or left dirty, which ties
-//! it to the source it actually ran against. When the agent declared an Engram
-//! task through MCP in the same session, evidence goes to that task.
+//! status must also belong to every verification in the command, in one
+//! modeled directory: pipes, `||`, `;` after the first verification, background
+//! jobs and unmodeled `cd`s hide it, so those runs are not recorded. Before any
+//! daemon call the session marks the verification's result unknown; only a
+//! recorded observation replaces it, and the episode closes from the latest
+//! result of each verification. Each record carries content digests of the
+//! files the session touched or left dirty, which ties it to the source it
+//! actually ran against. When the agent declared an open Engram task through
+//! Engram's MCP server in the same session, evidence goes to that task.
 //!
 //! Every hook fails OPEN: a broken brain must never break a coding session.
 
@@ -65,6 +69,59 @@ pub struct HookSession {
     /// invocation sees its own fingerprint and skips the duplicate row.
     #[serde(default)]
     pub last_evidence_fingerprint: Option<String>,
+    /// Checkout root of this episode's project, recorded once a verification
+    /// resolves it, so a later write-ahead can find the episode daemon-free.
+    #[serde(default)]
+    pub root: Option<PathBuf>,
+    /// Latest result per verification identity, oldest first and bounded.
+    /// The episode auto-closes from these, never from one last exit code.
+    #[serde(default)]
+    pub verification_results: Vec<VerificationResult>,
+}
+
+/// The latest result of one verification identity in a session.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct VerificationResult {
+    /// Directory and normalized verification commands; see [`PendingVerification`].
+    pub key: String,
+    /// Whether the command runs tests.
+    #[serde(default)]
+    pub tests: bool,
+    /// Observed exit status; `None` while the result is unknown.
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+}
+
+/// Verification identities kept per episode. Eviction removes the oldest
+/// pass first, so a retained failure or unknown result still blocks success.
+const VERIFICATION_RESULTS_MAX: usize = 64;
+
+impl HookSession {
+    /// Set the latest result of one verification identity (`None` = unknown).
+    pub fn set_verification_result(&mut self, key: &str, tests: bool, exit_code: Option<i32>) {
+        self.verification_results.retain(|result| result.key != key);
+        self.verification_results.push(VerificationResult {
+            key: key.to_owned(),
+            tests,
+            exit_code,
+        });
+        if self.verification_results.len() > VERIFICATION_RESULTS_MAX {
+            let evicted = self
+                .verification_results
+                .iter()
+                .position(|result| result.exit_code == Some(0))
+                .unwrap_or(0);
+            self.verification_results.remove(evicted);
+        }
+    }
+
+    /// The latest verification result is unknown: forget the last recorded
+    /// exit and fingerprint, so neither an older pass nor the duplicate check
+    /// stands in for it.
+    pub fn forget_last_result(&mut self) {
+        self.last_verification_exit = None;
+        self.last_evidence_fingerprint = None;
+    }
 }
 
 /// Fingerprint identifying one verification result for double-fire dedupe.
@@ -143,12 +200,19 @@ pub fn tool_command(input: &serde_json::Value) -> &str {
 
 /// Resolve the tool's working directory without executing shell text.
 fn tool_workdir(cwd: &Path, input: &serde_json::Value) -> PathBuf {
+    let base = tool_base_dir(cwd, input);
+    let path = shell_workdir(tool_command(input), &base).unwrap_or(base);
+    normalize_tool_path(&path)
+}
+
+/// The directory a tool starts in: its explicit `cwd`/`workdir`, else `cwd`.
+fn tool_base_dir(cwd: &Path, input: &serde_json::Value) -> PathBuf {
     let explicit = input
         .get("cwd")
         .or_else(|| input.get("workdir"))
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
-    let base = explicit.map_or_else(
+    explicit.map_or_else(
         || cwd.to_path_buf(),
         |path| {
             if path.is_absolute() {
@@ -157,16 +221,7 @@ fn tool_workdir(cwd: &Path, input: &serde_json::Value) -> PathBuf {
                 cwd.join(path)
             }
         },
-    );
-    let command = tool_command(input);
-    let cd_path = command
-        .trim()
-        .strip_prefix("cd ")
-        .and_then(|s| s.split_once("&&"))
-        .map(|(path, _)| path.trim().trim_matches(['\'', '"']))
-        .filter(|path| !path.contains(['$', '`', ';', '|', '\n']));
-    let path = cd_path.map_or(base.clone(), |path| base.join(path));
-    normalize_tool_path(&path)
+    )
 }
 
 // Canonicalize existing ancestors too: newly created files still need to
@@ -934,14 +989,25 @@ fn write_private_sidecar(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Environment assignments, `env`/`time`/`timeout`/`nice` wrappers and runners
 /// that return their tool's exit status (`uv run`, `poetry run`, `pdm run`,
 /// `pipenv run`, `npx`, `bunx`, `uvx`, `pnpm exec`) are skipped. Help, version
-/// and listing invocations run nothing and are not verification.
+/// and listing invocations run nothing and are not verification. Formatters
+/// count only in check mode, and `--fix` runs rewrite files instead of
+/// verifying them; neither is verification. A bare `make` (or any target
+/// other than `test`, `lint`, `check` or `build`) is not either.
 #[must_use]
 pub fn detect_verification(command: &str) -> Option<&'static str> {
     let tokens = verification_tokens(command);
+    let has = |flag: &str| tokens.contains(&flag);
+    let formatter = tokens.starts_with(&["cargo", "fmt"])
+        || tokens.starts_with(&["terraform", "fmt"])
+        || tokens.starts_with(&["ruff", "format"])
+        || tokens.starts_with(&["python", "-m", "ruff", "format"]);
     if tokens
         .iter()
         .any(|token| NON_RUN_FLAGS.contains(token) || *token == "--listTests")
         || tokens.starts_with(&["cargo", "nextest", "list"])
+        || has("--fix")
+        || has("--fix-only")
+        || (formatter && !has("--check") && !has("-check"))
     {
         return None;
     }
@@ -1017,7 +1083,6 @@ pub fn detect_verification(command: &str) -> Option<&'static str> {
         "pnpm run build",
         "yarn build",
         "go build",
-        "make",
         "make build",
         "./gradlew build",
         "swift build",
@@ -1083,8 +1148,11 @@ fn is_duration(token: &str) -> bool {
 pub struct ShellVerification {
     /// Evidence kind of the last recognized verification in the command.
     pub kind: &'static str,
-    /// True when the shell's exit status is the verification's own: a zero
-    /// status then proves that every recognized verification exited 0.
+    /// Whether any recognized verification in the command runs tests.
+    pub tests: bool,
+    /// True when the shell's exit status is every verification's own and all
+    /// of them run in one modeled directory: a zero status then proves that
+    /// every recognized verification exited 0 there.
     pub status_bearing: bool,
 }
 
@@ -1097,86 +1165,416 @@ enum ShellOperator {
     Pipe,
 }
 
-/// Find the last verification in shell text and whether its exit status
-/// reaches the shell. Status-bearing means: no `||` or background job
-/// anywhere, only `&&` (or pipelines joined by `&&`) after the verification,
-/// and the verification ends its pipeline unless `set -o pipefail` ran first.
-/// Syntax this reader does not model (subshells, groups, here-documents,
-/// backquotes, unbalanced quotes) is never status-bearing.
+/// Top-level simple commands, each with the operator that follows it.
+type ShellCommands = Vec<(String, Option<ShellOperator>)>;
+
+/// Find the recognized verifications in shell text and whether their exit
+/// status reaches the shell. Status-bearing requires, for every verification:
+/// no `||` or background job anywhere; nothing after the first verification
+/// is joined by `;` or a newline, so only `&&` (or pipelines joined by `&&`)
+/// follow it; each verification ends its pipeline unless an unconditional
+/// `set -o pipefail` ran first; and every directory change is modeled (see
+/// [`shell_workdir`]). Syntax this reader does not model (subshells, groups,
+/// here-documents, backquotes, unbalanced quotes) is never status-bearing.
 #[must_use]
 pub fn classify_verification(command: &str) -> Option<ShellVerification> {
     let Some(commands) = shell_commands(command) else {
-        let legacy = command
-            .trim()
-            .strip_prefix("cd ")
-            .and_then(|rest| rest.split_once("&&"))
-            .map_or(command, |(_, rest)| rest.trim());
-        return detect_verification(legacy).map(|kind| ShellVerification {
+        let kind = detect_verification(legacy_verification_text(command))?;
+        return Some(ShellVerification {
             kind,
+            tests: kind == "test_result",
             status_bearing: false,
         });
     };
-    let position = commands
+    let verifications: Vec<(usize, &'static str)> = commands
         .iter()
-        .rposition(|(text, _)| detect_verification(text).is_some())?;
-    let kind = detect_verification(&commands[position].0)?;
-    let mut start = position;
-    while start > 0 && commands[start - 1].1 == Some(ShellOperator::Pipe) {
-        start -= 1;
-    }
-    let mut end = position;
-    while end + 1 < commands.len() && commands[end].1 == Some(ShellOperator::Pipe) {
-        end += 1;
-    }
-    let mut pipefail = false;
-    for (index, (text, operator)) in commands[..start].iter().enumerate() {
-        let in_pipeline = *operator == Some(ShellOperator::Pipe)
-            || (index > 0 && commands[index - 1].1 == Some(ShellOperator::Pipe));
-        if let Some(enabled) = pipefail_setting(text).filter(|_| !in_pipeline) {
-            pipefail = enabled;
-        }
-    }
-    let status_bearing = commands.iter().all(|(_, operator)| {
-        !matches!(
-            operator,
-            Some(ShellOperator::Or | ShellOperator::Background)
-        )
-    }) && (end == position || pipefail)
-        && commands[end..]
-            .iter()
-            .enumerate()
-            .all(|(offset, (_, operator))| {
-                matches!(operator, None | Some(ShellOperator::And))
-                    || (offset > 0 && *operator == Some(ShellOperator::Pipe))
-            });
+        .enumerate()
+        .filter_map(|(index, (text, _))| detect_verification(text).map(|kind| (index, kind)))
+        .collect();
+    let (first, _) = *verifications.first()?;
+    let (_, kind) = *verifications.last()?;
+    let status_bearing = statuses_reach_shell(&commands, &verifications)
+        && workdir_changes(&commands, first).is_some();
     Some(ShellVerification {
         kind,
+        tests: verifications.iter().any(|(_, kind)| *kind == "test_result"),
         status_bearing,
     })
 }
 
-/// `Some(true)` for `set -o pipefail` forms (including `set -euo pipefail`
-/// and zsh `setopt pipefail`), `Some(false)` when they disable it.
+/// Text checked when the shell syntax cannot be modeled: an optional leading
+/// `cd DIR &&` is skipped.
+fn legacy_verification_text(command: &str) -> &str {
+    command
+        .trim()
+        .strip_prefix("cd ")
+        .and_then(|rest| rest.split_once("&&"))
+        .map_or(command, |(_, rest)| rest.trim())
+}
+
+fn pipeline_start(commands: &ShellCommands, index: usize) -> usize {
+    let mut start = index;
+    while start > 0 && commands[start - 1].1 == Some(ShellOperator::Pipe) {
+        start -= 1;
+    }
+    start
+}
+
+fn pipeline_end(commands: &ShellCommands, index: usize) -> usize {
+    let mut end = index;
+    while end + 1 < commands.len() && commands[end].1 == Some(ShellOperator::Pipe) {
+        end += 1;
+    }
+    end
+}
+
+/// Whether every verification's own exit status determines the shell's.
+fn statuses_reach_shell(commands: &ShellCommands, verifications: &[(usize, &str)]) -> bool {
+    use ShellOperator::{And, Background, Or, Pipe};
+    let Some(&(first, _)) = verifications.first() else {
+        return false;
+    };
+    let joined_by_and = commands[pipeline_end(commands, first)..]
+        .iter()
+        .all(|(_, operator)| matches!(operator, None | Some(And | Pipe)));
+    joined_by_and
+        && !commands
+            .iter()
+            .any(|(_, operator)| matches!(operator, Some(Or | Background)))
+        && verifications.iter().all(|&(index, _)| {
+            pipeline_end(commands, index) == index
+                || pipefail_before(commands, pipeline_start(commands, index))
+        })
+}
+
+/// Whether `pipefail` is on before command `start`. Only an unconditional
+/// statement enables it (the first command, or one after `;` or a newline,
+/// outside a pipeline); any statement that may disable it disables it.
+fn pipefail_before(commands: &ShellCommands, start: usize) -> bool {
+    let mut pipefail = false;
+    for (index, (text, operator)) in commands[..start].iter().enumerate() {
+        let previous = index
+            .checked_sub(1)
+            .and_then(|previous| commands[previous].1);
+        let unconditional = matches!(previous, None | Some(ShellOperator::Sequence))
+            && *operator != Some(ShellOperator::Pipe);
+        match pipefail_setting(text) {
+            Some(true) if unconditional => pipefail = true,
+            Some(false) => pipefail = false,
+            _ => {}
+        }
+    }
+    pipefail
+}
+
+/// `Some(true)` when the command enables `pipefail` (`set -o pipefail`,
+/// `set -euo pipefail`, zsh `setopt pipe_fail`), `Some(false)` when it
+/// disables it (`set +o pipefail`, `setopt no_pipe_fail`, `unsetopt
+/// pipefail`).
 fn pipefail_setting(command: &str) -> Option<bool> {
+    let option =
+        |name: &str, enable: bool| match name.replace('_', "").to_ascii_lowercase().as_str() {
+            "pipefail" => Some(enable),
+            "nopipefail" => Some(!enable),
+            _ => None,
+        };
     let tokens: Vec<&str> = command.split_whitespace().collect();
     match tokens.as_slice() {
         ["set", options @ ..] => options.windows(2).rev().find_map(|pair| {
             let (flag, name) = (pair[0], pair[1]);
             let short_option = flag.len() >= 2 && flag.ends_with('o') && !flag.starts_with("--");
             match flag.as_bytes().first() {
-                Some(b'-') if short_option && name == "pipefail" => Some(true),
-                Some(b'+') if short_option && name == "pipefail" => Some(false),
+                Some(b'-') if short_option => option(name, true),
+                Some(b'+') if short_option => option(name, false),
                 _ => None,
             }
         }),
-        [command @ ("setopt" | "unsetopt"), options @ ..]
-            if options
-                .iter()
-                .any(|option| option.replace('_', "").eq_ignore_ascii_case("pipefail")) =>
-        {
-            Some(*command == "setopt")
-        }
+        [command @ ("setopt" | "unsetopt"), options @ ..] => options
+            .iter()
+            .rev()
+            .find_map(|name| option(name, *command == "setopt")),
         _ => None,
+    }
+}
+
+/// The directory the command's verifications run in: `base` changed by the
+/// static `cd`/`pushd` targets before the first verification. Without a
+/// verification, leading `cd`/`pushd` commands joined by `&&` apply. `None`
+/// when the shell text does not model the directory: a change joined by `;`
+/// or a newline (it may fail while later commands still run), a change in a
+/// pipeline, at or after the first verification, `cd -`, a bare `cd`,
+/// expansions, `popd`, `source` of anything but a virtualenv `activate`
+/// script, `eval` or `exec`.
+#[must_use]
+pub fn shell_workdir(command: &str, base: &Path) -> Option<PathBuf> {
+    let commands = shell_commands(command)?;
+    let changes = match commands
+        .iter()
+        .position(|(text, _)| detect_verification(text).is_some())
+    {
+        Some(first) => workdir_changes(&commands, first)?,
+        None => leading_directory_changes(&commands)?,
+    };
+    Some(
+        changes
+            .iter()
+            .fold(base.to_path_buf(), |directory, target| {
+                directory.join(target)
+            }),
+    )
+}
+
+/// Directory changes before the first verification, when every one is
+/// modeled and joined to the first verification by `&&` alone.
+fn workdir_changes(commands: &ShellCommands, first: usize) -> Option<Vec<String>> {
+    let mut changes = Vec::new();
+    for (index, (text, operator)) in commands.iter().enumerate() {
+        let change = directory_change(text);
+        if change == DirectoryChange::Unchanged {
+            continue;
+        }
+        let in_pipeline = *operator == Some(ShellOperator::Pipe)
+            || (index > 0 && commands[index - 1].1 == Some(ShellOperator::Pipe));
+        let DirectoryChange::To(target) = change else {
+            return None;
+        };
+        if index >= first
+            || in_pipeline
+            || !commands[index..first]
+                .iter()
+                .all(|(_, operator)| *operator == Some(ShellOperator::And))
+        {
+            return None;
+        }
+        changes.push(target);
+    }
+    Some(changes)
+}
+
+/// Leading `cd`/`pushd` commands joined by `&&` (routing for commands without
+/// a verification).
+fn leading_directory_changes(commands: &ShellCommands) -> Option<Vec<String>> {
+    let mut changes = Vec::new();
+    for (text, operator) in commands {
+        match directory_change(text) {
+            DirectoryChange::Unchanged => break,
+            DirectoryChange::To(target) if *operator == Some(ShellOperator::And) => {
+                changes.push(target);
+            }
+            DirectoryChange::To(_) | DirectoryChange::Unmodeled => return None,
+        }
+    }
+    Some(changes)
+}
+
+/// How one simple command can change the shell's working directory.
+#[derive(Debug, PartialEq, Eq)]
+enum DirectoryChange {
+    /// The command leaves the directory alone.
+    Unchanged,
+    /// `cd`/`pushd` to a static target.
+    To(String),
+    /// A change this reader cannot model: `cd -`, a bare `cd`, expansions,
+    /// `popd`, `source` of anything but a virtualenv `activate`, `eval`, `exec`.
+    Unmodeled,
+}
+
+fn directory_change(command: &str) -> DirectoryChange {
+    let raw: Vec<&str> = command
+        .split_whitespace()
+        .skip_while(|token| token.contains('=') && !token.starts_with('/'))
+        .collect();
+    let name = match raw.as_slice() {
+        ["builtin" | "command", name, ..] | [name, ..] => *name,
+        [] => return DirectoryChange::Unchanged,
+    };
+    match name {
+        "cd" | "pushd" => match shell_words(command).as_deref() {
+            Some([.., change, target])
+                if (change == "cd" || change == "pushd")
+                    && !target.is_empty()
+                    && !target.starts_with(['-', '~']) =>
+            {
+                DirectoryChange::To(target.clone())
+            }
+            _ => DirectoryChange::Unmodeled,
+        },
+        "popd" | "eval" | "exec" => DirectoryChange::Unmodeled,
+        "source" | "." => match shell_words(command).as_deref() {
+            // Activating a virtualenv changes the environment, not the directory.
+            Some([_, script]) if script == "activate" || script.ends_with("/activate") => {
+                DirectoryChange::Unchanged
+            }
+            _ => DirectoryChange::Unmodeled,
+        },
+        _ => DirectoryChange::Unchanged,
+    }
+}
+
+/// Words of one simple command when none of them needs expansion.
+fn shell_words(command: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut in_word = false;
+    let mut chars = command.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            ' ' | '\t' => {
+                if std::mem::take(&mut in_word) {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            '\'' => {
+                in_word = true;
+                loop {
+                    match chars.next()? {
+                        '\'' => break,
+                        literal => word.push(literal),
+                    }
+                }
+            }
+            '"' => {
+                in_word = true;
+                loop {
+                    match chars.next()? {
+                        '"' => break,
+                        '$' | '`' | '\\' => return None,
+                        literal => word.push(literal),
+                    }
+                }
+            }
+            '$' | '`' | '\\' | '*' | '?' | '[' => return None,
+            literal => {
+                in_word = true;
+                word.push(literal);
+            }
+        }
+    }
+    if in_word {
+        words.push(word);
+    }
+    Some(words)
+}
+
+/// Identity of one verification run for per-command results: the modeled
+/// directory (`?` when unknown) and the recognized verification commands
+/// without wrappers or redirections. `cargo test 2>&1 | tail` and
+/// `cargo test` share a result; `cargo test -p a` and `cargo test -p b` do not.
+fn verification_key(command: &str, workdir: Option<&Path>) -> String {
+    let verifications: Vec<String> = shell_commands(command).map_or_else(
+        || vec![normalized_verification(legacy_verification_text(command))],
+        |commands| {
+            commands
+                .iter()
+                .filter(|(text, _)| detect_verification(text).is_some())
+                .map(|(text, _)| normalized_verification(text))
+                .collect()
+        },
+    );
+    format!(
+        "{}\n{}",
+        workdir.map_or_else(|| "?".to_owned(), |dir| dir.display().to_string()),
+        verifications.join(" && ")
+    )
+}
+
+/// Verification tokens without redirections such as `2>&1` or `> log`.
+fn normalized_verification(text: &str) -> String {
+    let mut kept = Vec::new();
+    let mut target = false;
+    for token in verification_tokens(text) {
+        if std::mem::take(&mut target) {
+            continue;
+        }
+        let body = token.trim_start_matches(|ch: char| ch.is_ascii_digit());
+        if body.starts_with(['>', '<']) || body.starts_with("&>") {
+            target = matches!(body, ">" | ">>" | ">|" | "<" | "&>" | "&>>");
+            continue;
+        }
+        kept.push(token);
+    }
+    kept.join(" ")
+}
+
+/// A recognized verification in a shell tool call, before its result is known.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingVerification {
+    /// Directory and normalized verification commands; its latest result is
+    /// tracked per episode.
+    pub key: String,
+    /// Whether the command runs tests.
+    pub tests: bool,
+    /// The modeled directory the verifications run in.
+    pub workdir: Option<PathBuf>,
+}
+
+/// Whether the tool runs shell text that can carry a verification.
+#[must_use]
+pub fn is_shell_tool(payload: &serde_json::Value) -> bool {
+    payload
+        .get("tool_name")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(|name| {
+            matches!(
+                name,
+                "Bash" | "shell" | "exec_command" | "functions.exec_command"
+            )
+        })
+}
+
+/// The recognized verification in a shell tool call, from its text alone.
+/// No daemon is needed, so its result can be marked unknown before anything
+/// else can fail or time out.
+#[must_use]
+pub fn pending_verification(
+    payload: &serde_json::Value,
+    cwd: &Path,
+) -> Option<PendingVerification> {
+    if !is_shell_tool(payload) {
+        return None;
+    }
+    let input = payload
+        .get("tool_input")
+        .unwrap_or(&serde_json::Value::Null);
+    let command = tool_command(input);
+    let verification = classify_verification(command)?;
+    let workdir = shell_workdir(command, &tool_base_dir(cwd, input))
+        .map(|directory| normalize_tool_path(&directory));
+    Some(PendingVerification {
+        key: verification_key(command, workdir.as_deref()),
+        tests: verification.tests,
+        workdir,
+    })
+}
+
+/// Write-ahead without the daemon: record a pending verification's result as
+/// unknown in the episodes it may belong to, before recording can fail. The
+/// episodes whose recorded root most specifically contains its directory are
+/// marked; without such a root, every episode of the session is.
+pub fn mark_verification_unknown(
+    state_dir: &Path,
+    session_id: &str,
+    pending: &PendingVerification,
+) {
+    let sessions = project_sessions(state_dir, session_id);
+    let depth = |session: &HookSession| {
+        let directory = pending.workdir.as_ref()?;
+        let root = session.root.as_ref()?;
+        directory
+            .starts_with(root)
+            .then(|| root.components().count())
+    };
+    let deepest = sessions
+        .iter()
+        .filter_map(|(_, session)| depth(session))
+        .max();
+    for (scope, mut session) in sessions {
+        if deepest.is_some_and(|deepest| depth(&session) != Some(deepest)) {
+            continue;
+        }
+        session.set_verification_result(&pending.key, pending.tests, None);
+        session.last_verification_exit = None;
+        let _ = save_session(state_dir, &scope, &session);
     }
 }
 
@@ -1526,6 +1924,60 @@ pub fn hook_source_digests(metadata: &serde_json::Value) -> Option<BTreeMap<Stri
     )
 }
 
+/// Provenance only the native hook path may attach to evidence: the client's
+/// hook label and the content digests it observed. The daemon accepts it only
+/// on its hook endpoint, which the CLI and MCP do not expose.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct HookProvenance {
+    pub source: String,
+    #[serde(default)]
+    pub source_digests: BTreeMap<String, String>,
+    #[serde(default)]
+    pub source_digests_truncated: bool,
+}
+
+/// Metadata as stored. Client-supplied metadata loses the reserved hook keys
+/// (a `source` ending in `-hook`, `source_digests`); hook-endpoint
+/// `provenance` with a known hook label adds them back. This prevents
+/// accidental forgery by the CLI, MCP or other clients. It is not a security
+/// boundary: any process of the same user can reach the hook endpoint.
+#[must_use]
+pub fn evidence_metadata(
+    metadata: serde_json::Value,
+    provenance: Option<&HookProvenance>,
+) -> serde_json::Value {
+    use serde_json::Value;
+    let mut metadata = metadata;
+    if let Value::Object(fields) = &mut metadata {
+        if fields
+            .get("source")
+            .and_then(Value::as_str)
+            .is_some_and(|source| source.ends_with("-hook"))
+        {
+            fields.remove("source");
+        }
+        fields.remove("source_digests");
+        fields.remove("source_digests_truncated");
+    }
+    let Some(provenance) = provenance.filter(|provenance| {
+        matches!(
+            provenance.source.as_str(),
+            CLAUDE_HOOK_SOURCE | CODEX_HOOK_SOURCE | CURSOR_HOOK_SOURCE
+        )
+    }) else {
+        return metadata;
+    };
+    if !metadata.is_object() {
+        metadata = Value::Object(serde_json::Map::new());
+    }
+    metadata["source"] = provenance.source.clone().into();
+    metadata["source_digests"] = serde_json::json!(provenance.source_digests);
+    if provenance.source_digests_truncated {
+        metadata["source_digests_truncated"] = true.into();
+    }
+    metadata
+}
+
 /// A harness-observed verification ready to record as hook evidence.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObservedVerification {
@@ -1533,8 +1985,11 @@ pub struct ObservedVerification {
     pub command: String,
     pub exit_code: i32,
     pub artifact: String,
+    /// How the status was observed, the Git HEAD and the tool call id.
     pub metadata: serde_json::Value,
-    /// Identical command, status and source digests: a repeat observation.
+    /// Hook label and source digests, sent only through the hook endpoint.
+    pub provenance: HookProvenance,
+    /// The tool call (or, without a call id, the observed content).
     pub fingerprint: String,
 }
 
@@ -1571,23 +2026,26 @@ pub fn observe_verification(
     }
     let (digests, truncated) = source_digests(root, &candidates);
     let command: String = command.chars().take(500).collect();
-    let fingerprint = crate::experience::sha256(
-        &serde_json::to_vec(&(command.trim(), exit_code, &digests)).unwrap_or_default(),
-    );
-    let mut metadata = serde_json::json!({
-        "source": source,
-        "exit_status": exit_status,
-        "head": git.and_then(|git| git.head.clone()),
-        "source_digests": digests,
-    });
-    if truncated {
-        metadata["source_digests_truncated"] = true.into();
-    }
-    if let Some(id) = payload
+    let tool_use_id = payload
         .get("tool_use_id")
         .and_then(serde_json::Value::as_str)
-        .filter(|id| !id.is_empty() && id.len() <= 256)
-    {
+        .filter(|id| !id.is_empty() && id.len() <= 256);
+    // One tool call is one observation: a hook fired twice for the same call
+    // is a duplicate, while a new call with identical output is a new run.
+    // Clients without call ids fall back to the observed content.
+    let fingerprint = tool_use_id.map_or_else(
+        || {
+            crate::experience::sha256(
+                &serde_json::to_vec(&(command.trim(), exit_code, &digests)).unwrap_or_default(),
+            )
+        },
+        |id| crate::experience::sha256(format!("tool:{id}").as_bytes()),
+    );
+    let mut metadata = serde_json::json!({
+        "exit_status": exit_status,
+        "head": git.and_then(|git| git.head.clone()),
+    });
+    if let Some(id) = tool_use_id {
         metadata["tool_use_id"] = id.into();
     }
     Some(ObservedVerification {
@@ -1596,6 +2054,11 @@ pub fn observe_verification(
         exit_code,
         artifact: verification_output(payload),
         metadata,
+        provenance: HookProvenance {
+            source: source.to_owned(),
+            source_digests: digests,
+            source_digests_truncated: truncated,
+        },
         fingerprint,
     })
 }
@@ -1612,15 +2075,28 @@ pub enum TaskDeclaration {
     Closed(TaskId),
 }
 
+/// MCP server names Engram registers under; `leb` is the pre-rename name.
+const ENGRAM_MCP_SERVERS: &[&str] = &["engram", "leb"];
+
 /// Read a successful Engram MCP task call (`engram_task_start`, attempts,
-/// evidence, completion, outcome) from a post-tool hook payload.
+/// evidence, completion, outcome) from a post-tool hook payload. Only
+/// Engram's own servers count (`mcp__engram__…`, `mcp__leb__…`, as Claude
+/// Code and Codex name MCP tools); another server's tool of the same name
+/// declares nothing.
 #[must_use]
 pub fn task_declaration(payload: &serde_json::Value) -> Option<TaskDeclaration> {
     use serde_json::Value;
     if payload.get("hook_event_name").and_then(Value::as_str) == Some("PostToolUseFailure") {
         return None;
     }
-    let name = payload.get("tool_name")?.as_str()?;
+    let (server, name) = payload
+        .get("tool_name")?
+        .as_str()?
+        .strip_prefix("mcp__")?
+        .split_once("__")?;
+    if !ENGRAM_MCP_SERVERS.contains(&server) {
+        return None;
+    }
     let tool = [
         "engram_task_start",
         "engram_record_attempt",
@@ -1629,14 +2105,7 @@ pub fn task_declaration(payload: &serde_json::Value) -> Option<TaskDeclaration> 
         "engram_mark_outcome",
     ]
     .into_iter()
-    .find(|tool| {
-        name == *tool
-            || [b'_', b'.', b'/', b':'].iter().any(|separator| {
-                name.len() > tool.len()
-                    && name.ends_with(tool)
-                    && name.as_bytes()[name.len() - tool.len() - 1] == *separator
-            })
-    })?;
+    .find(|tool| *tool == name)?;
     let input = payload.get("tool_input").unwrap_or(&Value::Null);
     let task = |value: Option<&Value>| {
         value
@@ -1754,6 +2223,16 @@ pub fn declared_task(state_dir: &Path, scope: &str) -> Option<TaskId> {
     TaskId::parse(text.trim()).ok()
 }
 
+/// Stop routing a scope's evidence to `task_id`: it closed outside the hook's
+/// view or refused evidence that the session's own episode accepted.
+pub fn drop_task_declaration(state_dir: &Path, scope: &str, task_id: &TaskId) {
+    if declared_task(state_dir, scope).as_ref() == Some(task_id) {
+        let _ = std::fs::remove_file(
+            session_state_path(state_dir, scope).with_extension("declared-task"),
+        );
+    }
+}
+
 /// Forget every task declaration of a session (session end).
 pub fn clear_task_declarations(state_dir: &Path, session_id: &str) {
     for path in declaration_paths(state_dir, session_id) {
@@ -1782,7 +2261,10 @@ fn declaration_paths(state_dir: &Path, session_id: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Pull an exit code out of the many shapes Claude Code tool results take.
+/// Pull an explicit exit code out of the shapes tool results take. A bare
+/// `is_error` flag is not an exit status: it reports whether the tool call
+/// failed, which a client may decide without the command's status, so it
+/// never stands in for one.
 #[must_use]
 pub fn extract_exit_code(tool_result: &serde_json::Value) -> Option<i32> {
     for key in ["exitCode", "exit_code", "code", "returnCode", "returncode"] {
@@ -1790,14 +2272,7 @@ pub fn extract_exit_code(tool_result: &serde_json::Value) -> Option<i32> {
             return i32::try_from(code).ok();
         }
     }
-    match tool_result
-        .get("is_error")
-        .and_then(serde_json::Value::as_bool)
-    {
-        Some(true) => Some(1),
-        Some(false) => Some(0),
-        None => None,
-    }
+    None
 }
 
 /// Bounded artifact excerpt from a tool result.
@@ -1818,16 +2293,25 @@ pub fn extract_artifact(tool_result: &serde_json::Value) -> String {
     String::new()
 }
 
-/// Conservative outcome for an auto-closed session: `success` only when
-/// the last recorded verification passed; `abandoned` otherwise. User
-/// acceptance stays unknown. Successful verification enables distillation;
-/// ROI acceptance remains a separate explicit signal.
+/// Conservative outcome for an auto-closed session from the latest result of
+/// each verification identity: `failure` when any latest result failed;
+/// `success` only when every latest result is known and passed and at least
+/// one of them ran tests; `abandoned` otherwise, including any unknown result.
+/// A later lint, format, check or build pass never hides a failed test. User
+/// acceptance stays unknown; ROI acceptance remains a separate signal.
 #[must_use]
-pub fn auto_close_outcome(last_verification_exit: Option<i32>) -> &'static str {
-    match last_verification_exit {
-        Some(0) => "success",
-        Some(_) => "failure",
-        None => "abandoned",
+pub fn auto_close_outcome(results: &[VerificationResult]) -> &'static str {
+    if results
+        .iter()
+        .any(|result| result.exit_code.is_some_and(|code| code != 0))
+    {
+        "failure"
+    } else if results.iter().all(|result| result.exit_code == Some(0))
+        && results.iter().any(|result| result.tests)
+    {
+        "success"
+    } else {
+        "abandoned"
     }
 }
 
@@ -2122,22 +2606,110 @@ mod tests {
             extract_exit_code(&serde_json::json!({"exit_code": 0})),
             Some(0)
         );
-        assert_eq!(
-            extract_exit_code(&serde_json::json!({"is_error": true})),
-            Some(1)
-        );
-        assert_eq!(
-            extract_exit_code(&serde_json::json!({"is_error": false})),
-            Some(0)
-        );
         assert_eq!(extract_exit_code(&serde_json::json!({"stdout": "x"})), None);
+    }
+
+    /// Item 8: a tool-call error flag is not a command exit status.
+    #[test]
+    fn an_error_flag_alone_is_not_an_exit_status() {
+        for flag in [true, false] {
+            let response = serde_json::json!({"is_error": flag, "stdout": "ok"});
+            assert_eq!(extract_exit_code(&response), None, "is_error={flag}");
+            let payload = serde_json::json!({"hook_event_name":"PostToolUse",
+                "tool_name":"Bash","tool_input":{"command":"cargo test"},
+                "tool_response":response});
+            // Codex and Cursor payloads (no Claude Code inference) stay unknown.
+            assert_eq!(
+                observed_exit_status(&payload, false),
+                None,
+                "is_error={flag}"
+            );
+        }
+    }
+
+    fn result(key: &str, tests: bool, exit_code: Option<i32>) -> VerificationResult {
+        VerificationResult {
+            key: key.to_owned(),
+            tests,
+            exit_code,
+        }
     }
 
     #[test]
     fn auto_close_is_conservative() {
-        assert_eq!(auto_close_outcome(Some(0)), "success");
-        assert_eq!(auto_close_outcome(Some(1)), "failure");
-        assert_eq!(auto_close_outcome(None), "abandoned");
+        assert_eq!(auto_close_outcome(&[result("t", true, Some(0))]), "success");
+        assert_eq!(auto_close_outcome(&[result("t", true, Some(1))]), "failure");
+        assert_eq!(auto_close_outcome(&[result("t", true, None)]), "abandoned");
+        assert_eq!(auto_close_outcome(&[]), "abandoned");
+        assert_eq!(
+            auto_close_outcome(&[result("lint", false, Some(0))]),
+            "abandoned",
+            "success needs a passing test"
+        );
+    }
+
+    /// Item 1: a later passing lint, format, check or build never hides a
+    /// failed test; only the same verification passing again clears it.
+    #[test]
+    fn a_failed_test_is_not_masked_by_later_passing_checks() {
+        let mut session = HookSession {
+            session_id: None,
+            task_id: TaskId::new(),
+            project_id: ProjectId::new(),
+            last_verification_exit: None,
+            last_evidence_fingerprint: None,
+            root: None,
+            verification_results: Vec::new(),
+        };
+        session.set_verification_result("/r\ncargo test", true, Some(101));
+        for key in [
+            "/r\ncargo fmt --check",
+            "/r\ncargo check",
+            "/r\ncargo build",
+        ] {
+            session.set_verification_result(key, false, Some(0));
+        }
+        assert_eq!(auto_close_outcome(&session.verification_results), "failure");
+        session.set_verification_result("/r\ncargo test", true, Some(0));
+        assert_eq!(auto_close_outcome(&session.verification_results), "success");
+        session.set_verification_result("/r\ncargo test", true, None);
+        assert_eq!(
+            auto_close_outcome(&session.verification_results),
+            "abandoned",
+            "an unknown latest result is never success"
+        );
+        // Eviction keeps failures: passes leave first.
+        session.set_verification_result("/r\ncargo test", true, Some(101));
+        for index in 0..(VERIFICATION_RESULTS_MAX + 5) {
+            session.set_verification_result(&format!("/r\ncargo test -p p{index}"), true, Some(0));
+        }
+        assert_eq!(session.verification_results.len(), VERIFICATION_RESULTS_MAX);
+        assert_eq!(auto_close_outcome(&session.verification_results), "failure");
+        // Rewriting tools and bare make targets are not verification.
+        for command in [
+            "cargo fmt",
+            "cargo fmt --all",
+            "terraform fmt",
+            "ruff format .",
+            "eslint . --fix",
+            "ruff check --fix .",
+            "cargo clippy --fix --allow-dirty",
+            "make",
+            "make install",
+            "make deploy",
+        ] {
+            assert_eq!(detect_verification(command), None, "{command}");
+        }
+        for (command, kind) in [
+            ("cargo fmt --check", "lint_result"),
+            ("cargo fmt --all -- --check", "lint_result"),
+            ("terraform fmt -check", "lint_result"),
+            ("ruff format --check .", "lint_result"),
+            ("make build", "build_result"),
+            ("make test", "test_result"),
+        ] {
+            assert_eq!(detect_verification(command), Some(kind), "{command}");
+        }
     }
 
     #[test]
@@ -2481,13 +3053,16 @@ mod tests {
             "set -euo pipefail && cargo test |& tee out.log | tail -5",
             "cargo test # every suite",
             "cargo test --manifest-path \"$(pwd)/Cargo.toml\" > out.txt 2>&1",
-            "cd \"${HOME}/repo\" && cargo test",
             "cargo test -- --test-threads=$(nproc)",
+            "export A=1; cd sub && cargo test",
+            "cd a && cd b && cargo test",
+            "source .venv/bin/activate && cargo test",
         ] {
             assert_eq!(
                 classify_verification(command),
                 Some(ShellVerification {
                     kind: "test_result",
+                    tests: true,
                     status_bearing: true
                 }),
                 "{command}"
@@ -2507,6 +3082,7 @@ mod tests {
             "echo `date` && cargo test",
             "cargo test 'unterminated",
             "cargo test |",
+            "cd \"${HOME}/repo\" && cargo test",
         ] {
             assert!(
                 !classify_verification(command).is_some_and(|found| found.status_bearing),
@@ -2515,6 +3091,174 @@ mod tests {
         }
         assert_eq!(classify_verification("git status && echo cargo test"), None);
         assert_eq!(classify_verification("ls | grep test"), None);
+    }
+
+    /// Item 2: every recognized verification must carry its own status, not
+    /// only the last one.
+    #[test]
+    fn every_verification_in_a_command_must_be_status_bearing() {
+        for command in [
+            "cargo test; cargo clippy",
+            "cargo test\ncargo clippy",
+            "npm test; npm run lint",
+            "cargo test | tail -5 && cargo build",
+            "cargo test && cargo clippy 2>&1 | tail",
+            "cargo build && cargo test; echo done",
+        ] {
+            let found = classify_verification(command).expect("recognized");
+            assert!(!found.status_bearing, "{command}");
+        }
+        let both = classify_verification("cargo build && cargo test").expect("recognized");
+        assert!(both.status_bearing && both.tests);
+        assert_eq!(both.kind, "test_result");
+        let lint_only = classify_verification("cargo fmt --check && cargo clippy").expect("lint");
+        assert!(lint_only.status_bearing && !lint_only.tests);
+    }
+
+    /// Item 3: the directory comes from the same parse; a change that may not
+    /// take effect makes the run unmodeled.
+    #[test]
+    fn verification_directories_are_modeled_or_unknown() {
+        let base = Path::new("/work/one");
+        for (command, expected) in [
+            ("cargo test", Some("/work/one")),
+            ("cd ../two && cargo test", Some("/work/one/../two")),
+            (
+                "export A=1; cd ../two && cargo test",
+                Some("/work/one/../two"),
+            ),
+            ("cd a && cd b && cargo test", Some("/work/one/a/b")),
+            ("cd /abs && cargo test", Some("/abs")),
+            ("cd '/tmp/a b' && cargo test", Some("/tmp/a b")),
+            ("pushd ../two && cargo test", Some("/work/one/../two")),
+            ("cd ../two; cargo test", None),
+            ("cd ../two\ncargo test", None),
+            ("cd ../two && export A=1; cargo test", None),
+            ("cd - && cargo test", None),
+            ("cd && cargo test", None),
+            ("cd ~/two && cargo test", None),
+            ("cd $REPO && cargo test", None),
+            ("cargo test && cd ../two && cargo test", None),
+            ("popd && cargo test", None),
+            ("source env.sh && cargo test", None),
+            ("cd ../two | true && cargo test", None),
+            // Without a verification only leading `cd ... &&` routes the tool.
+            ("cd ../two && git status", Some("/work/one/../two")),
+            ("cd ../two; git status", None),
+        ] {
+            assert_eq!(
+                shell_workdir(command, base),
+                expected.map(PathBuf::from),
+                "{command}"
+            );
+            if expected.is_none() {
+                assert!(
+                    !classify_verification(command).is_some_and(|found| found.status_bearing),
+                    "{command}"
+                );
+            }
+        }
+        // Routing follows the parse too: `cd X; cmd` stays in the tool's
+        // directory, and the verification there is not status-bearing.
+        let input = serde_json::json!({"command":"export A=1; cd ../two && cargo test"});
+        assert_eq!(tool_workdir(base, &input), PathBuf::from("/work/two"));
+    }
+
+    /// Item 6: only Engram's own MCP servers declare tasks.
+    #[test]
+    fn only_engram_mcp_servers_declare_tasks() {
+        use serde_json::json;
+        let task = TaskId::new();
+        for name in [
+            "mcp__engram__engram_record_attempt",
+            "mcp__leb__engram_record_attempt",
+        ] {
+            assert!(
+                task_declaration(&json!({"tool_name":name,"tool_input":{"task_id":task}}))
+                    .is_some(),
+                "{name}"
+            );
+        }
+        for name in [
+            "mcp__other__engram_record_attempt",
+            "mcp__engramx__engram_record_attempt",
+            "mcp__engram__engram_record_attempt_v2",
+            "MCP:engram_record_attempt",
+            "engram_record_attempt",
+            "engram.engram_record_attempt",
+        ] {
+            assert_eq!(
+                task_declaration(&json!({"tool_name":name,"tool_input":{"task_id":task}})),
+                None,
+                "{name}"
+            );
+        }
+    }
+
+    /// Item 9: client metadata cannot claim hook provenance; only the hook
+    /// endpoint's provenance can.
+    #[test]
+    fn client_metadata_cannot_claim_hook_provenance() {
+        use serde_json::json;
+        let digest = "a".repeat(64);
+        let forged = json!({"source":CLAUDE_HOOK_SOURCE,"source_digests":{"lib.rs":digest},
+            "source_digests_truncated":true,"note":"kept"});
+        let stored = evidence_metadata(forged.clone(), None);
+        assert_eq!(stored, json!({"note":"kept"}));
+        assert!(hook_source_digests(&stored).is_none());
+        // Ordinary `source` labels that are not hook labels stay.
+        assert_eq!(
+            evidence_metadata(json!({"source":"ci"}), None),
+            json!({"source":"ci"})
+        );
+        let provenance = HookProvenance {
+            source: CODEX_HOOK_SOURCE.to_owned(),
+            source_digests: BTreeMap::from([("lib.rs".to_owned(), digest.clone())]),
+            source_digests_truncated: false,
+        };
+        let hooked = evidence_metadata(json!({"exit_status":"tool_response"}), Some(&provenance));
+        assert_eq!(hooked["source"], CODEX_HOOK_SOURCE);
+        assert_eq!(hooked["exit_status"], "tool_response");
+        assert_eq!(hook_source_digests(&hooked).expect("hook").len(), 1);
+        // An unknown label in hook provenance claims nothing.
+        let unknown = HookProvenance {
+            source: "made-up-hook".to_owned(),
+            ..provenance
+        };
+        assert!(hook_source_digests(&evidence_metadata(forged, Some(&unknown))).is_none());
+    }
+
+    /// Item 7: only an unconditional statement enables pipefail, and every
+    /// negative form disables it.
+    #[test]
+    fn pipefail_counts_only_when_set_unconditionally() {
+        for command in [
+            "set -o pipefail; cargo test | tail -3",
+            "set -eo pipefail; cargo test | tail -3",
+            "setopt pipefail; cargo test | tail -3",
+            "setopt PIPE_FAIL; cargo test | tail -3",
+            "unsetopt no_pipe_fail; cargo test | tail -3",
+        ] {
+            assert!(
+                classify_verification(command).is_some_and(|found| found.status_bearing),
+                "{command}"
+            );
+        }
+        for command in [
+            "setopt pipefail; setopt no_pipe_fail; cargo test | tail",
+            "setopt pipefail; setopt nopipefail; cargo test | tail",
+            "set -o pipefail; set +o pipefail; cargo test | tail",
+            "set -o pipefail; unsetopt pipefail; cargo test | tail",
+            "false && set -o pipefail; cargo test | tail -3",
+            "true && set -o pipefail && cargo test | tail -3",
+            "set -o pipefail | cat; cargo test | tail -3",
+            "set -o pipefail; false && set +o pipefail; cargo test | tail -3",
+        ] {
+            assert!(
+                !classify_verification(command).is_some_and(|found| found.status_bearing),
+                "{command}"
+            );
+        }
     }
 
     #[test]
@@ -2637,7 +3381,7 @@ mod tests {
         }
         assert_eq!(
             task_declaration(
-                &json!({"tool_name":"engram_record_attempt","tool_input":{"task_id":task}})
+                &json!({"tool_name":"mcp__engram__engram_record_attempt","tool_input":{"task_id":task}})
             ),
             Some(TaskDeclaration::Active {
                 task_id: task.clone(),
@@ -2664,7 +3408,7 @@ mod tests {
         }
         assert_eq!(
             task_declaration(
-                &json!({"tool_name":"engram_record_attempt","tool_input":{"task_id":"x"}})
+                &json!({"tool_name":"mcp__engram__engram_record_attempt","tool_input":{"task_id":"x"}})
             ),
             None
         );
@@ -2791,11 +3535,12 @@ mod tests {
         .expect("observed");
         assert_eq!((observed.kind, observed.exit_code), ("test_result", 0));
         assert_eq!(observed.artifact, "test result: ok. 1 passed");
-        assert_eq!(observed.metadata["source"], CLAUDE_HOOK_SOURCE);
+        assert_eq!(observed.provenance.source, CLAUDE_HOOK_SOURCE);
+        assert!(observed.metadata.get("source").is_none());
         assert_eq!(observed.metadata["exit_status"], "success_event");
         assert_eq!(observed.metadata["tool_use_id"], "toolu_1");
         assert_eq!(
-            observed.metadata["source_digests"]["lib.rs"],
+            observed.provenance.source_digests["lib.rs"],
             crate::experience::sha256(b"pub fn a() {}")
         );
         for hidden in ["cargo test | tail -3", "cargo test || true", "git status"] {
@@ -2813,19 +3558,31 @@ mod tests {
             &touched,
         )
         .expect("repeat");
-        assert_eq!(repeat.fingerprint, observed.fingerprint);
-        std::fs::write(root.join("lib.rs"), b"pub fn a() { changed() }").expect("edit");
-        let changed = observe_verification(
-            &payload("cargo test"),
-            CLAUDE_HOOK_SOURCE,
-            root,
-            None,
-            &touched,
-        )
-        .expect("changed");
+        assert_eq!(
+            repeat.fingerprint, observed.fingerprint,
+            "a hook fired twice for one tool call is one observation"
+        );
+        let mut rerun = payload("cargo test");
+        rerun["tool_use_id"] = json!("toolu_2");
+        let rerun =
+            observe_verification(&rerun, CLAUDE_HOOK_SOURCE, root, None, &touched).expect("rerun");
         assert_ne!(
-            changed.fingerprint, observed.fingerprint,
-            "a rerun on edited source is a new observation"
+            rerun.fingerprint, observed.fingerprint,
+            "a new tool call with identical output is a new observation"
+        );
+        let mut legacy = payload("cargo test");
+        legacy
+            .as_object_mut()
+            .expect("payload")
+            .remove("tool_use_id");
+        let before = observe_verification(&legacy, CLAUDE_HOOK_SOURCE, root, None, &touched)
+            .expect("legacy");
+        std::fs::write(root.join("lib.rs"), b"pub fn a() { changed() }").expect("edit");
+        let after = observe_verification(&legacy, CLAUDE_HOOK_SOURCE, root, None, &touched)
+            .expect("legacy edit");
+        assert_ne!(
+            before.fingerprint, after.fingerprint,
+            "without call ids, a rerun on edited source is a new observation"
         );
     }
 }
