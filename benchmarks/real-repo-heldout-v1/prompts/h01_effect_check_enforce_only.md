@@ -1,0 +1,5 @@
+Production runs LoopGuard with LOOPGUARD_MODE=shadow, which must observe without changing what the agent does. But when a step's screenshot shows that the previous action left the screen unchanged, the model's prompt still receives the `[effect-check]` note telling it not to repeat that action, in every LoopGuard mode.
+
+Make the effect-check note follow LoopGuard's mode: deliver it only under LOOPGUARD_MODE=enforce. Under shadow and off, the model must not receive the note, and the note must not be recorded in the stored step prompt either, because stored prompts are replayed to the model on later turns. Under enforce, keep the note's current wording and conditions, including staying silent when the screen moved.
+
+Screen evidence must still be computed in every mode. Shadow LoopGuard scoring reads it (a repeated tap on a screen that did not change is still scored as a dead button), and recorded steps keep their screen fingerprints. Update affected tests and add focused regression coverage.

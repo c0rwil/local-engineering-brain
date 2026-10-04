@@ -1,0 +1,576 @@
+{
+  "suite_id": "real-repo-heldout-v1",
+  "task_id": "h01_effect_check_enforce_only",
+  "base_commit": "f566a1c24ddfc600fb21c0304680068158d50f35",
+  "reference_fix_commit": "c24e931dc23321ec5612679c8a7e38490b7e0e47",
+  "generated_at": "2026-10-04T11:49:23+00:00",
+  "python": "3.14.7",
+  "fixture_root": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h01_effect_check_enforce_only-20261004-044922",
+  "grader_sha256": "32a2d63e0c90d779bb13247405894205ba462c175effc28bec0b1de5a5c0470c",
+  "private_files_sha256": {
+    "hidden_tests.rs": "9a5b6ee21d6be626f52e131ebfe4d6958b4b40a8f3a1167920c410c8c19c39ea"
+  },
+  "preflight_sha256": "3c2d1f64eb1f27417dbd308f38b2914297c52fb0cdd1d3066a2cff7cbbbbfd92",
+  "shared_sha256": {
+    "preflight_common.py": "3430250732b8d6a001547d07e3dd55f981373872aeb3f8a7743549919fddc00a",
+    "py_harness.py": "a31966efeeda823f2fc13e09cfd04a0e0ae2a060164882194d0d56bc48b58e2e",
+    "rust_grader.py": "d8968d85f979c281f4f00298a2543328a792011e558d2645f0ef45c286050842"
+  },
+  "expected_check_count": 7,
+  "controls": [
+    {
+      "name": "base",
+      "kind": "base",
+      "source": "base",
+      "expect": "fail",
+      "description": "Historical base: the note is delivered in every mode.",
+      "required_failures": [
+        "shadow_mode_sends_no_effect_check_note_to_the_model",
+        "off_mode_sends_no_effect_check_note_to_the_model",
+        "non_enforcing_modes_record_no_effect_check_note_in_the_step"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "reference",
+      "kind": "reference",
+      "source": "reference",
+      "expect": "pass",
+      "description": "Historical fix.",
+      "required_failures": [],
+      "exact_failures": true
+    },
+    {
+      "name": "gate-evidence-on-enforce",
+      "kind": "mutant",
+      "source": "base",
+      "expect": "fail",
+      "description": "Silences the note by skipping the screen evidence outside enforce, which also blinds shadow scoring.",
+      "required_failures": [
+        "shadow_mode_still_scores_unchanged_screens"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "blind-loopguard-outside-enforce",
+      "kind": "mutant",
+      "source": "base",
+      "expect": "fail",
+      "description": "Keeps fingerprinting screens but hides the effect reading from shadow LoopGuard as well as the note.",
+      "required_failures": [
+        "shadow_mode_still_scores_unchanged_screens"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "silence-shadow-only",
+      "kind": "mutant",
+      "source": "base",
+      "expect": "fail",
+      "description": "Suppresses the note only for shadow, so off still steers the model.",
+      "required_failures": [
+        "off_mode_sends_no_effect_check_note_to_the_model",
+        "non_enforcing_modes_record_no_effect_check_note_in_the_step"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "drop-note-everywhere",
+      "kind": "mutant",
+      "source": "base",
+      "expect": "fail",
+      "description": "Removes the note in every mode, including enforce.",
+      "required_failures": [
+        "enforce_mode_still_delivers_the_note_for_a_dead_tap"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "mode-flag-before-note",
+      "kind": "alternative",
+      "source": "base",
+      "expect": "pass",
+      "description": "Legitimate alternative: decides delivery once from the configured mode, case-insensitively.",
+      "required_failures": [],
+      "exact_failures": true
+    }
+  ],
+  "mutations": {
+    "gate-evidence-on-enforce": "--- base/src/services/action_engine.rs\n+++ gate-evidence-on-enforce/src/services/action_engine.rs\n@@ -1779,10 +1779,13 @@\n         // Private sessions are INCLUDED, unlike the telemetry path below: this\n         // never leaves the session, and a private user's stuck loop is still a\n         // stuck loop.\n-        let screen = self\n-            .screen_evidence(deps.loaded_session.as_ref(), request.image.as_deref())\n-            .await\n-            .unwrap_or_default();\n+        let screen = if self.settings.loopguard_mode == \"enforce\" {\n+            self.screen_evidence(deps.loaded_session.as_ref(), request.image.as_deref())\n+                .await\n+                .unwrap_or_default()\n+        } else {\n+            Default::default()\n+        };\n         let last_effect = screen.effect.clone();\n         if let Some(note) = last_effect.as_ref().and_then(effect_check_note) {\n             request.prompt = if request.prompt.is_empty() {\n",
+    "blind-loopguard-outside-enforce": "--- base/src/services/action_engine.rs\n+++ blind-loopguard-outside-enforce/src/services/action_engine.rs\n@@ -1783,7 +1783,10 @@\n             .screen_evidence(deps.loaded_session.as_ref(), request.image.as_deref())\n             .await\n             .unwrap_or_default();\n-        let last_effect = screen.effect.clone();\n+        let last_effect = screen\n+            .effect\n+            .clone()\n+            .filter(|_| self.settings.loopguard_mode == \"enforce\");\n         if let Some(note) = last_effect.as_ref().and_then(effect_check_note) {\n             request.prompt = if request.prompt.is_empty() {\n                 note\n",
+    "silence-shadow-only": "--- base/src/services/action_engine.rs\n+++ silence-shadow-only/src/services/action_engine.rs\n@@ -1784,7 +1784,11 @@\n             .await\n             .unwrap_or_default();\n         let last_effect = screen.effect.clone();\n-        if let Some(note) = last_effect.as_ref().and_then(effect_check_note) {\n+        if let Some(note) = last_effect\n+            .as_ref()\n+            .filter(|_| self.settings.loopguard_mode != \"shadow\")\n+            .and_then(effect_check_note)\n+        {\n             request.prompt = if request.prompt.is_empty() {\n                 note\n             } else {\n",
+    "drop-note-everywhere": "--- base/src/services/action_engine.rs\n+++ drop-note-everywhere/src/services/action_engine.rs\n@@ -1784,7 +1784,7 @@\n             .await\n             .unwrap_or_default();\n         let last_effect = screen.effect.clone();\n-        if let Some(note) = last_effect.as_ref().and_then(effect_check_note) {\n+        if let Some(note) = last_effect.as_ref().filter(|_| false).and_then(effect_check_note) {\n             request.prompt = if request.prompt.is_empty() {\n                 note\n             } else {\n",
+    "mode-flag-before-note": "--- base/src/services/action_engine.rs\n+++ mode-flag-before-note/src/services/action_engine.rs\n@@ -1784,7 +1784,13 @@\n             .await\n             .unwrap_or_default();\n         let last_effect = screen.effect.clone();\n-        if let Some(note) = last_effect.as_ref().and_then(effect_check_note) {\n+        let deliver_effect_note = self.settings.loopguard_mode.eq_ignore_ascii_case(\"enforce\");\n+        let effect_note = if deliver_effect_note {\n+            last_effect.as_ref().and_then(effect_check_note)\n+        } else {\n+            None\n+        };\n+        if let Some(note) = effect_note {\n             request.prompt = if request.prompt.is_empty() {\n                 note\n             } else {\n"
+  },
+  "runs": [
+    {
+      "fixture": "base",
+      "kind": "base",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "shadow_mode_sends_no_effect_check_note_to_the_model",
+        "off_mode_sends_no_effect_check_note_to_the_model",
+        "non_enforcing_modes_record_no_effect_check_note_in_the_step"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+        "off_mode_sends_no_effect_check_note_to_the_model",
+        "shadow_mode_sends_no_effect_check_note_to_the_model"
+      ],
+      "driver_seconds": 58.026,
+      "result": {
+        "task": "h01_effect_check_enforce_only",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 1.602
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.223
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.141
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.083
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.132
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.089
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h01_effect_check_enforce_only-20261004-044922/base-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 184,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 57.95
+      }
+    },
+    {
+      "fixture": "reference",
+      "kind": "reference",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 63.297,
+      "result": {
+        "task": "h01_effect_check_enforce_only",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 1.429
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.065
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.083
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.074
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.074
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.088
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h01_effect_check_enforce_only-20261004-044922/reference-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 184,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 63.107
+      }
+    },
+    {
+      "fixture": "gate-evidence-on-enforce",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "shadow_mode_still_scores_unchanged_screens"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "shadow_mode_still_scores_unchanged_screens"
+      ],
+      "driver_seconds": 40.245,
+      "result": {
+        "task": "h01_effect_check_enforce_only",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 1.584
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.087
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.104
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.098
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.104
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.102
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h01_effect_check_enforce_only-20261004-044922/gate-evidence-on-enforce-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 184,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 40.158
+      }
+    },
+    {
+      "fixture": "blind-loopguard-outside-enforce",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "shadow_mode_still_scores_unchanged_screens"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "shadow_mode_still_scores_unchanged_screens"
+      ],
+      "driver_seconds": 83.477,
+      "result": {
+        "task": "h01_effect_check_enforce_only",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 6.356
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.153
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.181
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.142
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.145
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.151
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h01_effect_check_enforce_only-20261004-044922/blind-loopguard-outside-enforce-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 184,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 83.365
+      }
+    },
+    {
+      "fixture": "silence-shadow-only",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "off_mode_sends_no_effect_check_note_to_the_model",
+        "non_enforcing_modes_record_no_effect_check_note_in_the_step"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+        "off_mode_sends_no_effect_check_note_to_the_model"
+      ],
+      "driver_seconds": 96.93,
+      "result": {
+        "task": "h01_effect_check_enforce_only",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 1.323
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.064
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.065
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.06
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.058
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.061
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h01_effect_check_enforce_only-20261004-044922/silence-shadow-only-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 184,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 96.817
+      }
+    },
+    {
+      "fixture": "drop-note-everywhere",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "enforce_mode_still_delivers_the_note_for_a_dead_tap"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "enforce_mode_still_delivers_the_note_for_a_dead_tap"
+      ],
+      "driver_seconds": 101.692,
+      "result": {
+        "task": "h01_effect_check_enforce_only",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 2.081
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.104
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.131
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.12
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.116
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.136
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h01_effect_check_enforce_only-20261004-044922/drop-note-everywhere-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 184,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 101.631
+      }
+    },
+    {
+      "fixture": "mode-flag-before-note",
+      "kind": "alternative",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 101.97,
+      "result": {
+        "task": "h01_effect_check_enforce_only",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 2.667
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.065
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.083
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.082
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.08
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.092
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h01_effect_check_enforce_only-20261004-044922/mode-flag-before-note-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 184,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 101.115
+      }
+    }
+  ],
+  "status": "pass",
+  "toolchain": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)"
+}

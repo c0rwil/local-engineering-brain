@@ -1,0 +1,675 @@
+{
+  "suite_id": "real-repo-heldout-v1",
+  "task_id": "h02_failure_feedback_origin",
+  "base_commit": "2b690115d49f9e7cf0610ef601c92baf6323edba",
+  "reference_fix_commit": "c67bbf4d3e4d7815f82b5fedb4a5cdf0beef219f",
+  "generated_at": "2026-10-04T11:32:26+00:00",
+  "python": "3.14.7",
+  "fixture_root": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h02_failure_feedback_origin-20261004-043226",
+  "grader_sha256": "aeae49f51a0e76706a6a2f3de0462a78b1b24be829de1943403f15e4af140541",
+  "private_files_sha256": {
+    "hidden_tests.rs": "206f3d2415af04a57a3a9471014b94e763aac0cb8739f3603db21414cd1ee755"
+  },
+  "preflight_sha256": "46e1a9a445c69f5814c68d13af4a6162bfaf03940ca7ee249728e277e9adee3a",
+  "shared_sha256": {
+    "preflight_common.py": "3430250732b8d6a001547d07e3dd55f981373872aeb3f8a7743549919fddc00a",
+    "py_harness.py": "a31966efeeda823f2fc13e09cfd04a0e0ae2a060164882194d0d56bc48b58e2e",
+    "rust_grader.py": "d8968d85f979c281f4f00298a2543328a792011e558d2645f0ef45c286050842"
+  },
+  "expected_check_count": 9,
+  "controls": [
+    {
+      "name": "base",
+      "kind": "base",
+      "source": "base",
+      "expect": "fail",
+      "description": "Historical base: failure and feedback records carry no origin.",
+      "required_failures": [
+        "first_step_failure_carries_the_declared_origin",
+        "first_step_failure_normalizes_origin_like_session_creation",
+        "loaded_session_failure_keeps_the_frozen_origin",
+        "reaction_feedback_event_carries_the_session_origin",
+        "reaction_outcome_signals_carry_the_session_origin"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "reference",
+      "kind": "reference",
+      "source": "reference",
+      "expect": "pass",
+      "description": "Historical fix.",
+      "required_failures": [],
+      "exact_failures": true
+    },
+    {
+      "name": "request-origin-wins",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Tags failures from the current request even when a session exists.",
+      "required_failures": [
+        "loaded_session_failure_keeps_the_frozen_origin",
+        "unstamped_session_failure_stays_untagged"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "raw-request-origin",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Uses the first-step request origin without session-creation normalization.",
+      "required_failures": [
+        "first_step_failure_normalizes_origin_like_session_creation"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "failure-events-only",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Tags model-failure events but leaves reaction feedback untagged.",
+      "required_failures": [
+        "reaction_feedback_event_carries_the_session_origin",
+        "reaction_outcome_signals_carry_the_session_origin"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "feedback-only",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Tags reaction feedback but leaves model-failure events untagged.",
+      "required_failures": [
+        "first_step_failure_carries_the_declared_origin",
+        "first_step_failure_normalizes_origin_like_session_creation",
+        "loaded_session_failure_keeps_the_frozen_origin"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "equivalent-expression",
+      "kind": "alternative",
+      "source": "reference",
+      "expect": "pass",
+      "description": "Legitimate alternative: the same freeze written as map_or_else, and the feedback tag added after the props are built.",
+      "required_failures": [],
+      "exact_failures": true
+    }
+  ],
+  "mutations": {
+    "request-origin-wins": "--- reference/src/services/action_engine.rs\n+++ request-origin-wins/src/services/action_engine.rs\n@@ -1272,10 +1272,7 @@\n                     // re-stamps a live session); only a first-step failure \u2014\n                     // no session exists yet \u2014 reads the request, taking\n                     // exactly the value build_session WOULD have stamped.\n-                    let error_origin = match deps.loaded_session.as_ref() {\n-                        Some(session) => session.meta.origin.clone(),\n-                        None => normalize_task_origin(request.origin.as_deref()),\n-                    };\n+                    let error_origin = normalize_task_origin(request.origin.as_deref());\n                     if let Some((event, signals)) = build_error_analytics(ErrorAnalyticsInput {\n                         settings: &self.settings,\n                         headers: deps.headers,\n",
+    "raw-request-origin": "--- reference/src/services/action_engine.rs\n+++ raw-request-origin/src/services/action_engine.rs\n@@ -1274,7 +1274,7 @@\n                     // exactly the value build_session WOULD have stamped.\n                     let error_origin = match deps.loaded_session.as_ref() {\n                         Some(session) => session.meta.origin.clone(),\n-                        None => normalize_task_origin(request.origin.as_deref()),\n+                        None => request.origin.clone(),\n                     };\n                     if let Some((event, signals)) = build_error_analytics(ErrorAnalyticsInput {\n                         settings: &self.settings,\n",
+    "failure-events-only": "--- reference/src/routes/reactions.rs\n+++ failure-events-only/src/routes/reactions.rs\n@@ -349,9 +349,6 @@\n             // human-confirmed success/failure signal, so an untagged feedback\n             // event drops exactly the sessions an origin-segmented success\n             // rate most needs.\n-            if let Some(origin) = origin.as_deref() {\n-                props.insert(\"origin\".to_string(), json!(origin));\n-            }\n             props\n         };\n \n",
+    "feedback-only": "--- reference/src/services/action_engine.rs\n+++ feedback-only/src/services/action_engine.rs\n@@ -1292,7 +1292,7 @@\n                             .and_then(|session| session.meta.task_prompt.as_deref())\n                             .unwrap_or(&original_prompt),\n                         run_type: request.run_type.as_deref(),\n-                        origin: error_origin.as_deref(),\n+                        origin: None,\n                         step_number: span_step_number,\n                         error: &err.to_string(),\n                     }) {\n",
+    "equivalent-expression": "--- reference/src/services/action_engine.rs\n+++ equivalent-expression/src/services/action_engine.rs\n@@ -1272,10 +1272,10 @@\n                     // re-stamps a live session); only a first-step failure \u2014\n                     // no session exists yet \u2014 reads the request, taking\n                     // exactly the value build_session WOULD have stamped.\n-                    let error_origin = match deps.loaded_session.as_ref() {\n-                        Some(session) => session.meta.origin.clone(),\n-                        None => normalize_task_origin(request.origin.as_deref()),\n-                    };\n+                    let error_origin = deps.loaded_session.as_ref().map_or_else(\n+                        || normalize_task_origin(request.origin.as_deref()),\n+                        |session| session.meta.origin.clone(),\n+                    );\n                     if let Some((event, signals)) = build_error_analytics(ErrorAnalyticsInput {\n                         settings: &self.settings,\n                         headers: deps.headers,\n--- reference/src/routes/reactions.rs\n+++ equivalent-expression/src/routes/reactions.rs\n@@ -349,7 +349,11 @@\n             // human-confirmed success/failure signal, so an untagged feedback\n             // event drops exactly the sessions an origin-segmented success\n             // rate most needs.\n-            if let Some(origin) = origin.as_deref() {\n+            props\n+        };\n+        let feedback_props = {\n+            let mut props = feedback_props;\n+            if let Some(origin) = origin.clone() {\n                 props.insert(\"origin\".to_string(), json!(origin));\n             }\n             props\n"
+  },
+  "runs": [
+    {
+      "fixture": "base",
+      "kind": "base",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "first_step_failure_carries_the_declared_origin",
+        "first_step_failure_normalizes_origin_like_session_creation",
+        "loaded_session_failure_keeps_the_frozen_origin",
+        "reaction_feedback_event_carries_the_session_origin",
+        "reaction_outcome_signals_carry_the_session_origin"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "first_step_failure_carries_the_declared_origin",
+        "first_step_failure_normalizes_origin_like_session_creation",
+        "loaded_session_failure_keeps_the_frozen_origin",
+        "reaction_feedback_event_carries_the_session_origin",
+        "reaction_outcome_signals_carry_the_session_origin"
+      ],
+      "driver_seconds": 44.416,
+      "result": {
+        "task": "h02_failure_feedback_origin",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 1.276
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.07
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.073
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.073
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.068
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.068
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.069
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.08
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h02_failure_feedback_origin-20261004-043226/base-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 176,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 44.344
+      }
+    },
+    {
+      "fixture": "reference",
+      "kind": "reference",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 34.426,
+      "result": {
+        "task": "h02_failure_feedback_origin",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.981
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.06
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.055
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.052
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.048
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.049
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.048
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.056
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h02_failure_feedback_origin-20261004-043226/reference-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 176,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 34.367
+      }
+    },
+    {
+      "fixture": "request-origin-wins",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "loaded_session_failure_keeps_the_frozen_origin",
+        "unstamped_session_failure_stays_untagged"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "loaded_session_failure_keeps_the_frozen_origin",
+        "unstamped_session_failure_stays_untagged"
+      ],
+      "driver_seconds": 28.812,
+      "result": {
+        "task": "h02_failure_feedback_origin",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 1.153
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.08
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.07
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.071
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.065
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.064
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.064
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.075
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h02_failure_feedback_origin-20261004-043226/request-origin-wins-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 176,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 28.77
+      }
+    },
+    {
+      "fixture": "raw-request-origin",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "first_step_failure_normalizes_origin_like_session_creation"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "first_step_failure_normalizes_origin_like_session_creation"
+      ],
+      "driver_seconds": 48.43,
+      "result": {
+        "task": "h02_failure_feedback_origin",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 1.602
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.107
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.09
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.083
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.083
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.078
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.078
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.095
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h02_failure_feedback_origin-20261004-043226/raw-request-origin-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 176,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 48.366
+      }
+    },
+    {
+      "fixture": "failure-events-only",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "reaction_feedback_event_carries_the_session_origin",
+        "reaction_outcome_signals_carry_the_session_origin"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "reaction_feedback_event_carries_the_session_origin",
+        "reaction_outcome_signals_carry_the_session_origin"
+      ],
+      "driver_seconds": 64.464,
+      "result": {
+        "task": "h02_failure_feedback_origin",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 1.899
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.142
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.1
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.125
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.083
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.168
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.089
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.179
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h02_failure_feedback_origin-20261004-043226/failure-events-only-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 176,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 64.353
+      }
+    },
+    {
+      "fixture": "feedback-only",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "first_step_failure_carries_the_declared_origin",
+        "first_step_failure_normalizes_origin_like_session_creation",
+        "loaded_session_failure_keeps_the_frozen_origin"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "first_step_failure_carries_the_declared_origin",
+        "first_step_failure_normalizes_origin_like_session_creation",
+        "loaded_session_failure_keeps_the_frozen_origin"
+      ],
+      "driver_seconds": 55.985,
+      "result": {
+        "task": "h02_failure_feedback_origin",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 1.29
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.092
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": false,
+            "exit_code": 101,
+            "seconds": 0.088
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.089
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.08
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.08
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.083
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.098
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h02_failure_feedback_origin-20261004-043226/feedback-only-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 176,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 55.847
+      }
+    },
+    {
+      "fixture": "equivalent-expression",
+      "kind": "alternative",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 53.073,
+      "result": {
+        "task": "h02_failure_feedback_origin",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 1.474
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.101
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.086
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.103
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.156
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.084
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.084
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true,
+            "exit_code": 0,
+            "seconds": 0.095
+          }
+        ],
+        "logs": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h02_failure_feedback_origin-20261004-043226/equivalent-expression-result.logs",
+        "removed_env_files": [],
+        "refreshed_files": 176,
+        "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+        "build_exit_code": 0,
+        "elapsed_seconds": 52.94
+      }
+    }
+  ],
+  "status": "pass",
+  "toolchain": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)"
+}
