@@ -2412,11 +2412,18 @@ fn run_hook_event(
         return Ok(true);
     }
     // Codex sub-sessions share the root session id: guardian reviewers stay
-    // silent and spawned workers contribute tool use only.
+    // silent, spawned workers contribute tool use only, and an unidentified
+    // thread cannot replace an active task prompt.
     if codex
         && engram::agenthooks::codex::skips_event(
             event,
-            &engram::agenthooks::codex::thread_kind(&payload),
+            &engram::agenthooks::codex::thread_role(&payload),
+            || {
+                hook_session_state(overrides, &payload).is_some_and(|(session_id, state_dir)| {
+                    engram::agenthooks::pending_prompt(&state_dir, &session_id).is_some()
+                        || !engram::agenthooks::project_sessions(&state_dir, &session_id).is_empty()
+                })
+            },
         )
     {
         return Ok(true);
@@ -2441,7 +2448,8 @@ fn run_hook_event(
     } else {
         engram::agenthooks::HookClient::ClaudeCode
     };
-    run_hook_payload(overrides, socket, event, agent, &payload, &emit)
+    let _ = run_hook_payload(overrides, socket, event, agent, &payload, &emit);
+    Ok(true)
 }
 
 /// Cursor adapter: translate Cursor's hook input, run the shared handlers, and
@@ -2484,7 +2492,7 @@ fn run_cursor_hook(
         write(&cursor::response(event, Some(&format!("{relay}{context}"))))
     };
     for step in steps {
-        let _ = run_hook_payload(
+        let daemon_available = run_hook_payload(
             overrides,
             socket,
             step,
@@ -2492,6 +2500,10 @@ fn run_cursor_hook(
             &payload,
             &emit,
         );
+        // Without the daemon a later step would only wait for it again.
+        if matches!(daemon_available, Ok(false)) {
+            break;
+        }
     }
     if raw.is_some_and(cursor::failed_verification) {
         forget_last_verification(overrides, &payload);
@@ -2501,8 +2513,8 @@ fn run_cursor_hook(
     }
 }
 
-/// Session id and hook state directory for a normalized Cursor payload.
-fn cursor_session_state(
+/// Session id and hook state directory for a hook payload in the shared shape.
+fn hook_session_state(
     overrides: &ConfigOverrides,
     payload: &serde_json::Value,
 ) -> Option<(String, PathBuf)> {
@@ -2520,7 +2532,7 @@ fn cursor_session_state(
 
 /// Drain the Cursor session's relay inbox into a bounded block.
 fn cursor_relay(overrides: &ConfigOverrides, payload: &serde_json::Value) -> String {
-    cursor_session_state(overrides, payload).map_or_else(String::new, |(session_id, state_dir)| {
+    hook_session_state(overrides, payload).map_or_else(String::new, |(session_id, state_dir)| {
         engram::agenthooks::cursor::relay_block(&engram::agenthooks::relay_drain(
             &state_dir,
             &session_id,
@@ -2533,7 +2545,7 @@ fn cursor_relay(overrides: &ConfigOverrides, payload: &serde_json::Value) -> Str
 /// cannot auto-close as a success on an older pass. Conservatively, every
 /// project episode of the session is reset, without a daemon lookup.
 fn forget_last_verification(overrides: &ConfigOverrides, payload: &serde_json::Value) {
-    let Some((session_id, state_dir)) = cursor_session_state(overrides, payload) else {
+    let Some((session_id, state_dir)) = hook_session_state(overrides, payload) else {
         return;
     };
     for (scope, mut session) in engram::agenthooks::project_sessions(&state_dir, &session_id) {
@@ -2545,7 +2557,8 @@ fn forget_last_verification(overrides: &ConfigOverrides, payload: &serde_json::V
 }
 
 /// Shared hook handlers for every client. `emit` returns whether the context
-/// reached the agent; only then are delivery receipts recorded.
+/// reached the agent; only then are delivery receipts recorded. Returns
+/// `Ok(false)` only when the daemon could not be reached.
 #[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 fn run_hook_payload(
     overrides: &ConfigOverrides,
@@ -2614,7 +2627,7 @@ fn run_hook_payload(
         return Ok(true);
     }
     if require_daemon(&config).is_err() {
-        return Ok(true);
+        return Ok(false);
     }
     let client = client(&config);
     match event {
@@ -2791,6 +2804,8 @@ fn run_hook_payload(
                 );
                 let _ = engram::agenthooks::remember_paths(&state_dir, &scope, &observed_paths);
                 let current_paths = engram::agenthooks::recent_paths(&state_dir, &scope);
+                // Receipts and briefs follow the conversation that saw them.
+                let delivery_scope = engram::agenthooks::thread_scope(&scope, payload);
                 // Capture each touched repository even if an earlier block used
                 // the output budget. Undelivered context remains retryable.
                 let remaining_tokens = if agent.bounded_context() {
@@ -2805,7 +2820,7 @@ fn run_hook_payload(
                     .then(|| {
                         engram::agenthooks::claim_context_delivery(
                             &state_dir,
-                            &scope,
+                            &delivery_scope,
                             &prompt,
                             &current_paths,
                             remaining_tokens,
@@ -2871,7 +2886,11 @@ fn run_hook_payload(
                         &shape.imports,
                     ) {
                         if text.len() <= byte_limit.saturating_sub(pretool_context.len())
-                            && engram::agenthooks::mark_file_briefed(&state_dir, &scope, &relative)
+                            && engram::agenthooks::mark_file_briefed(
+                                &state_dir,
+                                &delivery_scope,
+                                &relative,
+                            )
                         {
                             pretool_context.push_str(&text);
                         }
@@ -2924,6 +2943,7 @@ fn run_hook_payload(
                     );
                 }
                 engram::agenthooks::clear_claims(&state_dir, &scope);
+                engram::agenthooks::clear_thread_scopes(&state_dir, &scope);
             }
             let _ = std::fs::remove_file(
                 engram::agenthooks::session_state_path(&state_dir, &session_id)

@@ -346,10 +346,16 @@ fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
 ///
 /// - `session_id` is Cursor's session id or, failing that, `conversation_id`.
 /// - `cwd` is the tool's directory, else the first workspace root.
+/// - `hook_event_name` uses the shared vocabulary (`PostToolUse`,
+///   `PostToolUseFailure`, `UserPromptSubmit`, ...).
 /// - The `Shell` tool becomes `Bash`, which the verification capture
 ///   recognizes; `tool_input.working_directory` becomes `cwd`.
 /// - `tool_output` (a JSON-encoded string) becomes `tool_response`. A failure
-///   becomes an error without an exit code, so it records no verification.
+///   keeps its `error` text at the top level, beside `failure_type` and
+///   `is_interrupt`, and carries no tool result: observations count a failed
+///   call, and no verification is recorded without an exit code.
+/// - A shell launched in the background has no result of its own, so its
+///   response carries no exit code.
 #[must_use]
 pub fn normalize_payload(raw: &Value) -> Value {
     let mut payload = Map::new();
@@ -369,6 +375,10 @@ pub fn normalize_payload(raw: &Value) -> Value {
     if let Some(cwd) = cwd {
         payload.insert("cwd".to_owned(), json!(cwd));
     }
+    let event = shared_event_name(raw);
+    if let Some(event) = event {
+        payload.insert("hook_event_name".to_owned(), json!(event));
+    }
     for key in ["prompt", "tool_use_id", "transcript_path"] {
         if let Some(value) = text(raw, key) {
             payload.insert(key.to_owned(), json!(value));
@@ -378,13 +388,68 @@ pub fn normalize_payload(raw: &Value) -> Value {
         let name = if name == "Shell" { "Bash" } else { name };
         payload.insert("tool_name".to_owned(), json!(name));
     }
-    if let Some(input) = raw.get("tool_input") {
-        payload.insert("tool_input".to_owned(), tool_input(input));
-    }
-    if let Some(response) = tool_response(raw) {
+    let input = raw.get("tool_input").map(tool_input);
+    if event == Some("PostToolUseFailure") {
+        let error = raw
+            .get("error_message")
+            .or_else(|| raw.get("error"))
+            .and_then(Value::as_str)
+            .unwrap_or("tool failed");
+        payload.insert("error".to_owned(), json!(error));
+        for key in ["failure_type", "is_interrupt"] {
+            if let Some(value) = raw.get(key).filter(|value| !value.is_null()) {
+                payload.insert(key.to_owned(), value.clone());
+            }
+        }
+    } else if let Some(mut response) = tool_response(raw) {
+        if input.as_ref().is_some_and(launched_in_background) {
+            strip_exit_status(&mut response);
+        }
         payload.insert("tool_response".to_owned(), response);
     }
+    if let Some(input) = input {
+        payload.insert("tool_input".to_owned(), input);
+    }
     Value::Object(payload)
+}
+
+// Cursor's camelCase events in the names the shared handlers compare against.
+fn shared_event_name(raw: &Value) -> Option<&str> {
+    match text(raw, "hook_event_name") {
+        Some("sessionStart") => Some("SessionStart"),
+        Some("beforeSubmitPrompt") => Some("UserPromptSubmit"),
+        Some("preToolUse") => Some("PreToolUse"),
+        Some("postToolUse") => Some("PostToolUse"),
+        Some("postToolUseFailure") => Some("PostToolUseFailure"),
+        Some("stop") => Some("Stop"),
+        Some("sessionEnd") => Some("SessionEnd"),
+        Some(other) => Some(other),
+        None if raw.get("error_message").is_some() => Some("PostToolUseFailure"),
+        None if raw.get("tool_output").is_some() => Some("PostToolUse"),
+        None => None,
+    }
+}
+
+fn launched_in_background(input: &Value) -> bool {
+    ["run_in_background", "is_background", "background"]
+        .iter()
+        .any(|key| input.get(*key).and_then(Value::as_bool) == Some(true))
+}
+
+// Every key the shared exit-code reader accepts.
+fn strip_exit_status(response: &mut Value) {
+    if let Some(fields) = response.as_object_mut() {
+        for key in [
+            "exitCode",
+            "exit_code",
+            "code",
+            "returnCode",
+            "returncode",
+            "is_error",
+        ] {
+            fields.remove(key);
+        }
+    }
 }
 
 fn tool_input(input: &Value) -> Value {
@@ -413,22 +478,13 @@ fn tool_input(input: &Value) -> Value {
 }
 
 fn tool_response(raw: &Value) -> Option<Value> {
-    if let Some(output) = raw.get("tool_output") {
-        return Some(match output {
-            Value::String(encoded) => match serde_json::from_str::<Value>(encoded) {
-                Ok(parsed @ Value::Object(_)) => parsed,
-                _ => json!({"output": encoded}),
-            },
-            Value::Object(_) => output.clone(),
-            _ => json!({}),
-        });
-    }
-    raw.get("error_message").map(|error| {
-        json!({
-            "error": error,
-            "failure_type": raw.get("failure_type"),
-            "is_interrupt": raw.get("is_interrupt"),
-        })
+    raw.get("tool_output").map(|output| match output {
+        Value::String(encoded) => match serde_json::from_str::<Value>(encoded) {
+            Ok(parsed @ Value::Object(_)) => parsed,
+            _ => json!({"output": encoded}),
+        },
+        Value::Object(_) => output.clone(),
+        _ => json!({}),
     })
 }
 
@@ -747,10 +803,19 @@ mod tests {
         }));
         assert_eq!(failure["cwd"], "/work/other");
         assert!(failure["tool_input"].get("cwd").is_none());
+        assert_eq!(failure["hook_event_name"], "PostToolUseFailure");
+        assert_eq!(failure["error"], "Command failed");
+        assert_eq!(failure["is_interrupt"], false);
+        assert!(failure.get("tool_response").is_none());
         assert_eq!(
-            super::super::extract_exit_code(&failure["tool_response"]),
-            None
+            crate::effectiveness::post_tool_phase(&failure),
+            crate::effectiveness::ToolPhase::Failure
         );
+        assert_eq!(
+            crate::effectiveness::post_tool_phase(&shell),
+            crate::effectiveness::ToolPhase::Post
+        );
+        assert_eq!(shell["hook_event_name"], "PostToolUse");
 
         let mcp = normalize_payload(&json!({"conversation_id":"c","tool_name":"MCP:search",
             "tool_input":"{\"query\":\"x\"}"}));
@@ -763,6 +828,42 @@ mod tests {
         assert_eq!(
             prompt,
             json!({"session_id":"c","cwd":"/work/repo","prompt":"Fix it"})
+        );
+    }
+
+    #[test]
+    fn event_names_and_background_launches_use_the_shared_shape() {
+        for (cursor_event, shared) in [
+            ("sessionStart", "SessionStart"),
+            ("beforeSubmitPrompt", "UserPromptSubmit"),
+            ("postToolUse", "PostToolUse"),
+            ("postToolUseFailure", "PostToolUseFailure"),
+            ("stop", "Stop"),
+            ("sessionEnd", "SessionEnd"),
+        ] {
+            let payload = normalize_payload(&json!({"hook_event_name":cursor_event}));
+            assert_eq!(payload["hook_event_name"], shared, "{cursor_event}");
+        }
+        // A launch only started the command: its exit status is not the run's.
+        let launched = normalize_payload(&json!({
+            "hook_event_name":"postToolUse","tool_name":"Shell",
+            "tool_input":{"command":"cargo test","run_in_background":true},
+            "tool_output":"{\"exitCode\":0,\"output\":\"started\"}"
+        }));
+        assert_eq!(
+            super::super::extract_exit_code(&launched["tool_response"]),
+            None
+        );
+        assert_eq!(launched["tool_response"]["output"], "started");
+        assert_eq!(launched["tool_input"]["run_in_background"], true);
+        let foreground = normalize_payload(&json!({
+            "hook_event_name":"postToolUse","tool_name":"Shell",
+            "tool_input":{"command":"cargo test","run_in_background":false},
+            "tool_output":"{\"exitCode\":1}"
+        }));
+        assert_eq!(
+            super::super::extract_exit_code(&foreground["tool_response"]),
+            Some(1)
         );
     }
 
