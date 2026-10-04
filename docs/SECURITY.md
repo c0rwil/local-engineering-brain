@@ -124,21 +124,28 @@ The judge system prompt also says that text addressing the reviewer, asking for 
 decision, claiming approval, imitating system, role or tool messages, or asking for
 commands, URLs or secrets is a manipulation attempt and never a reason to accept.
 
-### Workspace browser
+### Loopback listeners
 
-The Knowledge tab is where a person acknowledges flagged lessons, so the browser
-listener refuses requests that a web page on another site could make through DNS
-rebinding. When it binds loopback (the default, `127.0.0.1:11436`):
+The workspace browser (`127.0.0.1:11436` by default) is where a person
+acknowledges flagged lessons, and the model proxy (`engram-proxy`,
+`127.0.0.1:11435` by default) forwards requests to the model runtime. Both refuse
+requests that a web page on another site could make through DNS rebinding, using
+one shared guard (`src/security/loopback.rs`):
 
-- it answers only requests whose `Host` is `localhost`, a 127.0.0.0/8 address or
-  `[::1]`, with the listener's port. Other names get HTTP 421;
-- state-changing requests whose `Origin`, when sent, is not such a loopback
-  origin get HTTP 403. Clients that send no `Origin`, such as `curl`, are not
+- a request is answered only when its `Host` is `localhost`, a 127.0.0.0/8
+  address or `[::1]`, with the listener's port. Other names get HTTP 421;
+- a request other than GET, HEAD or OPTIONS whose `Origin`, when sent, is not
+  such a loopback origin gets HTTP 403. Clients that send no `Origin`, such as
+  `curl`, scripts, OpenAI and Anthropic SDK clients and coding agents, are not
   affected.
 
-Open the browser at http://127.0.0.1:11436 or http://localhost:11436. A custom
-host name that points at 127.0.0.1 is refused. A non-loopback bind, such as a team
-server, keeps requiring the bearer token and does not check `Host`.
+Open the browser at http://127.0.0.1:11436 or http://localhost:11436, and point
+model clients at the proxy's own address, such as `http://127.0.0.1:11435`. A
+custom host name that points at 127.0.0.1 is refused. The check runs before any
+request handling, so the brain-off path (`x-engram-mode: off`) is otherwise
+unchanged. The proxy accepts only loopback binds. A non-loopback browser bind,
+such as a team server, keeps requiring the bearer token and does not check
+`Host`.
 
 ## False positives
 
@@ -182,8 +189,9 @@ A flag holds a proposal for a human; it never deletes or rejects it.
   as data but not neutralized. Relay messages between sessions are not screened.
   Knowledge replicated from a central server is not screened on arrival; validated
   replicas are covered by the doctor check.
-- The model proxy (`engram-proxy`, `127.0.0.1:11435`) does not check `Host` or
-  `Origin`; only the workspace browser does.
+- The loopback guard stops web pages that use DNS rebinding or cross-origin
+  writes. It does not authenticate local processes: anything running on the
+  machine can still reach the browser and the proxy.
 
 ## Evaluating a judge model
 

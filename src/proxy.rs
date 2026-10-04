@@ -194,6 +194,14 @@ where
         .route("/v1/messages", post(anthropic_messages))
         .layer(DefaultBodyLimit::max(max_body))
         .with_state(state);
+    // The proxy binds loopback only (config validation). Answer only requests
+    // addressed to this listener, so a web page cannot reach it by DNS
+    // rebinding. SDK clients send no Origin and are unaffected.
+    let port = listener
+        .local_addr()
+        .map_err(|source| Error::Daemon(format!("proxy listener address: {source}")))?
+        .port();
+    let router = crate::security::guard_loopback(router, port);
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown)
         .await
@@ -1010,6 +1018,130 @@ mod tests {
             assert!(!headers.contains_key("x-engram-mode"));
             assert!(!headers.contains_key("x-engram-private-control"));
             assert!(!headers.contains_key("connection"));
+        }
+
+        proxy_stop_tx.send(()).expect("proxy stop");
+        runtime_stop_tx.send(()).expect("runtime stop");
+        proxy_server.await.expect("proxy task").expect("proxy");
+        runtime_server.await.expect("runtime task");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn loopback_guard_refuses_rebinding_and_cross_origin_writes_but_not_sdk_clients() {
+        let temp = TempDir::new().expect("temp");
+        let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let runtime_calls = Arc::clone(&calls);
+        let runtime_router = Router::new().route(
+            "/v1/messages",
+            post(move |Json(body): Json<Value>| {
+                let calls = Arc::clone(&runtime_calls);
+                async move {
+                    calls.lock().expect("calls lock").push(body);
+                    Json(json!({"type": "message", "content": []}))
+                }
+            }),
+        );
+        let runtime_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("runtime bind");
+        let runtime_address = runtime_listener.local_addr().expect("runtime address");
+        let (runtime_stop_tx, runtime_stop_rx) = oneshot::channel::<()>();
+        let runtime_server = tokio::spawn(async move {
+            axum::serve(runtime_listener, runtime_router)
+                .with_graceful_shutdown(async move {
+                    let _ = runtime_stop_rx.await;
+                })
+                .await
+                .expect("runtime server");
+        });
+        let mut config = Config::default();
+        config.storage.db_path = temp.path().join("brain.sqlite");
+        config.daemon.socket_path = temp.path().join("engramd.sock");
+        config.proxy.runtime_url = format!("http://{runtime_address}");
+        let proxy_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("proxy bind");
+        let proxy_address = proxy_listener.local_addr().expect("proxy address");
+        let port = proxy_address.port();
+        let (proxy_stop_tx, proxy_stop_rx) = oneshot::channel::<()>();
+        let proxy_server = tokio::spawn(serve_on_listener(config, proxy_listener, async move {
+            let _ = proxy_stop_rx.await;
+        }));
+
+        let client = reqwest::Client::new();
+        let request = json!({
+            "model": "frontier-test",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "say ok"}]
+        });
+        let send = |host: Option<String>, origin: Option<String>| {
+            let mut builder = client
+                .post(format!("http://{proxy_address}/v1/messages"))
+                .header("x-engram-mode", "off")
+                .json(&request);
+            if let Some(host) = host {
+                builder = builder.header("host", host);
+            }
+            if let Some(origin) = origin {
+                builder = builder.header("origin", origin);
+            }
+            builder.send()
+        };
+        let health = client
+            .get(format!("http://{proxy_address}/health"))
+            .send()
+            .await
+            .expect("health");
+        assert_eq!(health.status(), StatusCode::OK);
+        let rebound = client
+            .get(format!("http://{proxy_address}/health"))
+            .header("host", format!("evil.example:{port}"))
+            .send()
+            .await
+            .expect("rebound health");
+        assert_eq!(rebound.status(), StatusCode::MISDIRECTED_REQUEST);
+        // Refused requests never reach the runtime.
+        for (host, origin, status) in [
+            (
+                Some(format!("evil.example:{port}")),
+                None,
+                StatusCode::MISDIRECTED_REQUEST,
+            ),
+            (
+                Some(format!("localhost.evil.example:{port}")),
+                None,
+                StatusCode::MISDIRECTED_REQUEST,
+            ),
+            (
+                None,
+                Some("http://evil.example".to_owned()),
+                StatusCode::FORBIDDEN,
+            ),
+            (None, Some("null".to_owned()), StatusCode::FORBIDDEN),
+        ] {
+            let response = send(host.clone(), origin.clone())
+                .await
+                .expect("refused request");
+            assert_eq!(response.status(), status, "{host:?} {origin:?}");
+        }
+        assert!(calls.lock().expect("calls lock").is_empty());
+        // SDK clients send no Origin; same-origin and localhost requests pass,
+        // and the brain-off request reaches the runtime unchanged.
+        for (host, origin) in [
+            (None, None),
+            (None, Some(format!("http://127.0.0.1:{port}"))),
+            (Some(format!("localhost:{port}")), None),
+        ] {
+            let response = send(host.clone(), origin.clone())
+                .await
+                .expect("allowed request");
+            assert_eq!(response.status(), StatusCode::OK, "{host:?} {origin:?}");
+        }
+        {
+            let calls = calls.lock().expect("calls lock");
+            assert_eq!(calls.len(), 3);
+            assert!(calls.iter().all(|body| body == &request));
         }
 
         proxy_stop_tx.send(()).expect("proxy stop");
