@@ -51,6 +51,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_makefile(MAKEFILE)
+    }
+
+    fn with_makefile(makefile: &str) -> Self {
         let serial = SERIAL
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -61,7 +65,7 @@ impl Fixture {
         let repo = fixture.repo();
         std::fs::create_dir(&repo).unwrap();
         std::fs::write(repo.join("lib.rs"), "pub fn compute() -> u32 { 1 }\n").unwrap();
-        std::fs::write(repo.join("Makefile"), MAKEFILE).unwrap();
+        std::fs::write(repo.join("Makefile"), makefile).unwrap();
         std::fs::write(repo.join(".gitignore"), ".engram/\nran.marker\n").unwrap();
         git(&repo, &["init", "--quiet"]);
         git(&repo, &["add", "."]);
@@ -382,4 +386,87 @@ fn reverification_plans_runs_in_a_disposable_worktree_and_unblocks_the_judge() {
     );
     assert_eq!(review(&after, &failing)["gate"]["current"], NO_EVIDENCE);
     assert_eq!(after["summary"]["judge_eligible_now"], 1);
+    assert_eq!(review(&after, &passing)["files_changed_since_head"], 0);
+
+    // An uncommitted edit of a touched file: the re-run would test the
+    // commit, so the plan says it cannot certify that file.
+    std::fs::write(repo.join("lib.rs"), "pub fn compute() -> u32 { 3 }\n").unwrap();
+    let dirty = f.json(&["review", "reverify", &passing, "--dry-run", "--json"]);
+    let dirty = review(&dirty, &passing);
+    assert_eq!(dirty["files_changed_since_head"], 1, "{dirty}");
+    assert_eq!(dirty["files_absent_at_head"], 0);
+    assert!(
+        !dirty["gate"]["if_passing"].is_null(),
+        "a passing re-run cannot certify the edited file: {dirty}"
+    );
+}
+
+/// Ctrl-C or SIGTERM stops the running command's process group and the rest
+/// of the plan, and the disposable worktree is still removed.
+#[test]
+fn an_interrupted_run_stops_its_command_and_removes_the_worktree() {
+    let f = Fixture::with_makefile("test:\n\t@touch \"$$STARTED\"\n\t@sleep 60\n");
+    let review = f.proposal("Make compute return 2", &["make test"]);
+    f.move_on();
+    let started = f.root().join("started");
+    let child = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", f.root())
+        .env("STARTED", &started)
+        .args([
+            "--db",
+            f.root().join("brain.sqlite").to_str().unwrap(),
+            "--socket",
+            f.root().join("engramd.sock").to_str().unwrap(),
+            "review",
+            "reverify",
+            &review,
+            "--yes",
+            "--json",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("cli");
+    let begun = std::time::Instant::now();
+    while !started.exists() {
+        assert!(
+            begun.elapsed() < std::time::Duration::from_secs(60),
+            "the command never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let stopped = Command::new("/bin/kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("kill");
+    assert!(stopped.success());
+    let output = child.wait_with_output().expect("output");
+    assert!(
+        begun.elapsed() < std::time::Duration::from_secs(45),
+        "the interrupted command did not keep running"
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ran: Value = serde_json::from_slice(&output.stdout).expect("json");
+    let execution = &ran["execution"];
+    assert_eq!(
+        execution["runs"][0]["outcome"]["interrupted"], true,
+        "{execution}"
+    );
+    assert!(
+        execution["runs"][0]["recorded"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(execution["worktrees"][0]["removed"], true);
+    assert!(!Path::new(execution["worktrees"][0]["path"].as_str().unwrap()).exists());
+    assert!(
+        f.evidence().is_empty(),
+        "an interrupted run records nothing"
+    );
 }

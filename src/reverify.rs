@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use rusqlite::params;
@@ -281,6 +282,8 @@ fn hidden_cause(reason: StatusHidden) -> &'static str {
         StatusHidden::Sequence => "a later command joined by `;` or a newline sets the status",
         StatusHidden::Pipe => "a pipe without `pipefail` reports its last command's status",
         StatusHidden::Directory => "a directory change may not take effect",
+        // A ledger cause for clients; the shell text never yields it.
+        StatusHidden::Unreported => "the coding client reported none",
     }
 }
 
@@ -536,6 +539,12 @@ pub struct ReviewPlan {
     pub source_files: Vec<String>,
     /// Touched paths outside every existing checkout of the project.
     pub excluded_files: usize,
+    /// Touched files not at the commit (deleted, renamed or never
+    /// committed): a re-run cannot certify them.
+    pub files_absent_at_head: usize,
+    /// Touched files whose working-tree content differs from the commit:
+    /// the re-run tests the commit, so its digests cannot match them.
+    pub files_changed_since_head: usize,
     pub commands: Vec<CommandPlan>,
     /// The judge's gate now and with a passing re-run attached.
     pub gate: Option<ReverificationGate>,
@@ -572,6 +581,10 @@ pub struct PlanSummary {
     /// For runnable reviews, what would still block them once their commands
     /// pass.
     pub blocked_if_passing: BTreeMap<String, usize>,
+    /// Runnable reviews with touched files that have uncommitted changes.
+    pub runnable_with_changed_files: usize,
+    /// Runnable reviews with touched files missing at the commit.
+    pub runnable_with_absent_files: usize,
 }
 
 /// A read-only re-verification plan.
@@ -644,6 +657,8 @@ impl Planner<'_> {
             head: None,
             source_files: Vec::new(),
             excluded_files: 0,
+            files_absent_at_head: 0,
+            files_changed_since_head: 0,
             commands: Vec::new(),
             gate: None,
         };
@@ -677,28 +692,10 @@ impl Planner<'_> {
             .entry(review.project_id.clone())
             .or_insert_with(|| primary_checkout(projects, &review.project_id))
             .clone();
-        let mut passing = None;
-        if let Some((root, head)) = &checkout {
-            planned.checkout = Some(root.to_string_lossy().into_owned());
-            planned.head = Some(head.clone());
-            let files = self
-                .judges
-                .task_source_files(&review.project_id, &review.task_id)?;
-            planned.excluded_files = files.excluded;
-            // The judge previews the first runnable command passing with the
-            // digests of the touched files at the commit it would run at.
-            if let Some(runnable) = planned.commands.iter().find(|command| command.runnable) {
-                passing =
-                    self.judges
-                        .revision_digests(root, head, &files.files)
-                        .map(|source_digests| PassingRun {
-                            kind: runnable.kind.clone().unwrap_or_default(),
-                            command: runnable.command.clone(),
-                            source_digests,
-                        });
-            }
-            planned.source_files = files.files;
-        }
+        let passing = match &checkout {
+            Some((root, head)) => self.preview(&mut planned, root, head)?,
+            None => None,
+        };
         planned.gate =
             self.judges
                 .reverification_gate(self.judge, &planned.review_id, passing.as_ref())?;
@@ -728,6 +725,51 @@ impl Planner<'_> {
             ),
         };
         Ok(planned)
+    }
+
+    /// Fill in the checkout, the commit and the touched files, and return
+    /// the passing run the judge previews: the first runnable command, with
+    /// the touched files' digests at the commit it would run at.
+    fn preview(
+        &self,
+        planned: &mut ReviewPlan,
+        root: &Path,
+        head: &str,
+    ) -> Result<Option<PassingRun>> {
+        let (Some(project_id), Some(task_id)) = (&planned.project_id, &planned.task_id) else {
+            return Ok(None);
+        };
+        planned.checkout = Some(root.to_string_lossy().into_owned());
+        planned.head = Some(head.to_owned());
+        let files = self.judges.task_source_files(project_id, task_id)?;
+        planned.excluded_files = files.excluded;
+        planned.source_files.clone_from(&files.files);
+        let Some(runnable) = planned.commands.iter().find(|command| command.runnable) else {
+            return Ok(None);
+        };
+        let Some(at_head) = self.judges.revision_digests(root, head, &files.files) else {
+            return Ok(None);
+        };
+        let (live, _) = agenthooks::source_digests(root, &files.files);
+        planned.files_absent_at_head = files
+            .files
+            .iter()
+            .filter(|file| !at_head.contains_key(*file))
+            .count();
+        planned.files_changed_since_head = files
+            .files
+            .iter()
+            .filter(|file| {
+                at_head
+                    .get(*file)
+                    .is_some_and(|digest| live.get(*file).is_some_and(|live| live != digest))
+            })
+            .count();
+        Ok(Some(PassingRun {
+            kind: runnable.kind.clone().unwrap_or_default(),
+            command: runnable.command.clone(),
+            source_digests: at_head,
+        }))
     }
 }
 
@@ -912,6 +954,10 @@ fn summarize(reviews: &[ReviewPlan], runs: usize) -> PlanSummary {
                     .or_default() += 1;
             }
         }
+        if review.status == ReviewStatus::Runnable {
+            summary.runnable_with_changed_files += usize::from(review.files_changed_since_head > 0);
+            summary.runnable_with_absent_files += usize::from(review.files_absent_at_head > 0);
+        }
         let Some(gate) = &review.gate else {
             continue;
         };
@@ -976,6 +1022,13 @@ impl Plan {
             ));
             lines.push(format!("  claim: {}", review.claim));
             lines.push(format!("  {}", review.reason));
+            if review.files_changed_since_head + review.files_absent_at_head > 0 {
+                lines.push(format!(
+                    "  touched files the re-run cannot certify: {} with uncommitted changes, {} not \
+                     at the commit",
+                    review.files_changed_since_head, review.files_absent_at_head
+                ));
+            }
             for command in &review.commands {
                 lines.push(format!(
                     "  {} `{}`: {}",
@@ -1145,19 +1198,27 @@ pub struct RunOutcome {
     /// The shell's exit code; `None` when it timed out or a signal ended it.
     pub exit_code: Option<i32>,
     pub timed_out: bool,
+    /// The operator interrupted the run.
+    #[serde(default)]
+    pub interrupted: bool,
     pub duration_ms: u64,
     /// Bounded tail of stdout, then stderr, as a hook records it.
     pub output: String,
 }
 
 /// Run `command` in `directory` under `nice`, in its own process group,
-/// without input. At `timeout` the whole group is stopped. Only bounded
-/// tails of its output are kept.
+/// without input. At `timeout`, or once `stop` is set, the whole group is
+/// stopped. Only bounded tails of its output are kept.
 ///
 /// # Errors
 ///
 /// Returns spawn or wait failures.
-pub fn run_command(directory: &Path, command: &str, timeout: Duration) -> Result<RunOutcome> {
+pub fn run_command(
+    directory: &Path,
+    command: &str,
+    timeout: Duration,
+    stop: &AtomicBool,
+) -> Result<RunOutcome> {
     use std::os::unix::process::CommandExt as _;
     let shell = if Path::new("/bin/bash").is_file() {
         "/bin/bash"
@@ -1187,7 +1248,7 @@ pub fn run_command(directory: &Path, command: &str, timeout: Duration) -> Result
             .map(|stream| tail_reader(Box::new(stream))),
     ];
     let deadline = started + timeout;
-    let mut timed_out = false;
+    let (mut timed_out, mut interrupted) = (false, false);
     let status = loop {
         if let Some(status) = child
             .try_wait()
@@ -1195,8 +1256,9 @@ pub fn run_command(directory: &Path, command: &str, timeout: Duration) -> Result
         {
             break status;
         }
-        if Instant::now() >= deadline {
-            timed_out = true;
+        interrupted = stop.load(Ordering::SeqCst);
+        if interrupted || Instant::now() >= deadline {
+            timed_out = !interrupted;
             signal_group(group, "-TERM");
             let grace = Instant::now() + KILL_GRACE;
             while Instant::now() < grace && matches!(child.try_wait(), Ok(None)) {
@@ -1224,11 +1286,51 @@ pub fn run_command(directory: &Path, command: &str, timeout: Duration) -> Result
         text.push_str(&tail);
     }
     Ok(RunOutcome {
-        exit_code: if timed_out { None } else { status.code() },
+        exit_code: if timed_out || interrupted {
+            None
+        } else {
+            status.code()
+        },
         timed_out,
+        interrupted,
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         output: agenthooks::bounded_tail(&text, agenthooks::VERIFICATION_EXCERPT_BYTES),
     })
+}
+
+/// Set once the operator interrupts re-verification.
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+/// Turn Ctrl-C and SIGTERM into a stop request instead of an immediate exit,
+/// and return the flag they set. A re-run command has its own process group,
+/// which a terminal's Ctrl-C does not reach; on a stop the running command's
+/// group is stopped, no further command starts, and the disposable worktrees
+/// are still removed.
+#[must_use]
+pub fn stop_on_interrupt() -> &'static AtomicBool {
+    std::thread::spawn(|| {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        runtime.block_on(async {
+            let Ok(mut terminate) =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            else {
+                return;
+            };
+            loop {
+                tokio::select! {
+                    signal = tokio::signal::ctrl_c() => if signal.is_err() { return; },
+                    _ = terminate.recv() => {}
+                }
+                INTERRUPTED.store(true, Ordering::SeqCst);
+            }
+        });
+    });
+    &INTERRUPTED
 }
 
 /// Signal every process in the group `run_command` created. `--` keeps the
@@ -1369,6 +1471,7 @@ type FileDigests = (BTreeMap<String, String>, bool);
 pub fn execute(
     plan: &Plan,
     timeout: Duration,
+    stop: &AtomicBool,
     record: &mut dyn FnMut(&crate::daemon::HookEvidenceRequest) -> Result<EvidenceId>,
     attach: &mut dyn FnMut(&AttachRequest) -> Result<AttachResult>,
 ) -> Execution {
@@ -1385,6 +1488,7 @@ pub fn execute(
     let mut runner = Runner {
         plan,
         timeout,
+        stop,
         record,
         recorded: Vec::new(),
         attachments: Vec::new(),
@@ -1411,6 +1515,7 @@ pub fn execute(
 struct Runner<'a> {
     plan: &'a Plan,
     timeout: Duration,
+    stop: &'a AtomicBool,
     record: &'a mut dyn FnMut(&crate::daemon::HookEvidenceRequest) -> Result<EvidenceId>,
     /// One evidence record per source task and command.
     recorded: Vec<((TaskId, String), EvidenceId)>,
@@ -1479,6 +1584,10 @@ impl Runner<'_> {
         run: &PlannedRun,
     ) -> RunReport {
         let mut ran = report(run);
+        if self.stop.load(Ordering::SeqCst) {
+            ran.error = Some("interrupted before it started".to_owned());
+            return ran;
+        }
         if let Err(refusal) = screen_command(&run.command) {
             ran.refusal = Some(refusal);
             return ran;
@@ -1487,7 +1596,7 @@ impl Runner<'_> {
             ran.error = Some(error.to_string());
             return ran;
         }
-        match run_command(worktree.path(), &run.command, self.timeout) {
+        match run_command(worktree.path(), &run.command, self.timeout, self.stop) {
             Ok(outcome) => {
                 for review_id in &run.review_ids {
                     let files = digests
@@ -1587,6 +1696,9 @@ impl Execution {
                     format!("refused `{}` at {at}: {}", run.command, refusal.detail)
                 }
                 (_, Some(error), _) => format!("failed `{}` at {at}: {error}", run.command),
+                (_, _, Some(outcome)) if outcome.interrupted => {
+                    format!("interrupted `{}` at {at}; nothing recorded", run.command)
+                }
                 (_, _, Some(outcome)) if outcome.timed_out => format!(
                     "timed out `{}` at {at} after {:.1} s; nothing recorded",
                     run.command,
@@ -1815,12 +1927,11 @@ mod tests {
     #[test]
     fn commands_run_in_their_own_bounded_process_group() {
         let temp = tempfile::TempDir::new().expect("temp");
-        let ran = run_command(
-            temp.path(),
-            "echo out; echo err >&2; exit 3",
-            Duration::from_secs(30),
-        )
-        .expect("run");
+        let go = AtomicBool::new(false);
+        let run = |command: &str, seconds: u64| {
+            run_command(temp.path(), command, Duration::from_secs(seconds), &go).expect(command)
+        };
+        let ran = run("echo out; echo err >&2; exit 3", 30);
         assert_eq!((ran.exit_code, ran.timed_out), (Some(3), false));
         assert!(
             ran.output.contains("out") && ran.output.contains("err"),
@@ -1829,29 +1940,32 @@ mod tests {
         );
         // The deadline stops the whole group, background children included.
         let started = Instant::now();
-        let slow =
-            run_command(temp.path(), "sleep 30 & sleep 30", Duration::from_secs(1)).expect("slow");
-        assert!(slow.timed_out && slow.exit_code.is_none());
+        let slow = run("sleep 30 & sleep 30", 1);
+        assert!(slow.timed_out && slow.exit_code.is_none() && !slow.interrupted);
         assert!(started.elapsed() < Duration::from_secs(15));
         // A child left running after the shell exits cannot hold the output.
         let started = Instant::now();
-        let orphan = run_command(
-            temp.path(),
-            "(sleep 30 &) ; echo left",
-            Duration::from_secs(30),
-        )
-        .expect("orphan");
-        assert_eq!(orphan.exit_code, Some(0));
+        assert_eq!(run("(sleep 30 &) ; echo left", 30).exit_code, Some(0));
         assert!(started.elapsed() < Duration::from_secs(15));
         // Only a bounded tail of long output is kept.
-        let long = run_command(
-            temp.path(),
+        let long = run(
             "i=0; while [ $i -lt 20000 ]; do echo line $i; i=$((i+1)); done",
-            Duration::from_secs(30),
-        )
-        .expect("long");
+            30,
+        );
         assert!(long.output.len() <= agenthooks::VERIFICATION_EXCERPT_BYTES + 64);
         assert!(long.output.contains("line 19999"));
+        // A stop request (Ctrl-C) ends the running group like a timeout.
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let later = std::sync::Arc::clone(&stop);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            later.store(true, Ordering::SeqCst);
+        });
+        let started = Instant::now();
+        let stopped =
+            run_command(temp.path(), "sleep 30", Duration::from_secs(60), &stop).expect("stop");
+        assert!(stopped.interrupted && !stopped.timed_out && stopped.exit_code.is_none());
+        assert!(started.elapsed() < Duration::from_secs(15));
     }
 
     #[test]
@@ -1908,6 +2022,8 @@ mod tests {
             head: Some(head.to_owned()),
             source_files: vec!["lib.rs".to_owned()],
             excluded_files: 0,
+            files_absent_at_head: 0,
+            files_changed_since_head: 0,
             commands: vec![CommandPlan {
                 command: "make test".to_owned(),
                 kind: Some("test_result".to_owned()),
@@ -1962,11 +2078,25 @@ mod tests {
             ],
             summary: PlanSummary::default(),
         };
+        // An interrupted run starts nothing, records nothing and leaves no
+        // worktree behind.
+        let stopped = execute(
+            &plan,
+            Duration::from_secs(120),
+            &AtomicBool::new(true),
+            &mut |_| panic!("nothing is recorded"),
+            &mut |_| panic!("nothing is attached"),
+        );
+        assert!(stopped.runs.iter().all(|run| run.outcome.is_none()
+            && run.error.as_deref() == Some("interrupted before it started")));
+        assert!(stopped.worktrees.iter().all(|worktree| worktree.removed));
+        assert!(!root.join("ran.marker").exists());
         let requests = RefCell::new(Vec::new());
         let attached = RefCell::new(None);
         let execution = execute(
             &plan,
             Duration::from_secs(120),
+            &AtomicBool::new(false),
             &mut |request| {
                 requests.borrow_mut().push(request.clone());
                 Ok(EvidenceId::new())

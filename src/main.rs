@@ -4978,9 +4978,13 @@ fn run_review(
         }
         return Ok(true);
     }
+    // Ctrl-C stops the running command's process group and the rest of the
+    // plan; the disposable worktrees are still removed.
+    let stop = engram::reverify::stop_on_interrupt();
     let execution = engram::reverify::execute(
         &plan,
         Duration::from_secs(timeout_secs),
+        stop,
         &mut |request| block_on(client.record_hook_evidence(request)).map(|evidence| evidence.id),
         &mut |request| block_on(client.reverify_attach(request)),
     );

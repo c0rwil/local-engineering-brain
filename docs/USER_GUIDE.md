@@ -1092,6 +1092,8 @@ the full plan). For each review the plan shows:
   passing run as the reference;
 - whether the command can run, or why it is refused;
 - the checkout and the commit it would run at;
+- touched files the run cannot certify: files with uncommitted changes, and
+  files that are not at the commit;
 - why the judge defers the review now, and what would still block it if the
   commands pass.
 
@@ -1104,12 +1106,14 @@ With `--yes`:
    untracked files (virtualenvs, `node_modules`, build output) are not copied.
    Repository hooks and LFS downloads are off while the checkout is created.
 2. A command stops at `--timeout-secs` (default 900). The whole process group
-   is stopped. Only the last 4 KiB of output is kept.
+   is stopped. Only the last 4 KiB of output is kept. Ctrl-C (or SIGTERM)
+   stops the running command's process group and the rest of the plan. The
+   disposable checkout is still removed.
 3. A result with an exit code is recorded on the review's source task. It
    carries the `engram-reverify` label, the commit in `metadata.head`, and the
    SHA-256 of the files the task touched, read in the disposable checkout
    before the command ran. A failing run is recorded as a failure. A run that
-   timed out records nothing.
+   timed out or was interrupted records nothing.
 4. The new evidence is attached to the review. A judge pass starts when the
    judge is enabled.
 
