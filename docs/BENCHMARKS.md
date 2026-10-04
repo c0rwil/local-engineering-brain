@@ -42,7 +42,11 @@ reports no results. The follow-up collector can now run it: it builds the
 fixtures from the operator's repositories, recalibrates the graders against
 them, and collects the draft only with `--allow-draft-suite`, which the frozen
 manifest records. A detached launcher keeps progress and resumes; see
-[Collection](../benchmarks/real-repo-heldout-v1/README.md#collection).
+[Collection](../benchmarks/real-repo-heldout-v1/README.md#collection). The
+report and native import read the suite from the frozen catalog. They add
+context delivery and Read measurements per arm, so the line-range hypothesis
+can be checked: fewer Read bytes and cache-read tokens at equal or better
+correctness.
 
 The v2 runner can also run both arms with the Codex CLI (`--agent codex`), with
 isolated per-arm Codex homes and a model-free loopback preflight; see the

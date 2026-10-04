@@ -54,6 +54,15 @@ GRADER_FILES_V2 = {
     TASKS[2]: {"grade.py", "hidden_tests.rs", "preflight.json"},
     TASKS[3]: {"grade.py", "onboarding.private.test.ts", "preflight.py", "preflight.json"},
 }
+LEGACY_SUITES = ("real-repo-v1", "real-repo-v2")
+# Catalog-selected suites also bind their grader recalibration proof.
+SUITE_HASHES = ("grader_preflight_sha256",)
+CONTEXT_FIELDS = (
+    "read_calls", "ranged_read_calls", "read_results", "read_error_results", "read_result_bytes",
+    "delivered_contexts", "pointer_lines", "ranged_pointer_lines", "direct_pointer_lines",
+    "neighbor_pointer_lines", "related_use_pointer_lines", "related_use_items",
+)
+SAFE_TASK = re.compile(r"[a-z0-9][a-z0-9_-]{0,127}")
 
 
 class ValidationError(ValueError):
@@ -127,9 +136,64 @@ def timestamp_ms(value):
     return result
 
 
-def manifest_controls(report):
+def suite_spec(report):
+    """Tasks, repetitions and grader files of the collection.
+
+    v1 and v2 keep their fixed tables. Other suites use the suite block the
+    report published from its frozen catalog and manifest: task identities,
+    repetitions and the frozen digest of every per-task grader file.
+    """
+    manifest = report.get("manifest")
+    suite = manifest.get("suite", "real-repo-v1") if isinstance(manifest, dict) else "real-repo-v1"
+    if suite in LEGACY_SUITES:
+        files = GRADER_FILES_V2 if suite == "real-repo-v2" else GRADER_FILES
+        return {"suite": suite, "legacy": True, "tasks": TASKS, "repetitions": 3,
+                "grader_files": {task: {f"grading/{task}/{name}": None for name in files[task]} for task in TASKS}}
+    declared = mapping(report.get("suite"), "suite")
+    require(declared.get("suite_id") == suite, "Report suite does not match its manifest")
+    tasks = declared.get("task_ids")
+    require(isinstance(tasks, list) and tasks and len(set(tasks)) == len(tasks)
+            and all(isinstance(task, str) and SAFE_TASK.fullmatch(task) for task in tasks), "Suite task identities are invalid")
+    repetitions = declared.get("repetitions")
+    require(type(repetitions) is int and 1 <= repetitions <= 100, "Suite repetitions are invalid")
+    grader = mapping(declared.get("grader_files"), "suite.grader_files")
+    require(set(grader) == set(tasks), "Suite grader files must cover exactly its tasks")
+    files = {}
+    for task in tasks:
+        entries = mapping(grader[task], f"suite.grader_files.{task}")
+        require(entries and all(isinstance(path, str) and path.startswith(f"grading/{task}/") and len(Path(path).parts) == 3
+                                and ".." not in Path(path).parts for path in entries), "Suite grader file paths are invalid")
+        files[task] = {path: digest_value(value, "suite grader digest") for path, value in entries.items()}
+    return {"suite": suite, "legacy": False, "tasks": tuple(tasks), "repetitions": repetitions, "grader_files": files,
+            "held_out": boolean(declared.get("held_out"), "suite.held_out", required=True),
+            "allow_draft_suite": boolean(declared.get("allow_draft_suite"), "suite.allow_draft_suite", required=True)}
+
+
+def suite_controls(manifest, spec):
+    """Controls of a catalog-selected suite: follow-up hashes, grader proof and draft flag."""
+    require(type(manifest.get("repetitions")) is int and manifest["repetitions"] == spec["repetitions"],
+            "Manifest repetitions differ from the suite")
+    controls = {"schema_version": 1, "repetitions": spec["repetitions"], "suite": spec["suite"]}
+    for field in (*V2_HASHES, *SUITE_HASHES):
+        controls[field] = digest_value(manifest.get(field), f"manifest.{field}")
+    draft = manifest.get("allow_draft_suite", False)
+    require(draft is True or draft is False, "manifest.allow_draft_suite must be a boolean")
+    require(draft == spec["allow_draft_suite"], "Draft-suite flag differs between manifest and suite")
+    controls["allow_draft_suite"] = draft
+    if draft:
+        status = manifest.get("suite_status")
+        require(isinstance(status, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", status) is not None,
+                "A draft collection must record its catalog status")
+        controls["suite_status"] = status
+    return controls
+
+
+def manifest_controls(report, spec=None):
     manifest = mapping(report.get("manifest"), "manifest")
     require(type(manifest.get("schema_version")) is int and manifest["schema_version"] == 1, "Unsupported manifest schema")
+    if spec is not None and not spec["legacy"]:
+        controls = suite_controls(manifest, spec)
+        return common_manifest_controls(manifest, controls)
     require(type(manifest.get("repetitions")) is int and manifest["repetitions"] == 3, "Pilot must contain three repetitions")
     controls = {"schema_version": 1, "repetitions": 3}
     suite = manifest.get("suite", "real-repo-v1")
@@ -138,6 +202,10 @@ def manifest_controls(report):
         controls["suite"] = suite
         for field in V2_HASHES:
             controls[field] = digest_value(manifest.get(field), f"manifest.{field}")
+    return common_manifest_controls(manifest, controls)
+
+
+def common_manifest_controls(manifest, controls):
     for field in MANIFEST_TEXT:
         value = manifest.get(field)
         require(isinstance(value, str) and 0 < len(value.strip()) <= 4096, f"manifest.{field} is missing or invalid")
@@ -150,14 +218,15 @@ def manifest_controls(report):
     return controls
 
 
-def fixture_controls(report):
+def fixture_controls(report, tasks=TASKS):
     fixtures = report.get("fixtures")
-    require(isinstance(fixtures, list) and len(fixtures) == len(TASKS), "Pilot must contain four fixture controls")
+    require(isinstance(fixtures, list) and len(fixtures) == len(tasks),
+            "Pilot must contain four fixture controls" if tasks == TASKS else f"Collection must contain {len(tasks)} fixture controls")
     result = {}
     for fixture in fixtures:
         fixture = mapping(fixture, "fixture")
         task = fixture.get("task_id")
-        require(isinstance(task, str) and task in TASKS and task not in result, "Unexpected or duplicate fixture task")
+        require(isinstance(task, str) and task in tasks and task not in result, "Unexpected or duplicate fixture task")
         control = {field: digest_value(fixture.get(field), f"fixture.{field}", 64 if field == "snapshot_sha256" else 40)
                    for field in ("base_commit", "fixture_head", "snapshot_sha256")}
         locks = mapping(fixture.get("lockfile_sha256"), "fixture.lockfile_sha256")
@@ -167,6 +236,16 @@ def fixture_controls(report):
                     and not name.startswith("/") and ".." not in Path(name).parts, "Invalid lockfile control name")
             control["lockfile_sha256"][name] = digest_value(value, "lockfile hash")
         result[task] = control
+    return result
+
+
+def context_metrics(context):
+    """Published context-delivery and Read counts; missing measurements stay null."""
+    context = mapping(context, "context")
+    result = {field: number(context.get(field), f"context.{field}", integer=True) for field in CONTEXT_FIELDS}
+    result["read_measurement_complete"] = boolean(context.get("read_measurement_complete"), "context.read_measurement_complete", required=True)
+    for part, whole in (("ranged_pointer_lines", "pointer_lines"), ("ranged_read_calls", "read_calls"), ("read_results", "read_calls")):
+        require(result[part] is None or result[whole] is None or result[part] <= result[whole], f"context.{part} exceeds {whole}")
     return result
 
 
@@ -190,7 +269,7 @@ def measured_metrics(record):
 
 
 def build_payloads(report, benchmark_id, report_path):
-    """Return 24 fully validated native records without opening any socket.
+    """Return the full planned matrix (24 records for v1/v2) as validated native records, without opening any socket.
 
     Missing optional measurements remain null. A missing mandatory native wall
     measurement is an error. IDs intentionally exclude outcomes and report time:
@@ -203,25 +282,29 @@ def build_payloads(report, benchmark_id, report_path):
     require(report.get("record_classification_revision") == RECORD_CLASSIFICATION_REVISION, "Unsupported classification revision")
     progress = mapping(report.get("progress"), "progress")
     require(progress.get("status") == "complete", "Pilot is not complete")
+    spec = suite_spec(report)
+    tasks = spec["tasks"]
+    expected_keys = {(task, repetition, arm) for task in tasks for repetition in range(1, spec["repetitions"] + 1) for arm in ARMS}
+    planned = len(expected_keys)
     for field in ("planned_runs", "started_trials", "coding_runs_started", "completed_records"):
-        require(type(progress.get(field)) is int and progress[field] == 24, f"progress.{field} must equal 24")
+        require(type(progress.get(field)) is int and progress[field] == planned, f"progress.{field} must equal {planned}")
     require(type(progress.get("in_progress_trials")) is int and progress["in_progress_trials"] == 0, "Pilot has active attempts")
-    controls = manifest_controls(report)
-    fixtures = fixture_controls(report)
+    controls = manifest_controls(report, spec)
+    fixtures = fixture_controls(report, tasks)
     for field in ("preflight_runs", "infrastructure_attempts"):
         require(isinstance(report.get(field, []), list), f"{field} must be a separate attempt list")
     rows = report.get("records")
-    require(isinstance(rows, list) and len(rows) == 24, "Pilot must contain exactly 24 scored records")
+    require(isinstance(rows, list) and len(rows) == planned, f"Pilot must contain exactly {planned} scored records")
     keyed = {}
     for row in rows:
         row = mapping(row, "record")
         task, repetition, arm = row.get("task_id"), row.get("repetition"), row.get("arm")
         require(isinstance(task, str) and type(repetition) is int and isinstance(arm, str), "Invalid trial key types")
         key = (task, repetition, arm)
-        require(key in EXPECTED_KEYS and key not in keyed, "Unexpected or duplicate scored trial key")
+        require(key in expected_keys and key not in keyed, "Unexpected or duplicate scored trial key")
         timestamp_ms(row.get("started_at"))
         keyed[key] = row
-    require(set(keyed) == EXPECTED_KEYS, "Pilot matrix is incomplete")
+    require(set(keyed) == expected_keys, "Pilot matrix is incomplete")
     collection = fingerprint([{"task_id": key[0], "repetition": key[1], "arm": key[2], "started_at": keyed[key].get("started_at")}
                               for key in sorted(keyed)])
     task_controls, payloads = {}, []
@@ -235,9 +318,11 @@ def build_payloads(report, benchmark_id, report_path):
         task_control = {field: digest_value(row.get(field), field) for field in ("prompt_sha256", "composed_prompt_sha256", "snapshot_sha256")}
         require(task_control["snapshot_sha256"] == fixtures[task]["snapshot_sha256"], "Record snapshot differs from fixture")
         grader = mapping(row.get("grader_manifest"), "grader_manifest")
-        expected_files = GRADER_FILES_V2 if controls.get("suite") == "real-repo-v2" else GRADER_FILES
-        require(set(grader) == {f"grading/{task}/{name}" for name in expected_files[task]}, "Grader control file set is incomplete or unexpected")
+        expected_files = spec["grader_files"][task]
+        require(set(grader) == set(expected_files), "Grader control file set is incomplete or unexpected")
         task_control["grader_manifest"] = {name: digest_value(value, "grader digest") for name, value in grader.items()}
+        if not spec["legacy"]:
+            require(task_control["grader_manifest"] == expected_files, "Trial grader files differ from the frozen suite")
         if task in task_controls:
             require(task_control == task_controls[task], "Frozen task controls changed between trials")
         task_controls[task] = task_control
@@ -340,6 +425,11 @@ def build_payloads(report, benchmark_id, report_path):
             payloads[-1]["metrics"]["adjudication"] = adjudication
         if tool_runtime is not None:
             payloads[-1]["metrics"]["tool_runtime_evidence"] = tool_runtime
+        if not spec["legacy"]:
+            payloads[-1]["metrics"]["suite"] = {field: spec[field] for field in ("held_out", "allow_draft_suite")}
+            payloads[-1]["metrics"]["suite"]["suite_id"] = spec["suite"]
+            if "context" in row:
+                payloads[-1]["metrics"]["context"] = context_metrics(row["context"])
     require(number(progress.get("infrastructure_outcomes"), "progress.infrastructure_outcomes", integer=True, required=True)
             == sum(payload["metrics"]["outcome"] == "infrastructure_error" for payload in payloads), "Infrastructure outcome count disagrees with records")
     # Serialization is part of prevalidation, before any daemon mutation.
@@ -429,6 +519,8 @@ def main(argv=None):
         "usage_may_be_partial_attempts": sum(payload["metrics"]["usage_may_be_partial"] for payload in payloads),
         "usage_note": "Reported error-run usage and incomplete tool counts can be lower bounds; coverage is not complete billing.",
     }
+    if "suite" in payloads[0]["metrics"]:
+        summary["suite"] = payloads[0]["metrics"]["suite"]
     if args.apply:
         for payload in payloads:
             try:

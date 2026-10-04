@@ -223,11 +223,87 @@ def source_only_snapshot(database, snapshot):
     return counts, schema, aliases
 
 
+def current_release(prepared):
+    return (prepared.get("engram_sha256") == runner.digest(runner.ENGRAM)
+            and prepared.get("daemon_sha256") == runner.digest(runner.DAEMON))
+
+
 def ensure_release(prepared):
-    if (prepared.get("engram_sha256") != runner.digest(runner.ENGRAM)
-            or prepared.get("daemon_sha256") != runner.digest(runner.DAEMON)):
-        raise ValueError("Prepared fixture belongs to another Engram release")
+    if not current_release(prepared):
+        raise ValueError("Prepared fixture belongs to another Engram release; for fixtures built from local "
+                         "repositories, refresh the snapshot with --prepare-only --refresh-snapshots")
     return prepared
+
+
+def refresh_snapshot(task, args):
+    """Re-index a prepared fixture with the pinned release, keeping its work tree and dependency build.
+
+    The earlier snapshot, seed state and ready.json move to superseded/ as
+    evidence. Returns the earlier ready.json digest, or None when the fixture
+    already belongs to this release.
+    """
+    destination = args.data / "fixtures" / task["id"]
+    ready = validate_fixture(task, destination)
+    if current_release(ready):
+        return None
+    previous = runner.digest(destination / "ready.json")
+    archive = destination / "superseded" / (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-"
+                                            + str(ready.get("build_id") or "unknown")[:12])
+    archive.mkdir(parents=True)
+    for name in ("snapshot.sqlite", "seed", "ready.json"):
+        if (destination / name).exists():
+            (destination / name).rename(archive / name)
+    started = time.monotonic()
+    snapshot = index_source_snapshot(destination, destination / "work", ready["project_id"])
+    refresh = {"refreshed_at": now(), "previous_ready_sha256": previous, "previous_snapshot_sha256": ready["snapshot_sha256"],
+               "previous_build_id": ready.get("build_id"), "previous_engram_sha256": ready.get("engram_sha256"),
+               "superseded": str(archive.relative_to(destination))}
+    refreshed = {**ready, "snapshot_sha256": runner.digest(destination / "snapshot.sqlite"), **snapshot,
+                 "index_seconds": round(time.monotonic() - started, 3),
+                 "engram_sha256": runner.digest(runner.ENGRAM), "daemon_sha256": runner.digest(runner.DAEMON),
+                 "snapshot_refreshes": [*ready.get("snapshot_refreshes", []), refresh]}
+    runner.write_json(destination / "ready.json", refreshed)
+    validate_fixture(task, destination)
+    print(f"REFRESHED {task['id']} index={refreshed['index_seconds']}s build={str(snapshot['build_id'])[:12]}", flush=True)
+    return previous
+
+
+def grader_proof_state(args):
+    """Whether the grader proof is valid for the fixtures as they are now."""
+    suite = suite_of(args)
+    if not (args.data / grader_preflight.PROOF).exists():
+        return "absent"
+    try:
+        grader_preflight.validate_proof(args.data, suite.root, suite.id, suite.catalog["tasks"])
+    except (OSError, ValueError, KeyError) as error:
+        return f"invalid: {error}"
+    return "valid"
+
+
+def rebind_grader_proof(args, refreshed):
+    """Point a valid grader proof at refreshed fixtures whose work trees did not change.
+
+    Grading runs on the fixture work tree, which a snapshot refresh leaves
+    untouched (validated HEAD, clean tree and lockfiles). Only the entries of
+    refreshed fixtures change, each only if the proof was bound to the exact
+    ready.json that was refreshed. The earlier proof is kept beside it.
+    """
+    path = args.data / grader_preflight.PROOF
+    proof = json.loads(path.read_text())
+    for task_id, previous in refreshed.items():
+        if proof["fixtures"].get(task_id) != previous:
+            raise ValueError(f"The grader proof was not bound to {task_id}'s refreshed fixture; rerun the grader preflight")
+    shutil.copy2(path, args.data / f"grader-preflight.superseded-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.json")
+    current = {task_id: runner.digest(args.data / "fixtures" / task_id / "ready.json") for task_id in refreshed}
+    proof["fixtures"].update(current)
+    proof.setdefault("rebinds", []).append({
+        "at": now(), "reason": "snapshot refresh for another Engram release; work trees, lockfiles and dependency builds unchanged",
+        "engram_sha256": runner.digest(runner.ENGRAM), "daemon_sha256": runner.digest(runner.DAEMON),
+        "tasks": {task_id: {"from_ready_sha256": previous, "to_ready_sha256": current[task_id]}
+                  for task_id, previous in sorted(refreshed.items())}})
+    runner.write_json(path, proof)
+    suite = suite_of(args)
+    grader_preflight.validate_proof(args.data, suite.root, suite.id, suite.catalog["tasks"])
 
 
 def prepare_fixture(task, args):
@@ -667,13 +743,31 @@ def collect(args, suite, catalog, tasks):
     planned = schedule(tasks, repetitions(catalog))
     progress(args, state="preparing", suite=suite.id, catalog=str(suite.catalog_path), agent=agent_name(args),
              data=str(args.data), active=str(args.active), planned=len(planned), started_at=now())
+    refresh = getattr(args, "refresh_snapshots", False)
+    if refresh:
+        if any((args.data / name).exists() for name in ("manifest.json", "trials", "records.jsonl")):
+            raise ValueError("Snapshots cannot be refreshed after the collection has started")
+        proof_before = grader_proof_state(args)
+    refreshed = {}
     for task in tasks:
         print("PREPARE " + task["id"], flush=True)
         if getattr(args, "check_only", False) and not (args.data / "fixtures" / task["id"] / "ready.json").exists():
             raise ValueError(f"Fixture {task['id']} is not prepared; run --prepare-only first")
+        if refresh and (args.data / "fixtures" / task["id"] / "ready.json").exists():
+            previous = refresh_snapshot(task, args)
+            if previous is not None:
+                refreshed[task["id"]] = previous
         prepare_fixture(task, args)
         if agent_name(args) == "codex":
             codex_arm.validate_checkout(args.data / "fixtures" / task["id"] / "work")
+    if refresh:
+        if not refreshed:
+            print(f"GRADER-PROOF unchanged ({proof_before}); no snapshot needed a refresh", flush=True)
+        elif proof_before == "valid":
+            rebind_grader_proof(args, refreshed)
+            print(f"GRADER-PROOF rebound for {len(refreshed)} refreshed fixture(s): {', '.join(sorted(refreshed))}", flush=True)
+        else:
+            print(f"GRADER-PROOF not rebound ({proof_before}); run preflight_real_repo_graders.py before collection", flush=True)
     if args.prepare_only:
         progress(args, state="prepared")
         return
@@ -734,6 +828,10 @@ def main(argv=None):
     parser.add_argument("--build-jobs", type=int, default=4, help="cargo jobs for fixture dependency builds")
     parser.add_argument("--engram-release", type=Path, required=True)
     parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--refresh-snapshots", action="store_true",
+                        help="with --prepare-only: re-index prepared local fixtures whose snapshot another Engram release built, "
+                             "keeping work trees and dependency builds; earlier snapshots move to superseded/, and a grader "
+                             "proof valid before the refresh is rebound to the refreshed fixtures")
     parser.add_argument("--check-only", action="store_true",
                         help="validate fixtures, preflight proofs and frozen controls, then exit without any attempt")
     parser.add_argument("--progress", type=Path, help="progress JSON for a detached collection; also takes the collector lock")
@@ -765,6 +863,11 @@ def main(argv=None):
         parser.error("--allow-draft-suite applies only to a suite marked " + DRAFT_STATUS)
     if args.prepare_only and args.check_only:
         parser.error("--prepare-only and --check-only are exclusive")
+    if args.refresh_snapshots and not args.prepare_only:
+        parser.error("--refresh-snapshots requires --prepare-only")
+    if args.refresh_snapshots and (args.seed_fixtures is not None or "seed_fixtures" in suite.defaults):
+        parser.error("--refresh-snapshots applies to fixtures built from local repositories; "
+                     "prepare seed-fixture collections into a new data root")
     if args.agent == "codex":
         if not args.codex_model:
             parser.error("--codex-model is required with --agent codex")

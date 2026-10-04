@@ -27,7 +27,8 @@ SCRIPT_NAMES = {"run_real_repo_followup.py", "run_real_repo_pilot.py", "real_rep
                 "capture_eval.py", "preflight_real_repo_runtime.py", "real_repo_codex.py",
                 "preflight_real_repo_codex.py", "preflight_real_repo_graders.py"}
 # Options added by the suite-generic runner; they do not exist in the v2-only one.
-NEW_OPTIONS = {"catalog", "allow_draft_suite", "source_root", "build_jobs", "progress", "check_only", "suite"}
+NEW_OPTIONS = {"catalog", "allow_draft_suite", "source_root", "build_jobs", "progress", "check_only", "suite",
+               "refresh_snapshots"}
 
 
 def observe(followup):

@@ -21,8 +21,10 @@ TESTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TESTS.parent / "scripts"))
 sys.path.insert(0, str(TESTS))
 sys.dont_write_bytecode = True
+import import_real_repo_pilot as importer  # noqa: E402
 import launch_real_repo_collection as launcher  # noqa: E402
 import preflight_real_repo_graders as graders  # noqa: E402
+import report_real_repo_pilot as reporter  # noqa: E402
 import real_repo_v2_observation as v2_observation  # noqa: E402
 import run_real_repo_followup as followup  # noqa: E402
 
@@ -245,7 +247,7 @@ class LocalSuiteTestCase(unittest.TestCase):
         self.source.mkdir(parents=True)
         git(self.source, "init", "-q")
         (self.source / "README.md").write_text("synthetic repository\n")
-        (self.source / ".gitignore").write_text("ignored-but-tracked.txt\n")
+        (self.source / ".gitignore").write_text("ignored-but-tracked.txt\n/target\n")
         (self.source / "ignored-but-tracked.txt").write_text("tracked despite the ignore rule\n")
         (self.source / ".env").write_text("SYNTHETIC_SECRET=never-copied\n")
         (self.source / "tool.sh").write_text("#!/bin/sh\necho tool\n")
@@ -306,9 +308,9 @@ class LocalSuiteTestCase(unittest.TestCase):
     def cli(self, state, *arguments):
         return fake_index(state, *arguments) if arguments[0] == "index" else "{}"
 
-    def collector(self, *extra):
+    def collector(self, *extra, release=None):
         argv = ["--catalog", str(self.catalog), "--data", str(self.data), "--active", str(self.active),
-                "--source-root", str(self.sources), "--engram-release", str(self.release), *extra]
+                "--source-root", str(self.sources), "--engram-release", str(release or self.release), *extra]
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             followup.main(argv)
@@ -506,6 +508,25 @@ class FakeAgentCollectionTests(LocalSuiteTestCase):
         self.assertIn("START t1-r2-brain", resumed)
         self.assertNotIn("t1-r1-", resumed)
 
+    def test_a_complete_collection_reports_and_imports_from_its_frozen_catalog(self):
+        self.collector("--allow-draft-suite")
+        output = self.root / "published"
+        progress = reporter.generate_report(self.data, output)
+        self.assertEqual((progress["status"], progress["planned_runs"], progress["completed_records"]), ("complete", 6, 6))
+        results = json.loads((output / "results.json").read_text())
+        self.assertEqual(results["suite"]["task_ids"], ["t1"])
+        self.assertIs(results["suite"]["allow_draft_suite"], True)
+        self.assertEqual(set(results["suite"]["grader_files"]["t1"]),
+                         {f"grading/t1/{name}" for name in ("grade.py", "preflight.json", "preflight.py")})
+        readme = (output / "README.md").read_text()
+        self.assertTrue(readme.startswith("# Real-repository task benchmark: synthetic-heldout\n"))
+        self.assertIn("## Context delivery and reads", readme)
+        payloads = importer.build_payloads(importer.load_report(output / "results.json"), "synthetic", "/public/results.json")
+        self.assertEqual(len(payloads), 6)
+        self.assertEqual(payloads[0]["metrics"]["suite"], {"suite_id": "synthetic-heldout", "held_out": False,
+                                                            "allow_draft_suite": True})
+        self.assertTrue(all(payload["success"] for payload in payloads))
+
     def test_check_only_validates_without_freezing_or_running(self):
         output = self.collector("--allow-draft-suite", "--check-only")
         status = json.loads(output.strip().splitlines()[-1])
@@ -541,6 +562,95 @@ class FakeAgentCollectionTests(LocalSuiteTestCase):
             self.collector("--allow-draft-suite", "--check-only")
         with self.assertRaisesRegex(RuntimeError, "refusing a silent retry"):
             self.collector("--allow-draft-suite", "--limit", "1")
+
+
+class SnapshotRefreshTests(LocalSuiteTestCase):
+    """A new Engram release re-indexes prepared fixtures without rebuilding them."""
+
+    def setUp(self):
+        super().setUp()
+        self.collector("--prepare-only")
+        self.assertEqual(self.grader_preflight()[0], 0)
+        self.fixture = self.data / "fixtures/t1"
+        # Stand-ins for a dependency build and cargo home that a refresh must keep.
+        (self.fixture / "work/target").mkdir()
+        (self.fixture / "work/target/artifact").write_text("built once\n")
+        (self.fixture / "cargo-home/registry").mkdir(parents=True)
+        self.newer = self.root / "release-newer"
+        (self.newer / "bin").mkdir(parents=True)
+        for name in ("engram", "engramd"):
+            (self.newer / "bin" / name).write_text(f"synthetic {name} with call-site indexing\n")
+
+    def proof_valid(self):
+        return graders.validate_proof(self.data, self.suite_root, "synthetic-heldout", [self.task])
+
+    def test_refresh_reindexes_with_the_new_release_and_rebinds_the_grader_proof(self):
+        before = json.loads((self.fixture / "ready.json").read_text())
+        before_digest = runner.digest(self.fixture / "ready.json")
+        artifact = (self.fixture / "work/target/artifact").stat()
+        with mock.patch.object(followup, "prepare_rust_dependencies", side_effect=AssertionError("rebuilt")), \
+             mock.patch.object(followup, "export_base", side_effect=AssertionError("re-exported")):
+            output = self.collector("--prepare-only", "--refresh-snapshots", release=self.newer)
+        self.assertIn("REFRESHED t1", output)
+        self.assertIn("GRADER-PROOF rebound for 1 refreshed fixture(s): t1", output)
+        ready = json.loads((self.fixture / "ready.json").read_text())
+        self.assertEqual(ready["engram_sha256"], runner.digest(self.newer / "bin/engram"))
+        self.assertEqual(ready["daemon_sha256"], runner.digest(self.newer / "bin/engramd"))
+        for unchanged in ("fixture_head", "project_id", "lockfile_sha256", "base_commit", "setup_seconds"):
+            self.assertEqual(ready[unchanged], before[unchanged], unchanged)
+        refresh = ready["snapshot_refreshes"][-1]
+        self.assertEqual((refresh["previous_ready_sha256"], refresh["previous_engram_sha256"]),
+                         (before_digest, before["engram_sha256"]))
+        archive = self.fixture / refresh["superseded"]
+        self.assertEqual(json.loads((archive / "ready.json").read_text()), before)
+        self.assertEqual(runner.digest(archive / "snapshot.sqlite"), before["snapshot_sha256"])
+        self.assertTrue((archive / "seed").is_dir())
+        after = (self.fixture / "work/target/artifact").stat()
+        self.assertEqual((after.st_ino, after.st_mtime_ns), (artifact.st_ino, artifact.st_mtime_ns))
+        self.assertTrue((self.fixture / "cargo-home/registry").is_dir())
+        proof = self.proof_valid()
+        self.assertEqual(proof["fixtures"]["t1"], runner.digest(self.fixture / "ready.json"))
+        self.assertEqual(proof["rebinds"][-1]["tasks"]["t1"]["from_ready_sha256"], before_digest)
+        self.assertEqual(len(list(self.data.glob("grader-preflight.superseded-*.json"))), 1)
+        # The refreshed fixtures pass the collection check under the new release.
+        status = json.loads(self.collector("--allow-draft-suite", "--check-only", release=self.newer).strip().splitlines()[-1])
+        self.assertEqual(status["status"], "ready")
+
+    def test_fixtures_of_the_current_release_are_left_alone(self):
+        before = (self.fixture / "ready.json").read_text()
+        output = self.collector("--prepare-only", "--refresh-snapshots")
+        self.assertNotIn("REFRESHED", output)
+        self.assertIn("GRADER-PROOF unchanged (valid)", output)
+        self.assertEqual((self.fixture / "ready.json").read_text(), before)
+        self.assertFalse((self.fixture / "superseded").exists())
+        self.assertFalse(list(self.data.glob("grader-preflight.superseded-*.json")))
+
+    def test_a_proof_invalid_before_the_refresh_is_not_rebound(self):
+        path = self.data / "grader-preflight.json"
+        proof = json.loads(path.read_text())
+        path.write_text(json.dumps({**proof, "status": "fail"}))
+        output = self.collector("--prepare-only", "--refresh-snapshots", release=self.newer)
+        self.assertIn("REFRESHED t1", output)
+        self.assertIn("GRADER-PROOF not rebound (invalid:", output)
+        self.assertNotIn("rebinds", json.loads(path.read_text()))
+        with self.assertRaisesRegex(ValueError, "Grader preflight"):
+            self.proof_valid()
+
+    def test_a_stale_fixture_names_the_refresh_and_refresh_has_limits(self):
+        with self.assertRaisesRegex(ValueError, "another Engram release.*--refresh-snapshots"):
+            self.collector("--prepare-only", release=self.newer)
+        for argv, message in ((["--refresh-snapshots"], "requires --prepare-only"),):
+            stderr = io.StringIO()
+            with self.subTest(argv=argv), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+                self.collector(*argv)
+            self.assertIn(message, stderr.getvalue())
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+            followup.main(["--engram-release", str(self.release), "--prepare-only", "--refresh-snapshots"])
+        self.assertIn("applies to fixtures built from local repositories", stderr.getvalue())
+        (self.data / "manifest.json").write_text("{}")
+        with self.assertRaisesRegex(ValueError, "cannot be refreshed after the collection has started"):
+            self.collector("--prepare-only", "--refresh-snapshots", release=self.newer)
 
 
 FAKE_COLLECTOR = r'''#!{python}

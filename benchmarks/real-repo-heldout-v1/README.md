@@ -203,6 +203,29 @@ python3 scripts/launch_real_repo_collection.py start \
 python3 scripts/launch_real_repo_collection.py status --data /private/tmp/erp26-heldout-data --tail 20
 ```
 
+To collect with a newer Engram release than the one that prepared the
+fixtures, refresh the snapshots instead of preparing again:
+
+```sh
+NEW=~/.local/share/engram/releases/NEW_RELEASE_HASH
+caffeinate -dims nice -n 10 python3 scripts/run_real_repo_followup.py \
+  --catalog benchmarks/real-repo-heldout-v1/catalog.json \
+  --data /private/tmp/erp26-heldout-data --active /private/tmp/erp26work-heldout-active \
+  --engram-release "$NEW" --prepare-only --refresh-snapshots
+python3 scripts/preflight_real_repo_runtime.py --data /private/tmp/erp26-heldout-data \
+  --active /private/tmp/erp26work-heldout-active --engram-release "$NEW" --supersede
+```
+
+The refresh re-indexes each fixture whose snapshot another release built. It
+keeps the work tree, the Rust build and the cargo home, and moves the earlier
+snapshot, seed state and `ready.json` to the fixture's `superseded/` directory.
+Grading runs on the work tree, which the refresh leaves unchanged, so a grader
+proof that was valid before the refresh is rebound to the refreshed fixtures
+without regrading. The earlier proof is kept, and the proof records each
+rebind. A proof that was not valid before is left alone, and collection refuses
+until the grader preflight runs again. The refresh is refused once the
+collection has started. Then launch with the new release.
+
 The runtime proof's identity includes the coding environment, so the launcher
 gives the collector the `PATH`, `HOME`, `USER`, `LOGNAME` and `LANG` recorded in
 that proof. It also includes the checkout path, the runner scripts and the
@@ -212,6 +235,32 @@ earlier evidence as `runtime-preflight.superseded-<time>` and clears the active
 root it left; it is refused once the collection has started. The grader proof
 binds file contents, not paths, and stays valid while the fixtures, grading
 files and grader preflight script are unchanged.
+
+### Report and import
+
+[`report_real_repo_pilot.py`](../../scripts/report_real_repo_pilot.py) and
+[`import_real_repo_pilot.py`](../../scripts/import_real_repo_pilot.py) read
+the suite from the collection's frozen catalog. The v1 and v2 outputs are
+unchanged. For this suite the report states that it is held out and whether it
+was collected as a draft. It plans the matrix from the catalog. Failures and
+infrastructure attempts stay in every denominator, and the paired semantics are
+unchanged: both-pass savings, all-attempt totals, and token categories for
+both. It adds context delivery per arm. From hook-confirmed Brain contexts it
+counts pointer lines, the ranged share and related-use pointers and items. From
+the traces it counts Read requests, ranged Read requests and the bytes of text
+Read returned. It also compares Read calls, Read bytes and cache-read tokens
+over both-pass pairs. The line-range hypothesis is fewer Read bytes and fewer
+cache-read tokens with Engram at equal or better correctness. Only counts are
+published. The importer checks the matrix, the frozen grader digests, the
+grader-proof hash and the draft flag before writing anything. Without
+`--apply` it only validates.
+
+```sh
+python3 scripts/report_real_repo_pilot.py --data /private/tmp/erp26-heldout-data \
+  --output docs/perf-evidence/DATE-real-repo-heldout
+python3 scripts/import_real_repo_pilot.py \
+  --report docs/perf-evidence/DATE-real-repo-heldout/results.json --benchmark-id real-repo-heldout-DATE
+```
 
 ### Claude session isolation
 

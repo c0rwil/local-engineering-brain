@@ -13,8 +13,13 @@ from pathlib import Path
 import re
 
 from real_repo_adjudications import AdjudicationError, EXPLANATIONS, apply_adjudication, load_adjudications
-from real_repo_metrics import MEASURES, RECORD_CLASSIFICATION_REVISION, apply_tool_runtime_checks, classify_record, paired_summary
+from real_repo_context import DELIVERY_FIELDS as CONTEXT_DELIVERY_FIELDS, READ_FIELDS, share, trial_context
+from real_repo_metrics import (MEASURES, RECORD_CLASSIFICATION_REVISION, TOKEN_FIELDS, _delta, apply_tool_runtime_checks,
+                               classify_record, paired_summary)
 
+# v1 manifests carry no suite; v1 and v2 keep their fixed task tables and wording.
+LEGACY_SUITES = (None, "real-repo-v1", "real-repo-v2")
+GRADER_SUFFIXES = (".py", ".rs", ".ts", ".json")
 TASK_NAMES = {
     "r01_guide_hot_path": "Skip task guides in the action hot path",
     "r02_lean_task_status": "Lean phone-task status polling",
@@ -29,7 +34,13 @@ MANIFEST_KEYS = (
     "known_scope_limits",
     "suite", "controls_sha256", "runner_library_sha256", "claude_sha256", "runtime_preflight_sha256",
     "agent", "codex_version", "codex_sha256", "codex_hook_trust", "codex_config_sha256", "codex_auth",
+    # Catalog-selected suites (absent from v1/v2 manifests).
+    "allow_draft_suite", "suite_status", "fixture_source", "grader_preflight_sha256",
 )
+CONTEXT_MEASURES = (*READ_FIELDS, *CONTEXT_DELIVERY_FIELDS)
+PAIRED_CONTEXT_MEASURES = ("read_calls", "ranged_read_calls", "read_result_bytes")
+SAFE_LABEL = re.compile(r"[a-z0-9][a-z0-9_-]{0,127}")
+COUNT_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
 MODEL_NUMBERS = (
     "inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens",
     "webSearchRequests", "costUSD", "contextWindow", "maxOutputTokens",
@@ -50,6 +61,51 @@ def grade_status(value):
     return value if value in {"pass", "fail"} else "unknown"
 
 
+def suite_definition(data, manifest_raw):
+    """The planned matrix and public task metadata of a catalog-selected suite.
+
+    v1 and v2 collections return None and keep their fixed task tables. Other
+    suites are read from the frozen protocol catalog and the manifest's suite
+    file digests, so the published grader file set is the one actually frozen.
+    """
+    suite_id = manifest_raw.get("suite")
+    if suite_id in LEGACY_SUITES:
+        return None
+    catalog = json.loads((data / "protocol/suite/catalog.json").read_text())
+    if catalog.get("suite_id") != suite_id:
+        raise ValueError("The frozen protocol catalog does not match the manifest suite")
+    selected = catalog.get("pilot_task_ids") or [task["id"] for task in catalog["tasks"]]
+    tasks = [task for task in catalog["tasks"] if task["id"] in selected]
+    if not tasks or any(not isinstance(task.get("id"), str) or not SAFE_LABEL.fullmatch(task["id"]) for task in tasks):
+        raise ValueError("The frozen protocol catalog has no valid task identities")
+    suite_files = (manifest_raw.get("controls") or {}).get("suite_files") or {}
+    repetitions = manifest_raw.get("repetitions", 3)
+    return {
+        "suite_id": suite_id,
+        "held_out": all(str(task.get("selection", "")).startswith("heldout") for task in tasks),
+        "catalog_status": catalog.get("execution_status"),
+        "allow_draft_suite": manifest_raw.get("allow_draft_suite") is True,
+        "repetitions": repetitions,
+        "planned_runs": len(tasks) * repetitions * 2,
+        "task_ids": [task["id"] for task in tasks],
+        "task_titles": {task["id"]: str(task.get("title", task["id"]))[:200] for task in tasks},
+        "task_exercises": {task["id"]: [value for value in task.get("exercises", []) if isinstance(value, str) and SAFE_LABEL.fullmatch(value)]
+                           for task in tasks},
+        "grader_files": {task["id"]: {path: digest for path, digest in sorted(suite_files.items())
+                                      if path.startswith(f"grading/{task['id']}/") and len(Path(path).parts) == 3
+                                      and Path(path).suffix in GRADER_SUFFIXES and isinstance(digest, str)
+                                      and re.fullmatch(r"[0-9a-f]{64}", digest)}
+                         for task in tasks},
+    }
+
+
+def redact_context(context):
+    """Only the numeric context measurements and their completeness flag."""
+    result = {name: number(context.get(name)) for name in CONTEXT_MEASURES}
+    result["read_measurement_complete"] = context.get("read_measurement_complete") is True
+    return result
+
+
 def redact_grade(grade):
     grade = grade if isinstance(grade, dict) else {}
     checks = []
@@ -63,7 +119,7 @@ def redact_grade(grade):
     return {"status": grade_status(grade.get("status")), "checks": checks}
 
 
-def redact_record(record):
+def redact_record(record, context=None):
     record = classify_record(record)
     if not isinstance(record.get("task_id"), str) or not record["task_id"]:
         raise ValueError("Missing task identifier")
@@ -123,6 +179,8 @@ def redact_record(record):
         and isinstance(digest, str) and len(digest) == 64
         and all(character in "0123456789abcdef" for character in digest)
     }
+    if context is not None:
+        result["context"] = redact_context(context)
     return result
 
 
@@ -137,7 +195,61 @@ def redact_fixture(fixture, suite=None):
         # V2 replaces setup/index/dependency timings, but carries this field
         # forward from the seed pilot when cloning its prepared caches.
         result["inherited_seed_private_dependency_seconds"] = result.pop("private_dependency_seconds")
+    elif suite not in LEGACY_SUITES:
+        # Fixtures built from the operator's repositories: no inherited caches.
+        result.pop("private_dependency_seconds")
+        result["export_seconds"] = number(fixture.get("export_seconds"))
+        reuse = fixture.get("dependency_reuse")
+        result["dependency_reuse"] = reuse if isinstance(reuse, str) and SAFE_LABEL.fullmatch(reuse) else None
+        build = fixture.get("build_id")
+        result["engram_build_id"] = build if isinstance(build, str) and re.fullmatch(r"[0-9a-f]{12,64}", build) else None
+        result["snapshot_schema_version"] = number(fixture.get("schema_version"))
+        result["snapshot_refreshes"] = len(fixture.get("snapshot_refreshes", []))
     return result
+
+
+def context_summary(records):
+    """Per-arm context totals, the brain arm's ranged-pointer share, and both-pass paired Read deltas."""
+    by_arm = {}
+    for arm in ("off", "brain"):
+        contexts = [record["context"] for record in records if record["arm"] == arm and "context" in record]
+        totals = sums_with_coverage(contexts, CONTEXT_MEASURES)
+        complete_reads = [context for context in contexts if context["read_measurement_complete"]]
+        by_arm[arm] = {
+            "attempts": len(contexts), "read_complete_attempts": len(complete_reads), "totals": totals,
+            "ranged_pointer_share": share(totals["ranged_pointer_lines"]["observed_total"], totals["pointer_lines"]["observed_total"]),
+            "read_bytes_per_call": share(sum(c["read_result_bytes"] for c in complete_reads) if complete_reads else None,
+                                         sum(c["read_calls"] for c in complete_reads) if complete_reads else None),
+        }
+    contexts = {(record["task_id"], record["repetition"], record["arm"]): record.get("context") for record in records}
+    paired = {}
+    for pair in paired_summary(records)["pairs"]:
+        if pair["status"] != "both_pass":
+            continue
+        off, brain = (contexts.get((pair["task_id"], pair["repetition"], arm)) for arm in ("off", "brain"))
+        for name in PAIRED_CONTEXT_MEASURES:
+            valid = (off is not None and brain is not None and off["read_measurement_complete"] and brain["read_measurement_complete"]
+                     and off[name] is not None and brain[name] is not None)
+            for key in ("All tasks", pair["task_id"]):
+                entry = paired.setdefault(key, {}).setdefault(name, {"pairs": [], "missing_pair_count": 0})
+                if valid:
+                    entry["pairs"].append((off[name], brain[name]))
+                else:
+                    entry["missing_pair_count"] += 1
+    both_pass = []
+    for key, metrics in paired.items():
+        both_pass.append({"task_id": key, "metrics": {
+            name: {"pair_count": len(value["pairs"]), "missing_pair_count": value["missing_pair_count"],
+                   "comparison": _delta(sum(p[0] for p in value["pairs"]), sum(p[1] for p in value["pairs"])) if value["pairs"] else None}
+            for name, value in metrics.items()}})
+    both_pass.sort(key=lambda item: (item["task_id"] != "All tasks", item["task_id"]))
+    return {"by_arm": by_arm, "both_pass": both_pass,
+            "definitions": {
+                "delivered_contexts": "Brain contexts confirmed delivered by hook receipts.",
+                "pointer_lines": "Source-map pointer lines in delivered contexts; ranged ones name a line span.",
+                "related_use_items": "Delivered context items of type code_use (related-use cues).",
+                "read_result_bytes": "UTF-8 bytes of text returned by native Read requests; Bash file reads are not counted.",
+                "ranged_read_calls": "Read requests that named an offset or limit."}}
 
 
 def sums_with_coverage(rows, names):
@@ -152,15 +264,93 @@ def format_number(value, *, decimals=0):
     return "unavailable" if value is None else f"{value:,.{decimals}f}"
 
 
-def markdown(summary, manifest, fixtures, artifacts=()):
+def suite_title(suite):
+    if suite["held_out"]:
+        return "# Held-out real-repository task benchmark"
+    return f"# Real-repository task benchmark: {suite['suite_id']}"
+
+
+def suite_statement(suite):
+    """What kind of suite this is, and whether it was collected as a draft."""
+    count = COUNT_WORDS.get(len(suite["task_ids"]), str(len(suite["task_ids"])))
+    if suite["held_out"]:
+        text = (f"**Held-out suite `{suite['suite_id']}`.** Its {count} historical tasks were chosen outside the development "
+                "tasks that informed Engram, to test whether its context changes generalize.")
+    else:
+        text = f"**Suite `{suite['suite_id']}`** with {count} historical tasks."
+    if suite["allow_draft_suite"]:
+        text += (f" It was collected while its catalog was still `{suite['catalog_status']}`, with `--allow-draft-suite`: "
+                 "the operator review in its README, including confirmation that no task informed Engram development, "
+                 "was still pending, so the held-out status is provisional.")
+    else:
+        text += f" Catalog status at collection: `{suite['catalog_status']}`."
+    return text
+
+
+def format_share(value):
+    return "unavailable" if value is None else f"{100 * value:.1f}%"
+
+
+def context_markdown(summary, task_name):
+    """Context delivered per arm and the paired Read comparison for the line-range hypothesis."""
+    context = summary["context_delivery"]
+    lines = [
+        "", "## Context delivery and reads", "",
+        "Delivered contexts are Brain contexts confirmed by hook receipts. Pointer lines are their source-map entries; "
+        "a ranged pointer names a line span. Related-use items are delivered `code_use` items. Read counts native Read "
+        "requests over all completed attempts, those that named an offset or limit, and the UTF-8 bytes of text they "
+        "returned; file reads through Bash are not counted. Off attempts have no Engram context by design.", "",
+        "| Arm | Delivered contexts | Pointer lines | Ranged pointers | Related-use pointers (items) | Read calls | Ranged Read calls | Read text bytes |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+
+    def total(block, name):
+        coverage = block["totals"][name]
+        return format_number(coverage["observed_total"]) + (" (partial)" if coverage["partial"] else "")
+
+    arms = context["by_arm"]
+    for arm in ("off", "brain"):
+        block = arms[arm]
+        ranged = total(block, "ranged_pointer_lines") + f" ({format_share(block['ranged_pointer_share'])})"
+        related = total(block, "related_use_pointer_lines") + f" ({total(block, 'related_use_items')})"
+        lines.append(f"| {arm} | {total(block, 'delivered_contexts')} | {total(block, 'pointer_lines')} | {ranged} | {related} | "
+                     f"{total(block, 'read_calls')} | {total(block, 'ranged_read_calls')} | {total(block, 'read_result_bytes')} |")
+    lines += [
+        "", f"Read totals are complete for {arms['off']['read_complete_attempts']}/{arms['off']['attempts']} off and "
+        f"{arms['brain']['read_complete_attempts']}/{arms['brain']['attempts']} brain attempts; partial cells include the others as observed.", "",
+        "The line-range hypothesis is fewer Read bytes and fewer cache-read tokens with Engram at equal or better correctness. "
+        "The comparison uses the both-pass pairs above, with complete Read measurements in both arms; positive percentages "
+        "mean less with Engram. Correctness is in the paired results: a reduction only counts where both arms passed.", "",
+        "| Both-pass comparison | Read calls | Ranged Read calls | Read text bytes | Cache-read tokens |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    cache = {"All tasks": summary["both_pass"]["aggregate"]["metrics"]["cache_read_input_tokens"],
+             **{item["task_id"]: item["metrics"]["cache_read_input_tokens"] for item in summary["both_pass"]["per_task"]}}
+
+    def reduction(metric):
+        if metric is None:
+            return "undefined (n=0)"
+        percent = metric["comparison"]["reduction_percent"] if metric["comparison"] is not None else None
+        return (f"{percent:+.1f}%" if percent is not None else "undefined") + f" (n={metric['pair_count']})"
+
+    for comparison in context["both_pass"] or [{"task_id": "All tasks", "metrics": {}}]:
+        cells = [reduction(comparison["metrics"].get(name)) for name in PAIRED_CONTEXT_MEASURES]
+        lines.append(f"| {task_name(comparison['task_id'])} | " + " | ".join([*cells, reduction(cache.get(comparison["task_id"]))]) + " |")
+    return lines
+
+
+def markdown(summary, manifest, fixtures, artifacts=(), suite=None):
     progress = summary["progress"]
     followup = manifest.get("suite") == "real-repo-v2"
     codex = manifest.get("agent") == "codex"
     agent_line = (f"Codex CLI `{manifest.get('codex_version', 'unavailable')}`. " if codex
                   else f"Claude Code `{manifest.get('claude_version', 'unavailable')}`. ")
     treatment = "source-only automatic hooks and the engram MCP server" if codex else "source-only automatic hooks"
+    task_name = (lambda task_id: suite["task_titles"].get(task_id, task_id)) if suite else (lambda task_id: TASK_NAMES.get(task_id, task_id))
+    title = suite_title(suite) if suite else ("# Follow-up real-repository task benchmark" if manifest.get("suite") == "real-repo-v2" else "# Real-repository task pilot")
     lines = [
-        "# Follow-up real-repository task benchmark" if manifest.get("suite") == "real-repo-v2" else "# Real-repository task pilot", "",
+        title, "",
+        *([suite_statement(suite), ""] if suite else []),
         f"**{progress['status'].replace('_', ' ').capitalize()}: {progress['completed_records']}/{progress['planned_runs']} trial records completed.** "
         f"{progress['started_trials']} trial attempts started; {progress['coding_runs_started']} coding runs started; "
         f"{progress['in_progress_trials']} attempts remain active; {progress.get('interrupted_trials', 0)} were interrupted without a final record. "
@@ -192,7 +382,7 @@ def markdown(summary, manifest, fixtures, artifacts=()):
 
         success = "; ".join(f"{arms[arm]['grade_counts'].get('pass', 0)}/{arms[arm]['attempts']}" for arm in ("off", "brain"))
         behavioral = "; ".join(f"{task['behavioral_grade_counts'][arm].get('pass', 0)}/{arms[arm]['attempts']}" for arm in ("off", "brain"))
-        lines.append(f"| {TASK_NAMES.get(task['task_id'], task['task_id'])} | {behavioral} | {success} | {cell('total_tokens')} | {cell('tool_calls')} | {cell('agent_wall_seconds', 1)} |")
+        lines.append(f"| {task_name(task['task_id'])} | {behavioral} | {success} | {cell('total_tokens')} | {cell('tool_calls')} | {cell('agent_wall_seconds', 1)} |")
     lines += ["", "| Arm | Clean passes | Failures | Infrastructure / unscorable | Unknown | Attempts |", "|---|---:|---:|---:|---:|---:|"]
     for arm in ("off", "brain"):
         block = summary["all_attempts"][arm]
@@ -242,7 +432,21 @@ def markdown(summary, manifest, fixtures, artifacts=()):
             delta = metric["comparison"]
             percent = delta["reduction_percent"] if delta is not None else None
             cells.append((f"{percent:+.1f}%" if percent is not None else "undefined") + f" (n={metric['pair_count']})")
-        lines.append(f"| {TASK_NAMES.get(comparison['task_id'], comparison['task_id'])} | " + " | ".join(cells) + " |")
+        lines.append(f"| {task_name(comparison['task_id'])} | " + " | ".join(cells) + " |")
+    if suite:
+        lines += [
+            "", "The same both-pass pairs by provider token category. Cache reads dominate processed tokens and are priced "
+            "differently, so they are compared separately.", "",
+            "| Both-pass comparison | Ordinary input | Cache creation | Cache reads | Output |",
+            "|---|---:|---:|---:|---:|",
+        ]
+        for comparison in comparisons:
+            cells = []
+            for name in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"):
+                metric = comparison["metrics"][name]
+                percent = metric["comparison"]["reduction_percent"] if metric["comparison"] is not None else None
+                cells.append((f"{percent:+.1f}%" if percent is not None else "undefined") + f" (n={metric['pair_count']})")
+            lines.append(f"| {task_name(comparison['task_id'])} | " + " | ".join(cells) + " |")
     lines += [
         "", "## All-attempt resource per clean validated completion", "",
         "These quotients charge each arm's observed failed and infrastructure attempts to its clean validated completions. "
@@ -257,7 +461,15 @@ def markdown(summary, manifest, fixtures, artifacts=()):
             text = "undefined" if value["value"] is None else format_number(value["value"], decimals=decimals)
             cells.append(text + (" (partial coverage)" if value["partial"] else ""))
         lines.append(f"| {arm} | " + " | ".join(cells) + " |")
-    if followup:
+    if suite:
+        setup_description = ("Fixtures were exported from the operator's repositories at each base commit with `git archive`, "
+                             "committed as one-commit repositories, built offline and locked where they have Rust dependencies, "
+                             "and indexed by the pinned release. Export, index/snapshot and dependency-build seconds are parts "
+                             "of fixture setup and must not be added to it. A snapshot refreshed for a new release replaces "
+                             "the index/snapshot time only.")
+        setup_header = "| Task | Fixture setup seconds | Index/snapshot seconds | Dependency build seconds | Export seconds | Indexed source nodes |"
+        private_dependency_field = "export_seconds"
+    elif followup:
         setup_description = ("Collection fixture setup measures cloning the prepared seed caches and reindexing/snapshot work. "
                              "The index/snapshot portion overlaps setup and must not be added to it. "
                              "Inherited seed private-cache preparation belongs to the earlier pilot, not this collection.")
@@ -269,10 +481,11 @@ def markdown(summary, manifest, fixtures, artifacts=()):
         private_dependency_field = "private_dependency_seconds"
     lines += ["", "## Setup, indexing, and delivery", "", setup_description, "", setup_header, "|---|---:|---:|---:|---:|---:|"]
     for fixture in fixtures:
-        lines.append(f"| {TASK_NAMES.get(fixture['task_id'], fixture['task_id'])} | {format_number(fixture['setup_seconds'], decimals=1)} | {format_number(fixture['index_seconds'], decimals=1)} | {format_number(fixture['dependency_seconds'], decimals=1)} | {format_number(fixture[private_dependency_field], decimals=1)} | {format_number(fixture['source_counts']['nodes'])} |")
+        lines.append(f"| {task_name(fixture['task_id'])} | {format_number(fixture['setup_seconds'], decimals=1)} | {format_number(fixture['index_seconds'], decimals=1)} | {format_number(fixture['dependency_seconds'], decimals=1)} | {format_number(fixture[private_dependency_field], decimals=1)} | {format_number(fixture['source_counts']['nodes'])} |")
     fixture_overhead = summary["overhead"]["fixtures"]
-    setup_label = "Measured collection fixture setup" if followup else "Observed one-time fixture setup"
-    private_label = "Inherited seed private-cache preparation (earlier pilot)" if followup else "Additional private dependency preparation"
+    setup_label = "Measured fixture preparation" if suite else "Measured collection fixture setup" if followup else "Observed one-time fixture setup"
+    private_label = ("Export from the operator's repositories" if suite else "Inherited seed private-cache preparation (earlier pilot)"
+                     if followup else "Additional private dependency preparation")
     private_overhead = fixture_overhead[private_dependency_field]
     lines += ["", f"{setup_label}: {format_number(fixture_overhead['setup_seconds']['observed_total'], decimals=1)} seconds; "
               f"index/snapshot portion: {format_number(fixture_overhead['index_seconds']['observed_total'], decimals=1)} seconds. "
@@ -289,6 +502,8 @@ def markdown(summary, manifest, fixtures, artifacts=()):
         "", "Agent wall time includes hook processing; fixture setup, per-trial preparation, and private grading are reported separately. "
         "Agent tool-call counts do not include internal Engram hook/daemon operations. Context estimates and delivery counts are separate from provider token usage.",
     ]
+    if suite:
+        lines += context_markdown(summary, task_name)
     for field, title in (("infrastructure_attempts", "Separate infrastructure attempts"), ("preflight_runs", "Runtime, authentication, isolation, and toolchain preflights")):
         lines += [
             "", f"## {title}", "",
@@ -305,13 +520,21 @@ def markdown(summary, manifest, fixtures, artifacts=()):
                 cov = block["measurement_coverage"][name]
                 cells.append(format_number(block["totals_observed"][name], decimals=decimals) + (" (partial)" if cov.get("partial", 0) else "") + f" [{cov['available']}/{cov['total']} reported]")
             lines.append(f"| {arm} | {block['attempts']} | " + " | ".join(cells) + " |")
+    if suite:
+        tasks = COUNT_WORDS.get(len(suite["task_ids"]), str(len(suite["task_ids"])))
+        repetitions = COUNT_WORDS.get(suite["repetitions"], str(suite["repetitions"]))
+        size_line = f"- This is a {tasks}-task, {repetitions}-repetition diagnostic, not a general productivity estimate or a statistically conclusive trial."
+        dependency_line = f"- Dependencies: {manifest.get('platform_dependencies', 'unavailable')}. Both arms use the same prepared environment."
+    else:
+        size_line = "- This is a four-task, three-repetition diagnostic, not a general productivity estimate or a statistically conclusive trial."
+        dependency_line = "- Platform dependencies use the prepared installed cache and differ from the historical lockfile; both arms use the same prepared environment."
     lines += [
         "", "## Scope and limitations", "",
-        "- This is a four-task, three-repetition diagnostic, not a general productivity estimate or a statistically conclusive trial.",
+        size_line,
         "- The model and effort are pinned. Model drift or missing brain delivery is classified as infrastructure failure rather than a successful Engram trial.",
         ("- Codex reports no USD estimate, so USD columns are unavailable; Codex input includes cached input and output includes reasoning, mapped as described in real_repo_metrics.parse_codex_trace." if codex
          else "- Claude-reported USD figures are usage estimates under a subscription, not incremental cash charges or billing receipts."),
-        "- Platform dependencies use the prepared installed cache and differ from the historical lockfile; both arms use the same prepared environment.",
+        dependency_line,
         ("- Engram uses source-only historical indexes with automatic Codex hooks and the engram MCP server, and no accumulated learned memories. This does not measure the full second-brain configuration." if codex
          else "- Engram uses source-only historical indexes with automatic hooks, no accumulated learned memories, and no MCP tools. This does not measure the full second-brain configuration."),
         "- Provider cache reads and cache creation are included in processed-token totals. Cache pricing differs, so processed-token reduction and estimated USD reduction need not agree.",
@@ -343,6 +566,7 @@ def markdown(summary, manifest, fixtures, artifacts=()):
 def generate_report(data: Path, output: Path):
     manifest_raw = json.loads((data / "manifest.json").read_text())
     manifest = {name: manifest_raw[name] for name in MANIFEST_KEYS if name in manifest_raw}
+    suite = suite_definition(data, manifest_raw)
     fixtures = [redact_fixture(json.loads(path.read_text()), manifest.get("suite")) for path in sorted((data / "fixtures").glob("*/ready.json"))]
     warnings = []
     adjudications = load_adjudications(data)
@@ -365,6 +589,7 @@ def generate_report(data: Path, output: Path):
                     continue
                 try:
                     record = json.loads(line)
+                    context = None
                     # Only this publication's verified adapter can create provenance.
                     record.pop("adjudication", None)
                     if name == "records.jsonl":
@@ -383,7 +608,11 @@ def generate_report(data: Path, output: Path):
                                 verified_runtime = "tool_runtime_evidence" in record
                         if stopped and not verified_runtime:
                             raise AdjudicationError("An E2BIG-aborted attempt requires its own verifiable shell-failure trace")
-                    records.append(redact_record(record))
+                        if suite and safe_identity:
+                            trial = data.resolve() / "trials" / identity
+                            if trial.is_dir() and trial.resolve() == trial:
+                                context = trial_context(trial, record.get("arm"))
+                    records.append(redact_record(record, context))
                 except AdjudicationError:
                     # A stale exclusion must stop publication, never hide a trial.
                     raise
@@ -398,8 +627,9 @@ def generate_report(data: Path, output: Path):
     infrastructure_records = read_records("infrastructure_attempts.jsonl")
     preflight_records = read_records("preflight_runs.jsonl")
     repetitions = manifest.get("repetitions", 3)
-    task_ids = sorted(set(TASK_NAMES) | {f["task_id"] for f in fixtures} | {r["task_id"] for r in records})
-    expected_keys = {(task_id, repetition, arm) for task_id in TASK_NAMES for repetition in range(1, repetitions + 1) for arm in ("off", "brain")}
+    planned_tasks = suite["task_ids"] if suite else TASK_NAMES
+    task_ids = sorted(set(planned_tasks) | {f["task_id"] for f in fixtures} | {r["task_id"] for r in records})
+    expected_keys = {(task_id, repetition, arm) for task_id in planned_tasks for repetition in range(1, repetitions + 1) for arm in ("off", "brain")}
     planned = len(expected_keys)
     trial_dirs = [path for path in (data / "trials").glob("*") if path.is_dir()]
     started = max(len(trial_dirs), len(records))
@@ -425,7 +655,8 @@ def generate_report(data: Path, output: Path):
             for arm in ("off", "brain")
         }
     summary["resource_per_validated_success"] = {}
-    private_dependency_field = "inherited_seed_private_dependency_seconds" if manifest.get("suite") == "real-repo-v2" else "private_dependency_seconds"
+    private_dependency_field = ("export_seconds" if suite else "inherited_seed_private_dependency_seconds"
+                                if manifest.get("suite") == "real-repo-v2" else "private_dependency_seconds")
     summary["overhead"] = {"fixtures": sums_with_coverage(fixtures, ("setup_seconds", "index_seconds", "dependency_seconds", private_dependency_field)), "trials": {}}
     summary["delivery"] = {}
     summary["infrastructure_attempts"] = {
@@ -450,12 +681,18 @@ def generate_report(data: Path, output: Path):
         arm_records = [r for r in records if r["arm"] == arm]
         summary["overhead"]["trials"][arm] = sums_with_coverage(arm_records, ("setup_seconds", "grading_seconds"))
         summary["delivery"][arm] = sums_with_coverage([r["delivery"] for r in arm_records], DELIVERY_NUMBERS)
+    if suite:
+        summary["suite"] = suite
+        summary["context_delivery"] = context_summary(records)
     summary["input_warnings"] = warnings
     generated_at = datetime.now(timezone.utc).isoformat()
     result = {"schema_version": 1, "record_classification_revision": RECORD_CLASSIFICATION_REVISION, "generated_at": generated_at, "progress": summary["progress"], "manifest": manifest, "fixtures": fixtures, "records": records, "infrastructure_attempts": infrastructure_records, "preflight_runs": preflight_records}
+    analysis_scripts = ["report_real_repo_pilot.py", "real_repo_metrics.py", "real_repo_diagnostics.py", "real_repo_adjudications.py"]
+    if suite:
+        result["suite"] = suite
+        analysis_scripts += ["real_repo_context.py", "eval_context_quality.py"]
     result["analysis_provenance"] = {
-        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in (Path(__file__), Path(__file__).with_name("real_repo_metrics.py"), Path(__file__).with_name("real_repo_diagnostics.py"), Path(__file__).with_name("real_repo_adjudications.py"))
+        name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in analysis_scripts
     }
     summary["analysis_provenance"] = result["analysis_provenance"]
     summary["generated_at"] = generated_at
@@ -470,7 +707,7 @@ def generate_report(data: Path, output: Path):
         ("NEXT_ITERATION.md", "measured follow-up tasks"),
         ("workflow.json", "native-tool workflow diagnostics"),
     ) if (output / filename).is_file()]
-    (output / "README.md").write_text(markdown(summary, manifest, fixtures, artifacts))
+    (output / "README.md").write_text(markdown(summary, manifest, fixtures, artifacts, suite))
     return summary["progress"]
 
 
