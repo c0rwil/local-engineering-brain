@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On a loopback bind, the workspace browser answers only loopback `Host`
   names with its own port and refuses state-changing requests from another
   `Origin` (DNS-rebinding protection). Non-loopback binds are unchanged.
+- `engram-proxy` applies the same shared guard. Model clients that send no
+  `Origin` are unaffected; the brain-off path is unchanged apart from the
+  transport check.
 
 Everything below is the current state of the unreleased **0.1.0** pre-release.
 Nothing has shipped under a version tag yet, so there is no comparison base:

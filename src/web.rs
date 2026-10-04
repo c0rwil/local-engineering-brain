@@ -244,67 +244,10 @@ pub fn app(config: &Config, port: u16) -> Result<Router> {
     }
     let router = router(config);
     Ok(if loopback {
-        router.layer(axum::middleware::from_fn_with_state(port, loopback_only))
+        crate::security::guard_loopback(router, port)
     } else {
         router
     })
-}
-
-/// Reject requests whose `Host` is not a loopback name or address with this
-/// listener's port, and state-changing requests whose `Origin`, when sent, is
-/// not such a loopback origin. Clients without `Origin` (curl, scripts) pass.
-async fn loopback_only(
-    State(port): State<u16>,
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    let headers = request.headers();
-    let host = headers
-        .get(axum::http::header::HOST)
-        .and_then(|value| value.to_str().ok());
-    if !host.is_some_and(|host| loopback_authority(host, port)) {
-        return (
-            axum::http::StatusCode::MISDIRECTED_REQUEST,
-            "request is not addressed to this loopback listener",
-        )
-            .into_response();
-    }
-    let changes_state = !matches!(
-        *request.method(),
-        axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
-    );
-    if changes_state && let Some(origin) = headers.get(axum::http::header::ORIGIN) {
-        let same = origin
-            .to_str()
-            .ok()
-            .and_then(|origin| origin.strip_prefix("http://"))
-            .is_some_and(|authority| loopback_authority(authority, port));
-        if !same {
-            return (
-                axum::http::StatusCode::FORBIDDEN,
-                "cross-origin requests cannot change workspace state",
-            )
-                .into_response();
-        }
-    }
-    next.run(request).await
-}
-
-/// `localhost`, a 127.0.0.0/8 address or `[::1]`, with exactly `port`.
-fn loopback_authority(authority: &str, port: u16) -> bool {
-    if authority.is_empty() || authority.contains(['@', '/', '\\', '?', '#']) {
-        return false;
-    }
-    let Ok(url) = url::Url::parse(&format!("http://{authority}/")) else {
-        return false;
-    };
-    let loopback = match url.host() {
-        Some(url::Host::Domain(name)) => name == "localhost",
-        Some(url::Host::Ipv4(address)) => address.is_loopback(),
-        Some(url::Host::Ipv6(address)) => address.is_loopback(),
-        None => false,
-    };
-    loopback && url.port_or_known_default() == Some(port)
 }
 
 /// Serve the workspace browser until the task is cancelled.

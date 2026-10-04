@@ -253,7 +253,9 @@ Claude Code and Codex:
 
 MCP exposes the episode lifecycle to agents; clients without native hooks must
 call those tools to capture it. Optional local-model proxy injection runs through
-`engram-proxy` on 127.0.0.1:11435 (`x-engram-mode: off` is a true control).
+`engram-proxy` on 127.0.0.1:11435 (`x-engram-mode: off` is a true control). Point
+clients at `127.0.0.1` or `localhost` with the proxy's port; other host names get
+HTTP 421 (DNS-rebinding protection, see [SECURITY.md](SECURITY.md)).
 
 ### Verification evidence from hooks
 

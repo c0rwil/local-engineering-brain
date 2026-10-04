@@ -9,12 +9,14 @@ use serde_json::Value;
 use crate::error::{Error, Result};
 
 pub mod injection;
+pub mod loopback;
 
 pub use injection::{
     HOST_NOTICE_PLACEHOLDER, InjectionFinding, InjectionKind, SCREEN_VERSION, escape_char,
     hold_reason, is_invisible_format, neutralize_block, neutralize_inline, screen_fields,
     screen_task_prompt, screen_text, strip_host_wrappers, summarize, validated_memory_check,
 };
+pub use loopback::{guard_loopback, is_loopback_authority};
 
 const SECRET_MARKERS: &[&str] = &[
     "api_key=",
