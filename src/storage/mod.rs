@@ -98,9 +98,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "semantic_model_vectors",
         include_str!("migrations/0018_semantic_model_vectors.sql"),
     ),
+    (
+        19,
+        "abbreviated_commit_evidence",
+        include_str!("migrations/0019_abbreviated_commit_evidence.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 18;
+pub const LATEST_MIGRATION_VERSION: i64 = 19;
 
 /// Reopenable handle to the canonical database.
 ///
@@ -797,6 +802,65 @@ mod tests {
             .execute("DELETE FROM nodes WHERE id='owner'", [])
             .unwrap();
         assert_eq!(count("label:Options"), 0);
+    }
+
+    #[test]
+    fn verified_evidence_matches_abbreviated_revisions() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON")
+            .unwrap();
+        for (_, _, sql) in MIGRATIONS {
+            connection.execute_batch(sql).unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO projects(id,name,created_at_ms) VALUES ('prj_one','one',0);
+                 INSERT INTO tasks(id,project_id,prompt,prompt_digest,status,started_at_ms,
+                     final_commit)
+                 VALUES ('tsk_one','prj_one','p','d','success',0,
+                     '0564ffe9d341568d352081841d83076554c6c568');",
+            )
+            .unwrap();
+        let cases = [
+            (
+                "evd_full",
+                Some("0564ffe9d341568d352081841d83076554c6c568"),
+                true,
+            ),
+            ("evd_short", Some("0564ffe"), true),
+            ("evd_upper", Some("0564FFE9D341"), true),
+            ("evd_none", None, true),
+            ("evd_six", Some("0564ff"), false),
+            ("evd_other", Some("1b6e4a84a279dc7c"), false),
+            (
+                "evd_longer_mismatch",
+                Some("0564ffe9d341568d352081841d83076554c6c569"),
+                false,
+            ),
+        ];
+        for (id, commit, _) in cases {
+            connection
+                .execute(
+                    "INSERT INTO evidence(id,project_id,task_id,kind,strength,commit_hash,
+                         command,exit_code,artifact_digest,artifact_text,metadata_json,
+                         observed_at_ms)
+                     VALUES (?1,'prj_one','tsk_one','test_result','deterministic',?2,
+                         'cargo test',0,'digest','ok','{}',1)",
+                    rusqlite::params![id, commit],
+                )
+                .unwrap();
+        }
+        for (id, _, expected) in cases {
+            let verified: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM verified_supporting_evidence WHERE evidence_id=?1)",
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(verified, expected, "{id}");
+        }
     }
 
     #[test]
