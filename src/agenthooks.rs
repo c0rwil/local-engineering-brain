@@ -945,15 +945,23 @@ pub fn render_session_brief(
     Some(brief)
 }
 
-/// Kind, label and, when checked against the checkout like task source map
-/// ranges, the lines of one definition in a file brief.
-pub type BriefSymbol = (String, String, Option<crate::world::LineRange>);
+/// One definition in a file brief.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BriefSymbol {
+    pub kind: String,
+    pub label: String,
+    /// Lines, when checked against the checkout like task source map ranges.
+    pub lines: Option<crate::world::LineRange>,
+    /// Listed ahead of file order because the task selects, names or
+    /// matches it.
+    pub task_match: bool,
+}
 
 /// What the graph knows about a file a tool is about to touch.
 #[derive(Clone, Copy, Debug)]
 pub struct FileBrief<'a> {
     pub file_path: &'a str,
-    /// Definitions in file order.
+    /// Definitions, task matches first and the rest in file order.
     pub symbols: &'a [BriefSymbol],
     /// Label and file of each definition elsewhere that calls into the file.
     pub callers: &'a [(String, String)],
@@ -990,7 +998,7 @@ fn file_brief_text(brief: &FileBrief<'_>, spans: bool, large_file_bytes: u64) ->
     // with hidden characters and framing markup escaped.
     let inline = crate::security::neutralize_inline;
     let symbols = &brief.symbols[..brief.symbols.len().min(BRIEF_SYMBOLS)];
-    let spans = spans && symbols.iter().any(|(_, _, lines)| lines.is_some());
+    let spans = spans && symbols.iter().any(|symbol| symbol.lines.is_some());
     let mut text = format!(
         "# Indexed reference data: {}\nVerify current source before relying on these symbols and relationships.\n",
         inline(brief.file_path)
@@ -998,15 +1006,28 @@ fn file_brief_text(brief: &FileBrief<'_>, spans: bool, large_file_bytes: u64) ->
     if !symbols.is_empty() {
         let listed: Vec<String> = symbols
             .iter()
-            .map(|(kind, label, lines)| match lines.filter(|_| spans) {
-                Some(lines) => format!("{} ({}) {lines}", inline(label), inline(kind)),
-                None => format!("{} ({})", inline(label), inline(kind)),
+            .map(|symbol| {
+                let (label, kind) = (inline(&symbol.label), inline(&symbol.kind));
+                match symbol.lines.filter(|_| spans) {
+                    Some(lines) => format!("{label} ({kind}) {lines}"),
+                    None => format!("{label} ({kind})"),
+                }
             })
             .collect();
-        let heading = if spans {
-            "Defines (line spans)"
+        let qualifiers: Vec<&str> = [
+            spans.then_some("line spans"),
+            symbols
+                .iter()
+                .any(|symbol| symbol.task_match)
+                .then_some("task matches first"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let heading = if qualifiers.is_empty() {
+            "Defines".to_owned()
         } else {
-            "Defines"
+            format!("Defines ({})", qualifiers.join(", "))
         };
         let _ = writeln!(text, "{heading}: {}", listed.join(", "));
     }
@@ -3313,7 +3334,7 @@ mod tests {
     fn file_shape_renders_bounded_and_skips_unknown_files() {
         let empty = file_brief(&[], &[], &[], None);
         assert_eq!(render_file_shape(&empty, LARGE, usize::MAX), None);
-        let symbols = [("Function".to_owned(), "validate".to_owned(), None)];
+        let symbols = [def("Function", "validate", None)];
         let callers = [("login".to_owned(), "src/routes.rs".to_owned())];
         let imports = ["crate::db".to_owned()];
         let shape = render_file_shape(
@@ -3346,11 +3367,37 @@ mod tests {
     }
 
     fn def(kind: &str, label: &str, lines: Option<(u32, u32)>) -> BriefSymbol {
-        (
-            kind.to_owned(),
-            label.to_owned(),
-            lines.map(|(start, end)| crate::world::LineRange { start, end }),
-        )
+        BriefSymbol {
+            kind: kind.to_owned(),
+            label: label.to_owned(),
+            lines: lines.map(|(start, end)| crate::world::LineRange { start, end }),
+            task_match: false,
+        }
+    }
+
+    #[test]
+    fn file_briefs_say_when_task_matches_come_first() {
+        let mut named = def("Function", "engine_step_1500", Some((19_504, 19_515)));
+        named.task_match = true;
+        let symbols = vec![
+            named.clone(),
+            def("Function", "engine_step_0000", Some((4, 15))),
+        ];
+        let text = render_file_shape(&file_brief(&symbols, &[], &[], None), LARGE, usize::MAX)
+            .expect("ranked");
+        assert!(
+            text.contains(
+                "Defines (line spans, task matches first): engine_step_1500 (Function) 19504-19515, engine_step_0000 (Function) 4-15\n"
+            ),
+            "{text}"
+        );
+        named.lines = None;
+        let text = render_file_shape(&file_brief(&[named], &[], &[], None), LARGE, usize::MAX)
+            .expect("unspanned");
+        assert!(
+            text.contains("Defines (task matches first): engine_step_1500 (Function)\n"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -3421,13 +3468,10 @@ mod tests {
     fn file_briefs_fit_each_clients_message_cap() {
         let definitions: Vec<_> = (0_u32..25)
             .map(|n| {
-                (
-                    "Function".to_owned(),
-                    format!("handle_request_with_a_long_name_{n}"),
-                    Some(crate::world::LineRange {
-                        start: n * 100 + 1,
-                        end: n * 100 + 90,
-                    }),
+                def(
+                    "Function",
+                    &format!("handle_request_with_a_long_name_{n}"),
+                    Some((n * 100 + 1, n * 100 + 90)),
                 )
             })
             .collect();

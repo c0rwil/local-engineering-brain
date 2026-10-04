@@ -3042,6 +3042,9 @@ fn run_hook_payload(
                 };
                 let prompt =
                     engram::agenthooks::pending_prompt(&state_dir, &session_id).unwrap_or_default();
+                // The run whose source map ranks the file briefs below: this
+                // call's compilation, else the last one delivered here.
+                let mut source_run = None;
                 if let Some(claim) = (remaining_tokens > 0)
                     .then(|| {
                         engram::agenthooks::claim_context_delivery(
@@ -3059,7 +3062,7 @@ fn run_hook_payload(
                     if let Ok(context) = block_on(client.compile_context(&ContextCompileRequest {
                         request_id: request_id.clone(),
                         project_id: project_id.clone(),
-                        task_text: prompt,
+                        task_text: prompt.clone(),
                         current_paths,
                         token_budget: remaining_tokens,
                         mode: ContextMode::Brain,
@@ -3070,6 +3073,7 @@ fn run_hook_payload(
                     })) {
                         let text = format!("{}{}", context.stable_prefix, context.dynamic_context);
                         let digest = context.delivery_signature();
+                        source_run = Some(context.id.clone());
                         if text.trim().is_empty() {
                             let _ = claim.invalidate_empty();
                         } else if text.len() <= byte_limit.saturating_sub(pretool_context.len())
@@ -3086,12 +3090,16 @@ fn run_hook_payload(
                         }
                     }
                 }
+                let source_run = source_run
+                    .or_else(|| engram::agenthooks::context_run_id(&state_dir, &delivery_scope));
                 for relative in observed_paths {
                     let Ok(shape) =
                         block_on(client.file_shape(&engram::daemon::FileShapeRequest {
                             project_id: project_id.clone(),
                             file_path: relative.clone(),
                             repository_root: Some(checkout_root.clone()),
+                            task_text: (!prompt.is_empty()).then(|| prompt.clone()),
+                            context_run_id: source_run.clone(),
                         }))
                     else {
                         continue;
@@ -3099,7 +3107,12 @@ fn run_hook_payload(
                     let symbols: Vec<_> = shape
                         .symbols
                         .iter()
-                        .map(|symbol| (symbol.kind.clone(), symbol.label.clone(), symbol.lines))
+                        .map(|symbol| engram::agenthooks::BriefSymbol {
+                            kind: symbol.kind.clone(),
+                            label: symbol.label.clone(),
+                            lines: symbol.lines,
+                            task_match: symbol.task_match,
+                        })
                         .collect();
                     let callers: Vec<(String, String)> = shape
                         .callers

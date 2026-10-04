@@ -1657,7 +1657,9 @@ fn pretool_file_briefs_carry_checked_spans_once_per_file() {
 
     let first = pretool("spans");
     assert!(
-        first.contains("Defines (line spans): step_0 (Function) 1-3, step_1 (Function) 5-7, "),
+        // The order follows the task (see the next test); spans are checked.
+        first.contains("Defines (line spans")
+            && first.contains("step_0 (Function) 1-3, step_1 (Function) 5-7, "),
         "{first}"
     );
     let size_line = format!(
@@ -1676,7 +1678,7 @@ fn pretool_file_briefs_carry_checked_spans_once_per_file() {
     std::fs::write(repo.join("engine.rs"), &edited).unwrap();
     let stale = pretool("stale");
     assert!(
-        stale.contains("Defines: step_0 (Function), step_1 (Function), "),
+        stale.contains("step_0 (Function), step_1 (Function), "),
         "{stale}"
     );
     assert!(
@@ -1684,5 +1686,38 @@ fn pretool_file_briefs_carry_checked_spans_once_per_file() {
         "{stale}"
     );
     assert!(!stale.contains("line spans"), "{stale}");
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
+fn pretool_file_brief_lists_the_task_named_definition_first() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let source = (0..60).fold(String::new(), |mut source, n| {
+        writeln!(source, "pub fn step_{n:02}() -> u32 {{\n    {n}\n}}\n").unwrap();
+        source
+    });
+    std::fs::write(repo.join("engine.rs"), &source).unwrap();
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    cli(
+        root,
+        &["hook", "prompt"],
+        Some(json!({"session_id":"named","cwd":repo,"prompt":"Make step_57 return a constant"})),
+    );
+    let read = json!({"session_id":"named","cwd":repo,"tool_name":"Read",
+        "tool_input":{"file_path":repo.join("engine.rs")}});
+    let brief = hook_context(&cli(root, &["hook", "pretool"], Some(read.clone())));
+    assert!(
+        brief.contains(
+            "Defines (line spans, task matches first): step_57 (Function) 229-231, step_00 (Function) 1-3, "
+        ),
+        "{brief}"
+    );
+    assert_eq!(brief.matches("(Function)").count(), 20, "{brief}");
+    // Suppression is unchanged: the file is briefed once per conversation.
+    let repeat = hook_context(&cli(root, &["hook", "pretool"], Some(read)));
+    assert!(!repeat.contains("Defines"), "{repeat}");
     cli(root, &["daemon", "stop"], None);
 }

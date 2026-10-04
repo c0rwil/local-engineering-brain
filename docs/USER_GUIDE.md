@@ -222,8 +222,12 @@ to a definition by name alone, so they count it only when exactly one file
 defines that name.
 
 **File briefs.** Before a file tool touches a file, the pretool hook lists what
-the index knows about it once per conversation: up to 20 definitions in file
-order, callers in other files and imports. When the checkout's copy still has
+the index knows about it once per conversation: up to 20 definitions, callers
+in other files and imports. Definitions that the task source map selected or
+the task names come first. Next come definitions whose names contain a task
+identifier, share two of its words or contain words of the prompt, and the
+rest follow in file order. With no such match, the list is in file order;
+with one, its heading says `task matches first`. When the checkout's copy still has
 the indexed digest, each definition carries its lines, checked as for the
 task source map (`Defines (line spans): Engine::run (Function) 120-188`);
 otherwise the list has no spans. A file of at least `context.large_file_bytes`

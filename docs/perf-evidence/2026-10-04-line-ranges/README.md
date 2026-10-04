@@ -418,3 +418,42 @@ are 64 KiB or larger, none is over 256 KiB, and the largest is 96 KiB.
 No coding agent was run, so the effect on whole-file reads is not measured.
 The installed daemon SHA-256 is `cac553904322a1c8…`, and the branch daemon is
 `f456a6846366e14b…`.
+
+## Addendum: task-ranked file briefs
+
+A file brief now lists the definitions that the task source map selected or the
+task names first. Definitions whose names contain a task identifier, share two
+of its words or contain words of the prompt come next, and the rest follow in
+file order. Measured later on 2026-10-04 on branch `roadmap/brief-relevance`.
+The baseline is a build of the integration head `eabcd54`, whose briefs keep
+file order.
+
+**Synthetic large file.** This is the 960 KiB fixture above, with a task that
+names `engine_step_1500`, the 1,501st of its 1,700 functions. Under Claude
+Code, Codex and Cursor alike, the baseline brief listed the first 20 functions
+and not the named one. The ranked brief listed it first with its span,
+`engine_step_1500 (Function) 19504-19515`, under the heading
+`Defines (line spans, task matches first)`. That brief is 1,055 bytes, 24 more
+than the baseline. After an edit to the file, the named function stayed first
+without a span. A repeated read in the same conversation added no brief.
+
+**Pilot tasks.** `scripts/eval_task_context.py --file-briefs` asks the daemon
+for the brief of each required file. It uses the case's task text and the run
+just compiled, and records where each required definition falls in the first
+20 entries. Twelve cases ran on reindexed disposable clones of the frozen pilot
+fixtures, three repeats each, so the figures below count 105 required
+definitions in 36 compilations.
+
+| Required definitions in their file's brief | Baseline | Ranked |
+| --- | ---: | ---: |
+| Listed in the first 20, all with spans | 69 | 99 |
+| In the first five | 45 | 87 |
+| First | 6 | 51 |
+| Named in the task text: listed | 15 of 15 | 15 of 15, all first |
+
+Source map selections and tokens were identical in both builds. One r02
+definition is still not listed: neither the source map nor the task text
+matches it, and it lies past the first 20 definitions of its file. No coding
+agent was run. The baseline daemon SHA-256 is `c944043384408843…`, the
+candidate is `20cc0bfd761f8a61…`, and the harness SHA-256 is
+`9fa5416ba65f66ba…`.

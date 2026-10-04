@@ -377,6 +377,14 @@ pub struct FileShapeRequest {
     /// none are.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_root: Option<PathBuf>,
+    /// The task, usually the session's prompt. Definitions it names come
+    /// first, then those matching its terms, then the rest in file order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_text: Option<String>,
+    /// The context run compiled for the task. Definitions its task source
+    /// map selected come first, with those the task names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_run_id: Option<ContextRunId>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -386,6 +394,10 @@ pub struct FileShapeSymbol {
     /// 1-based inclusive lines, checked like task source map ranges.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lines: Option<crate::world::LineRange>,
+    /// Listed ahead of file order because the task selects, names or
+    /// matches it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub task_match: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -3029,29 +3041,7 @@ fn file_shape_rows(
 ) -> Result<(FileShape, Vec<String>, Option<u64>)> {
     use rusqlite::OptionalExtension as _;
     database.with_reader(|connection| {
-        let mut statement = connection.prepare(
-            "SELECT id, kind, label FROM nodes
-                 WHERE project_id = ?1 AND file_path = ?2 AND tombstoned_at_ms IS NULL
-                   AND kind IN ('Function', 'Type', 'Interface', 'Method', 'Module', 'Section')
-                 ORDER BY start_byte LIMIT 40",
-        )?;
-        let (ids, symbols): (Vec<String>, Vec<FileShapeSymbol>) = statement
-            .query_map(
-                rusqlite::params![request.project_id.as_str(), request.file_path],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        FileShapeSymbol {
-                            kind: row.get(1)?,
-                            label: row.get(2)?,
-                            lines: None,
-                        },
-                    ))
-                },
-            )?
-            .collect::<std::result::Result<Vec<_>, _>>()?
-            .into_iter()
-            .unzip();
+        let (ids, symbols) = ranked_file_symbols(connection, request)?;
         let callers = file_shape_callers(connection, request)?;
         let mut statement = connection.prepare(
             "SELECT DISTINCT target.label FROM edges e
@@ -3086,6 +3076,109 @@ fn file_shape_rows(
             indexed_size,
         ))
     })
+}
+
+/// Symbols one file shape returns, at most.
+const FILE_SHAPE_SYMBOLS: usize = 40;
+/// Definitions of one file considered for relevance ordering, in file order.
+const FILE_SHAPE_CANDIDATES: i64 = 10_000;
+
+/// The file's definitions with their node ids, best first: those the task's
+/// source map selected or the task names, then those matching task terms
+/// (strongest first), then file order. Without task signals the order is
+/// file order.
+fn ranked_file_symbols(
+    connection: &rusqlite::Connection,
+    request: &FileShapeRequest,
+) -> Result<(Vec<String>, Vec<FileShapeSymbol>)> {
+    struct Ranked {
+        tier: u8,
+        score: f64,
+        position: usize,
+        id: String,
+        symbol: FileShapeSymbol,
+    }
+    let selected: BTreeSet<String> = match &request.context_run_id {
+        Some(run) => connection
+            .prepare(
+                "SELECT ci.source_id FROM context_items ci
+                 JOIN context_runs cr ON cr.id = ci.context_run_id
+                 WHERE ci.context_run_id = ?1 AND cr.project_id = ?2",
+            )?
+            .query_map(
+                rusqlite::params![run.as_str(), request.project_id.as_str()],
+                |row| row.get(0),
+            )?
+            .collect::<std::result::Result<_, _>>()?,
+        None => BTreeSet::new(),
+    };
+    let terms = request
+        .task_text
+        .as_deref()
+        .map(crate::repository_context::TaskTerms::parse);
+    let mut statement = connection.prepare(
+        "SELECT id, kind, label FROM nodes
+         WHERE project_id = ?1 AND file_path = ?2 AND tombstoned_at_ms IS NULL
+           AND kind IN ('Function', 'Type', 'Interface', 'Method', 'Module', 'Section')
+         ORDER BY start_byte LIMIT ?3",
+    )?;
+    let mut ranked = statement
+        .query_map(
+            rusqlite::params![
+                request.project_id.as_str(),
+                request.file_path,
+                FILE_SHAPE_CANDIDATES
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .enumerate()
+        .map(|(position, (id, kind, label))| {
+            let named = selected.contains(&id) || terms.as_ref().is_some_and(|t| t.names(&label));
+            let score = if named {
+                0.0
+            } else {
+                terms.as_ref().map_or(0.0, |t| t.partial_score(&label))
+            };
+            let tier = if named {
+                0
+            } else if score > 0.0 {
+                1
+            } else {
+                2
+            };
+            Ranked {
+                tier,
+                score,
+                position,
+                id,
+                symbol: FileShapeSymbol {
+                    kind,
+                    label,
+                    lines: None,
+                    task_match: tier < 2,
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|a, b| {
+        a.tier
+            .cmp(&b.tier)
+            .then_with(|| b.score.total_cmp(&a.score))
+            .then_with(|| a.position.cmp(&b.position))
+    });
+    ranked.truncate(FILE_SHAPE_SYMBOLS);
+    Ok(ranked
+        .into_iter()
+        .map(|ranked| (ranked.id, ranked.symbol))
+        .unzip())
 }
 
 /// Definitions in other files that call into `request.file_path`.
@@ -6048,6 +6141,123 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[allow(clippy::too_many_lines)]
+    async fn daemon_file_shape_lists_task_relevant_definitions_first() {
+        use std::fmt::Write as _;
+        let temp = TempDir::new().expect("temp dir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        let mut source = (0..30).fold(String::new(), |mut source, n| {
+            let _ = writeln!(source, "pub fn step_{n:02}() -> u32 {{\n    {n}\n}}\n");
+            source
+        });
+        source.push_str("pub fn reseed_checksum_table() {}\npub fn checksum_seed_mix() {}\n");
+        std::fs::write(project.join("engine.rs"), &source).expect("engine");
+        let config = test_config(&temp);
+        let client = DaemonClient::new(&config.daemon.socket_path, Duration::from_secs(2));
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(config, async move {
+            let _ = shutdown_receiver.await;
+        }));
+        wait_until_ready(&client).await;
+        let status = client.resolve_project(&project).await.expect("resolve");
+        let project_id = status.resolved.project.id.clone();
+        client.index_project(&project, None).await.expect("index");
+        let shape = |task_text: Option<&str>, context_run_id: Option<ContextRunId>| {
+            let request = FileShapeRequest {
+                project_id: project_id.clone(),
+                file_path: "engine.rs".to_owned(),
+                repository_root: Some(project.clone()),
+                task_text: task_text.map(str::to_owned),
+                context_run_id,
+            };
+            let client = &client;
+            async move { client.file_shape(&request).await }
+        };
+        let order = |shape: &FileShape| {
+            shape
+                .symbols
+                .iter()
+                .take(4)
+                .map(|symbol| (symbol.label.clone(), symbol.task_match))
+                .collect::<Vec<_>>()
+        };
+        let plain = |labels: &[&str]| {
+            labels
+                .iter()
+                .map(|label| ((*label).to_owned(), false))
+                .collect::<Vec<_>>()
+        };
+
+        // A named definition near the end comes first, with its span; then
+        // task-word matches, strongest first; then file order.
+        let ranked = shape(
+            Some("Change step_27 so the checksum seed is configurable"),
+            None,
+        )
+        .await
+        .expect("ranked");
+        assert_eq!(
+            order(&ranked),
+            [
+                ("step_27".to_owned(), true),
+                ("checksum_seed_mix".to_owned(), true),
+                ("reseed_checksum_table".to_owned(), true),
+                ("step_00".to_owned(), false),
+            ]
+        );
+        assert_eq!(
+            ranked.symbols[0]
+                .lines
+                .map(|lines| (lines.start, lines.end)),
+            Some((109, 111))
+        );
+        // Without task signals, or when nothing matches: file order.
+        for task in [None, Some("Tidy up the documentation wording")] {
+            let shape = shape(task, None).await.expect("file order");
+            assert_eq!(
+                order(&shape),
+                plain(&["step_00", "step_01", "step_02", "step_03"])
+            );
+        }
+        // A definition the task source map selected comes first.
+        let context = client
+            .compile_context(&ContextCompileRequest {
+                request_id: "relevance-run".to_owned(),
+                project_id: project_id.clone(),
+                task_text: "Inspect step_28 before the release".to_owned(),
+                current_paths: Vec::new(),
+                token_budget: 400,
+                mode: crate::context::ContextMode::Brain,
+                repository_root: Some(project.clone()),
+                head: None,
+                task_id: None,
+                framing: None,
+            })
+            .await
+            .expect("compile");
+        let selected = shape(None, Some(context.id.clone()))
+            .await
+            .expect("selected");
+        assert_eq!(selected.symbols[0].label, "step_28", "{selected:?}");
+        assert!(selected.symbols[0].task_match);
+        // A run of another project selects nothing here.
+        let other = client
+            .file_shape(&FileShapeRequest {
+                project_id: ProjectId::new(),
+                file_path: "engine.rs".to_owned(),
+                repository_root: None,
+                task_text: None,
+                context_run_id: Some(context.id),
+            })
+            .await
+            .expect("other project");
+        assert!(other.symbols.is_empty());
+        let _ = shutdown_sender.send(());
+        let _ = server.await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn daemon_file_shape_checks_spans_against_the_checkout() {
         let temp = TempDir::new().expect("temp dir");
         let project = temp.path().join("project");
@@ -6072,6 +6282,8 @@ mod tests {
                 project_id: project_id.clone(),
                 file_path: "engine.rs".to_owned(),
                 repository_root: None,
+                task_text: None,
+                context_run_id: None,
             })
             .await
             .expect("plain shape");
@@ -6085,6 +6297,8 @@ mod tests {
                 project_id: project_id.clone(),
                 file_path: "missing.rs".to_owned(),
                 repository_root: Some(project.clone()),
+                task_text: None,
+                context_run_id: None,
             })
             .await
             .expect("unknown file");
@@ -6101,6 +6315,8 @@ mod tests {
             project_id: project_id.clone(),
             file_path: "engine.rs".to_owned(),
             repository_root: Some(project.clone()),
+            task_text: None,
+            context_run_id: None,
         };
         let shape = client.file_shape(&checked).await.expect("checked shape");
         assert_eq!(
@@ -6157,6 +6373,8 @@ mod tests {
                 project_id: project_id.clone(),
                 file_path: "engine.rs".to_owned(),
                 repository_root: None,
+                task_text: None,
+                context_run_id: None,
             })
             .await
             .expect("file shape");
@@ -6194,6 +6412,8 @@ mod tests {
                 project_id: project_id.clone(),
                 file_path: "missing.rs".to_owned(),
                 repository_root: None,
+                task_text: None,
+                context_run_id: None,
             })
             .await
             .expect("unknown file");
