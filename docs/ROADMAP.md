@@ -128,3 +128,17 @@ Workstreams 0 and 1 come first: without capture and validation there is nothing
 to deliver or measure. Workstream 2 targets the one cost mechanism the v2
 benchmark measured. Workstream 3 decides whether the changes help. Workstreams 4
 and 5 proceed in parallel because they do not depend on those measurements.
+
+## Progress on 2026-10-04
+
+All six workstreams have a first implementation. None is closed: each closing
+measurement above still needs live data or a paired agent run.
+
+| Workstream | Landed | Measured | Open |
+|---|---|---|---|
+| 0. Capture | Doctor checks `codex_hooks`, `checkout_access` and `project_identity`; specific macOS privacy errors; `engram daemon restart`; identity backfill for metadata-pinned projects | The Codex trust rule reproduces stored hashes and Codex's own `hooks/list` (CLI 0.155.0-alpha.2.6) | Hooks must be trusted in Codex by the operator. No safe project merge exists, because `project_aliases.path` is unique |
+| 1. Evidence and judge | JSON-schema verdicts; malformed output is a runtime error; containment across every registered checkout; one reason per cause; stable dedupe (judge policy v2); contradictions mark memories suspect; hook-observed verification becomes evidence; abbreviated revisions count in verified evidence | The old hook recorded 0 of 1,879 observed verification runs. Judge accuracy 14/15 on synthetic cases, a smoke test only. A same-snapshot replay gives accurate reasons, but still only 2 of 135 pending reviews pass every gate | 97.8% of observed agent test commands hide their exit status behind pipes. Existing reviews cannot be backfilled. Agent-reported evidence stays eligible, a policy decision |
+| 2. Context efficiency | Line-ranged pointers, checked against indexed digests; related-use cue; delivered-and-used and Read-volume metrics; optional local embeddings, off by default | Frozen probes: direct selections unchanged, 231 of 252 pointers ranged. Required pilot components in the pack rose from 13/35 to 19/35, all from related uses. Packs grew 13–20% in tokens | Agent-level token effect needs a paired run. Python call sites are not indexed. Embeddings are unmeasured |
+| 3. Proof | Hermetic retrieval regression test in CI; Codex arm with persisted hook trust; draft held-out suite of 5 tasks | The gate fails under six deliberate breakages. Codex preflight passes 18 of 18 checks. Held-out calibration: 36 of 36 controls as expected | The held-out suite needs operator review and a collection adapter. The Codex arm needs `CODEX_API_KEY` |
+| 4. Safety | Injection screen holds flagged proposals for a human; framing escapes; doctor screen of validated memories; adversarial tests and judge cases | 0 of 12 validated memories and 1 of 2,013 repository paragraphs flagged | Pattern-based: paraphrases and other languages pass |
+| 5. Reach | Codex sub-sessions attributed to the parent session; Cursor hooks and MCP registration as an opt-in, with an installer self-check | Verified against documentation, source and synthetic payloads only | No live Cursor or Codex run yet. Cursor reports no token usage |
