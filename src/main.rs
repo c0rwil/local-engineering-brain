@@ -2738,11 +2738,33 @@ fn run_hook_event(
             let session_paths = engram::agenthooks::recent_paths(&state_dir, &scope);
             let Some(observed) = engram::agenthooks::observe_verification(
                 &payload,
-                codex,
+                if codex {
+                    engram::agenthooks::CODEX_HOOK_SOURCE
+                } else {
+                    engram::agenthooks::CLAUDE_HOOK_SOURCE
+                },
                 &resolved.resolved.root,
                 resolved.resolved.git.as_ref(),
                 &session_paths,
             ) else {
+                // A verification whose status went unobserved (hidden by the
+                // shell, interrupted, or failed without an exit code) has an
+                // unknown result: an earlier pass must not close the episode.
+                if session.last_verification_exit.is_some()
+                    && engram::agenthooks::classify_verification(engram::agenthooks::tool_command(
+                        &tool_input,
+                    ))
+                    .is_some()
+                {
+                    let _ = engram::agenthooks::save_session(
+                        &state_dir,
+                        &scope,
+                        &engram::agenthooks::HookSession {
+                            last_verification_exit: None,
+                            ..session
+                        },
+                    );
+                }
                 return Ok(true);
             };
             if session.last_evidence_fingerprint.as_deref() == Some(observed.fingerprint.as_str()) {

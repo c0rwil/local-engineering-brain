@@ -35,6 +35,7 @@ use crate::ids::{ProjectId, TaskId};
 /// Evidence `metadata.source` written by the native hooks.
 pub const CLAUDE_HOOK_SOURCE: &str = "claude-code-hook";
 pub const CODEX_HOOK_SOURCE: &str = "codex-hook";
+pub const CURSOR_HOOK_SOURCE: &str = "cursor-hook";
 /// Verification output kept as the artifact. Runner summaries are at the end,
 /// so longer output keeps its tail.
 const VERIFICATION_EXCERPT_BYTES: usize = 4_096;
@@ -1257,12 +1258,14 @@ fn shell_commands(text: &str) -> Option<Vec<(String, Option<ShellOperator>)>> {
 /// how it was observed: `tool_response` (an explicit code), `failure_event`
 /// (Claude Code `PostToolUseFailure` "Exit code N") or `success_event`
 /// (a completed foreground Claude Code `PostToolUse` Bash call; Claude Code
-/// reports every non-zero exit as a failure event). Interrupted, backgrounded
-/// or reinterpreted (`returnCodeInterpretation`) calls have no known status.
+/// reports every non-zero exit as a failure event, so only `claude_code`
+/// payloads may infer 0). Interrupted, backgrounded or reinterpreted
+/// (`returnCodeInterpretation`) calls, and failures without an exit code,
+/// have no known status.
 #[must_use]
 pub fn observed_exit_status(
     payload: &serde_json::Value,
-    codex: bool,
+    claude_code: bool,
 ) -> Option<(i32, &'static str)> {
     use serde_json::Value;
     let event = payload.get("hook_event_name").and_then(Value::as_str);
@@ -1290,7 +1293,7 @@ pub fn observed_exit_status(
     if let Some(code) = extract_exit_code(response) {
         return Some((code, "tool_response"));
     }
-    if codex
+    if !claude_code
         || event != Some("PostToolUse")
         || payload.get("tool_name").and_then(Value::as_str) != Some("Bash")
         || payload
@@ -1437,7 +1440,7 @@ pub fn source_digests(root: &Path, candidates: &[String]) -> (BTreeMap<String, S
 pub fn hook_source_digests(metadata: &serde_json::Value) -> Option<BTreeMap<String, String>> {
     if !matches!(
         metadata.get("source").and_then(serde_json::Value::as_str),
-        Some(CLAUDE_HOOK_SOURCE | CODEX_HOOK_SOURCE)
+        Some(CLAUDE_HOOK_SOURCE | CODEX_HOOK_SOURCE | CURSOR_HOOK_SOURCE)
     ) {
         return None;
     }
@@ -1471,11 +1474,12 @@ pub struct ObservedVerification {
 
 /// Build evidence for a shell call whose verification status the harness
 /// reported. `None` for ordinary commands, an unknown status, or a status the
-/// shell syntax hides. `session_paths` are paths this session touched.
+/// shell syntax hides. `source` is the client's hook label (for example
+/// `CLAUDE_HOOK_SOURCE`); `session_paths` are paths this session touched.
 #[must_use]
 pub fn observe_verification(
     payload: &serde_json::Value,
-    codex: bool,
+    source: &'static str,
     root: &Path,
     git: Option<&crate::projects::GitState>,
     session_paths: &[String],
@@ -1488,7 +1492,7 @@ pub fn observe_verification(
     if !verification.status_bearing {
         return None;
     }
-    let (exit_code, exit_status) = observed_exit_status(payload, codex)?;
+    let (exit_code, exit_status) = observed_exit_status(payload, source == CLAUDE_HOOK_SOURCE)?;
     let mut candidates = session_paths.to_vec();
     if let Some(git) = git {
         candidates.extend(git.changed_paths.iter().filter_map(|changed| {
@@ -1505,7 +1509,7 @@ pub fn observe_verification(
         &serde_json::to_vec(&(command.trim(), exit_code, &digests)).unwrap_or_default(),
     );
     let mut metadata = serde_json::json!({
-        "source": if codex { CODEX_HOOK_SOURCE } else { CLAUDE_HOOK_SOURCE },
+        "source": source,
         "exit_status": exit_status,
         "head": git.and_then(|git| git.head.clone()),
         "source_digests": digests,
@@ -2455,13 +2459,13 @@ mod tests {
             "tool_response":{"stdout":"test result: ok. 3 passed","stderr":"",
                 "interrupted":false,"isImage":false,"noOutputExpected":false}});
         assert_eq!(
-            observed_exit_status(&success, false),
+            observed_exit_status(&success, true),
             Some((0, "success_event"))
         );
         assert_eq!(
-            observed_exit_status(&success, true),
+            observed_exit_status(&success, false),
             None,
-            "Codex reports its own exit code"
+            "only Claude Code payloads may infer status 0"
         );
         for (key, value) in [
             ("interrupted", json!(true)),
@@ -2471,25 +2475,25 @@ mod tests {
         ] {
             let mut changed = success.clone();
             changed["tool_response"][key] = value;
-            assert_eq!(observed_exit_status(&changed, false), None, "{key}");
+            assert_eq!(observed_exit_status(&changed, true), None, "{key}");
         }
         let mut background = success.clone();
         background["tool_input"]["run_in_background"] = json!(true);
-        assert_eq!(observed_exit_status(&background, false), None);
+        assert_eq!(observed_exit_status(&background, true), None);
         let mut other_tool = success.clone();
         other_tool["tool_name"] = json!("Read");
-        assert_eq!(observed_exit_status(&other_tool, false), None);
+        assert_eq!(observed_exit_status(&other_tool, true), None);
         let failure = json!({"hook_event_name":"PostToolUseFailure","tool_name":"Bash",
             "tool_input":{"command":"cargo test"},
             "error":"Exit code 101\nerror: test failed","is_interrupt":false});
         assert_eq!(
-            observed_exit_status(&failure, false),
+            observed_exit_status(&failure, true),
             Some((101, "failure_event"))
         );
         let mut prefixed = failure.clone();
         prefixed["error"] = json!("Error: Exit code 2");
         assert_eq!(
-            observed_exit_status(&prefixed, false),
+            observed_exit_status(&prefixed, true),
             Some((2, "failure_event"))
         );
         for (key, value) in [
@@ -2499,18 +2503,18 @@ mod tests {
         ] {
             let mut changed = failure.clone();
             changed[key] = value;
-            assert_eq!(observed_exit_status(&changed, false), None, "{key}");
+            assert_eq!(observed_exit_status(&changed, true), None, "{key}");
         }
         let codex = json!({"hook_event_name":"PostToolUse","tool_name":"exec_command",
             "tool_response":{"exit_code":3,"stdout":""}});
         assert_eq!(
-            observed_exit_status(&codex, true),
+            observed_exit_status(&codex, false),
             Some((3, "tool_response"))
         );
         let legacy =
             json!({"tool_name":"Bash","tool_response":{"stdout":"ok","interrupted":false}});
         assert_eq!(
-            observed_exit_status(&legacy, false),
+            observed_exit_status(&legacy, true),
             None,
             "without an event name a completed call proves nothing"
         );
@@ -2679,9 +2683,15 @@ mod tests {
     fn only_native_hook_metadata_carries_source_digests() {
         use serde_json::json;
         let digest = "a".repeat(64);
-        let hook = json!({"source":CLAUDE_HOOK_SOURCE,
-            "source_digests":{"src/lib.rs":digest,"bad":"not-a-digest"}});
-        assert_eq!(hook_source_digests(&hook).expect("hook digests").len(), 1);
+        for source in [CLAUDE_HOOK_SOURCE, CODEX_HOOK_SOURCE, CURSOR_HOOK_SOURCE] {
+            let hook = json!({"source":source,
+                "source_digests":{"src/lib.rs":digest,"bad":"not-a-digest"}});
+            assert_eq!(
+                hook_source_digests(&hook).expect("hook digests").len(),
+                1,
+                "{source}"
+            );
+        }
         for metadata in [
             json!({"capture":"completion","source_digests":{"src/lib.rs":digest}}),
             json!({"source":"cli","source_digests":{"src/lib.rs":digest}}),
@@ -2705,8 +2715,14 @@ mod tests {
                     "interrupted":false,"isImage":false}})
         };
         let touched = ["lib.rs".to_owned()];
-        let observed = observe_verification(&payload("cargo test"), false, root, None, &touched)
-            .expect("observed");
+        let observed = observe_verification(
+            &payload("cargo test"),
+            CLAUDE_HOOK_SOURCE,
+            root,
+            None,
+            &touched,
+        )
+        .expect("observed");
         assert_eq!((observed.kind, observed.exit_code), ("test_result", 0));
         assert_eq!(observed.artifact, "test result: ok. 1 passed");
         assert_eq!(observed.metadata["source"], CLAUDE_HOOK_SOURCE);
@@ -2718,16 +2734,29 @@ mod tests {
         );
         for hidden in ["cargo test | tail -3", "cargo test || true", "git status"] {
             assert!(
-                observe_verification(&payload(hidden), false, root, None, &touched).is_none(),
+                observe_verification(&payload(hidden), CLAUDE_HOOK_SOURCE, root, None, &touched)
+                    .is_none(),
                 "{hidden}"
             );
         }
-        let repeat = observe_verification(&payload("cargo test"), false, root, None, &touched)
-            .expect("repeat");
+        let repeat = observe_verification(
+            &payload("cargo test"),
+            CLAUDE_HOOK_SOURCE,
+            root,
+            None,
+            &touched,
+        )
+        .expect("repeat");
         assert_eq!(repeat.fingerprint, observed.fingerprint);
         std::fs::write(root.join("lib.rs"), b"pub fn a() { changed() }").expect("edit");
-        let changed = observe_verification(&payload("cargo test"), false, root, None, &touched)
-            .expect("changed");
+        let changed = observe_verification(
+            &payload("cargo test"),
+            CLAUDE_HOOK_SOURCE,
+            root,
+            None,
+            &touched,
+        )
+        .expect("changed");
         assert_ne!(
             changed.fingerprint, observed.fingerprint,
             "a rerun on edited source is a new observation"

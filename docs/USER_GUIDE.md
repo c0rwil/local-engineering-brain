@@ -154,7 +154,10 @@ command's status. To keep output short and still record the result, enable
 `pipefail` first: `set -o pipefail; cargo test 2>&1 | tail -40`. Runner wrappers
 that return the tool's status are recognized (`uv run`, `poetry run`, `npx`,
 `uvx`, `timeout N`, `python3 -m pytest`). Listing or help invocations such as
-`cargo test -- --list` are not verification.
+`cargo test -- --list` are not verification. A verification whose result is
+not observed (hidden status, an interrupted run, or a failure reported without
+an exit code) clears the session's last result: the result is unknown, so an
+earlier pass cannot close the episode as success.
 
 Each record keeps the last 4 KiB of output, the Git HEAD and SHA-256 digests of
 the files the session touched or left modified (up to 64 files, 512 KiB each and
