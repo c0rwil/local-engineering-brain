@@ -363,7 +363,28 @@ commands without wrappers or redirections, so `cargo test 2>&1 | tail` and
 not. Before contacting the daemon, the hook marks a recognized verification's
 result unknown; only a recorded observation replaces it. A hidden status, an
 interrupted run, a failure without an exit code, or a record the daemon refuses
-therefore leaves the result unknown. At session end the episode closes as
+therefore leaves the result unknown.
+
+In a session that works in several repositories, each repository has its own
+episode. Each episode records its project's checkouts when it opens: the
+checkout the tool call used and the project's registered checkouts.
+Episodes from an earlier build get them at the next prompt or verification.
+The unknown mark goes only to the episode a verification belongs to:
+
+- A known directory belongs to the episode whose checkout most specifically
+  contains it. A directory outside every known checkout belongs to a
+  repository without an episode in this session, and no episode is marked.
+- A directory change that may not take effect (`cd src; cargo test`) still
+  stays below the tool's directory when every change is a relative descent.
+  The episode whose checkout contains that directory is marked, together with
+  any episode whose checkout lies below it.
+- A directory that is truly unknown (`cd "$REPO"`, `cd -`, an absolute or
+  parent target that may not take effect, a Codex command without its rollout
+  record) marks every episode of the session. So does a session with an
+  episode whose checkouts are still unknown.
+
+So a test run in a second repository leaves the first repository's earlier
+pass standing. At session end the episode closes as
 `failure` if any latest result failed, as `success` only if every latest result
 passed and at least one ran tests, and as `abandoned` otherwise. A passing
 lint, format, check or build never hides a failed test.

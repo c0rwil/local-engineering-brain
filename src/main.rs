@@ -2912,6 +2912,9 @@ fn run_hook_payload(
     let client = client(&config);
     match event {
         "prompt" => {
+            // Episodes from an earlier build learn their checkouts before
+            // this turn's first verification.
+            backfill_episode_checkouts(&client, &state_dir, &session_id);
             // Relay delivery point: every prompt drains this session's inbox,
             // pinned or not — a message queued mid-session still arrives.
             let relayed = engram::agenthooks::relay_drain(&state_dir, &session_id);
@@ -3067,9 +3070,13 @@ fn run_hook_payload(
             {
                 let project_id = resolved.resolved.project.id.clone();
                 let checkout_root = resolved.resolved.root.clone();
-                let Some((scope, session)) =
-                    hook_episode(&client, &state_dir, &session_id, &project_id)
-                else {
+                let Some((scope, session)) = hook_episode(
+                    &client,
+                    &state_dir,
+                    &session_id,
+                    &project_id,
+                    &checkout_root,
+                ) else {
                     continue;
                 };
                 // Observe the touch before any context it triggers is compiled.
@@ -3278,6 +3285,9 @@ fn run_hook_payload(
                         pending,
                     );
                 }
+                // A daemon call may run only after the write-ahead. Episodes
+                // from an earlier build then have checkouts for the next one.
+                backfill_episode_checkouts(&client, &state_dir, &session_id);
             }
             // Codex runs this hook for failed commands too; the rollout
             // record says whether the command failed.
@@ -3293,6 +3303,7 @@ fn run_hook_payload(
                     &state_dir,
                     &session_id,
                     &resolved.resolved.project.id,
+                    &resolved.resolved.root,
                 ) else {
                     continue;
                 };
@@ -3374,7 +3385,7 @@ fn record_hook_verification(
     pending: &engram::agenthooks::PendingVerification,
     reported: Option<(i32, &'static str)>,
 ) -> bool {
-    session.root = Some(resolved.resolved.root.clone());
+    session.note_checkout(&resolved.resolved.root);
     // Only a harness-reported status that belongs to the verification itself
     // is recorded; pipes and `||` hide it. The record carries digests of the
     // session's touched and dirty files.
@@ -3793,15 +3804,29 @@ fn capture_hook_transcript_usage(
 }
 
 /// Lazily open one episode per session/project, only after a tool touches it.
+/// `checkout` is the checkout root this call resolved for the project. The
+/// episode records it, and the project's registered checkouts, from creation
+/// on, so the write-ahead can find the episode before its first verification.
+/// An episode from an earlier build without checkouts gets them here.
 fn hook_episode(
     client: &engram::daemon::DaemonClient,
     state_dir: &Path,
     session_id: &str,
     project_id: &engram::ids::ProjectId,
+    checkout: &Path,
 ) -> Option<(String, engram::agenthooks::HookSession)> {
     let scope = engram::agenthooks::scoped_session_id(session_id, project_id);
     if let Some(session) = engram::agenthooks::load_session(state_dir, &scope) {
-        return Some((scope, session));
+        let mut learned = session.clone();
+        learned.note_checkout(checkout);
+        if !session.has_roots() {
+            note_registered_checkouts(client, &mut learned);
+        }
+        if learned.roots().count() == session.roots().count() {
+            return Some((scope, session));
+        }
+        let updated = add_episode_checkouts(state_dir, &scope, &learned).unwrap_or(learned);
+        return Some((scope, updated));
     }
     let prompt = engram::agenthooks::pending_prompt(state_dir, session_id)?;
     if !engram::agenthooks::claim_once(state_dir, &scope, "episode") {
@@ -3829,17 +3854,77 @@ fn hook_episode(
         engram::agenthooks::clear_claims(state_dir, &scope);
         return None;
     };
-    let session = engram::agenthooks::HookSession {
-        task_id: task.id,
-        session_id: Some(session_id.to_owned()),
-        project_id: project_id.clone(),
-        last_verification_exit: None,
-        last_evidence_fingerprint: None,
-        root: None,
-        verification_results: Vec::new(),
-    };
+    let mut session = engram::agenthooks::HookSession::new(
+        task.id,
+        project_id.clone(),
+        Some(session_id.to_owned()),
+    );
+    session.note_checkout(checkout);
+    note_registered_checkouts(client, &mut session);
     engram::agenthooks::save_session(state_dir, &scope, &session).ok()?;
     Some((scope, session))
+}
+
+/// Add the project's registered checkouts to an episode. Best effort and
+/// bounded: an episode keeps the checkouts it already knows.
+fn note_registered_checkouts(
+    client: &engram::daemon::DaemonClient,
+    session: &mut engram::agenthooks::HookSession,
+) {
+    const CHECKOUTS_WAIT: Duration = Duration::from_millis(1_500);
+    let Ok(registered) = block_on(async {
+        tokio::time::timeout(
+            CHECKOUTS_WAIT,
+            client.project_checkouts(&session.project_id),
+        )
+        .await
+        .map_err(|_| engram::Error::Daemon("project checkouts timed out".to_owned()))?
+    }) else {
+        return;
+    };
+    for checkout in &registered.checkouts {
+        session.note_checkout(checkout);
+    }
+}
+
+/// Give every episode of the session that knows no checkout of its project
+/// (sidecars from earlier builds) the project's registered checkouts, so the
+/// write-ahead can target precisely. Each sidecar is re-read just before it
+/// is written.
+fn backfill_episode_checkouts(
+    client: &engram::daemon::DaemonClient,
+    state_dir: &Path,
+    session_id: &str,
+) {
+    for (scope, session) in engram::agenthooks::project_sessions(state_dir, session_id) {
+        if session.has_roots() {
+            continue;
+        }
+        let mut backfilled = session.clone();
+        note_registered_checkouts(client, &mut backfilled);
+        if backfilled.has_roots() {
+            let _ = add_episode_checkouts(state_dir, &scope, &backfilled);
+        }
+    }
+}
+
+/// Add `learned`'s checkouts to the episode sidecar as stored now, so a
+/// concurrent hook's results written meanwhile are kept. Returns the saved
+/// episode.
+fn add_episode_checkouts(
+    state_dir: &Path,
+    scope: &str,
+    learned: &engram::agenthooks::HookSession,
+) -> Option<engram::agenthooks::HookSession> {
+    let mut current = engram::agenthooks::load_session(state_dir, scope)?;
+    let mut changed = false;
+    for checkout in learned.roots() {
+        changed |= current.note_checkout(checkout);
+    }
+    if changed {
+        engram::agenthooks::save_session(state_dir, scope, &current).ok()?;
+    }
+    Some(current)
 }
 
 /// Extract a section's text: from its heading until the next heading of the

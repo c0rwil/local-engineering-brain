@@ -112,6 +112,48 @@ impl Fixture {
         self.hook(&["hook", "bash"], &payload);
     }
 
+    /// A Claude Code `Edit` of `file` in `repo`. The tool call opens that
+    /// repository's episode before any verification there.
+    fn edit(&self, session: &str, repo: &Path, id: &str, file: &str) {
+        let path = repo.join(file);
+        self.hook(
+            &["hook", "bash"],
+            &json!({"session_id":session,"cwd":repo,"hook_event_name":"PostToolUse",
+                "tool_name":"Edit","tool_use_id":id,
+                "tool_input":{"file_path":path,"old_string":"1","new_string":"2"},
+                "tool_response":{"filePath":path}}),
+        );
+    }
+
+    /// The episode sidecars of every session, as JSON.
+    fn sidecars(&self) -> Vec<(PathBuf, Value)> {
+        std::fs::read_dir(self.root().join("hook-sessions"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .filter_map(|path| {
+                let sidecar: Value =
+                    serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+                sidecar.get("task_id").is_some().then_some((path, sidecar))
+            })
+            .collect()
+    }
+
+    /// Rewrite the episode sidecars as an earlier build left them before a
+    /// first resolved verification: without any checkout.
+    fn forget_checkouts(&self) {
+        for (path, mut sidecar) in self.sidecars() {
+            let fields = sidecar.as_object_mut().unwrap();
+            fields.remove("root");
+            fields.remove("checkouts");
+            std::fs::write(path, sidecar.to_string()).unwrap();
+        }
+    }
+
     fn end(&self, session: &str, cwd: &Path) {
         self.hook(
             &["hook", "session-end"],
@@ -880,4 +922,126 @@ fn codex_reads_only_the_calling_threads_rollout() {
         [("codex-tree".to_owned(), 1)],
         "the worker's run belongs to the root session's episode"
     );
+}
+
+/// Episodes know their checkouts from the moment they open, so a later
+/// verification in another repository marks only the episode it belongs to:
+/// repository one's earlier pass still closes it as success.
+#[test]
+fn a_verification_in_another_repository_leaves_an_earlier_pass_standing() {
+    let f = Fixture::new(&["one", "two", "three"]);
+    let (one, two) = (f.repo("one"), f.repo("two"));
+    f.prompt("roots", &one);
+    f.bash(
+        "roots",
+        &one,
+        "t1",
+        "cargo test",
+        &Run::Pass("test result: ok"),
+    );
+    // The agent edits repository two, then verifies there with a directory
+    // change the shell may not apply: unmodeled, but inside two's checkout.
+    f.edit("roots", &two, "e1", "lib.rs");
+    f.bash(
+        "roots",
+        &two,
+        "t2",
+        "cd src; cargo test",
+        &Run::Pass("test result: ok"),
+    );
+    // The first touch of repository three is a verification there.
+    f.bash(
+        "roots",
+        &one,
+        "t3",
+        "cd ../three && cargo test",
+        &Run::Pass("test result: ok"),
+    );
+    f.end("roots", &one);
+    assert_eq!(f.outcome_in("roots", "one"), "success");
+    assert_eq!(
+        f.outcome_in("roots", "two"),
+        "abandoned",
+        "its own run's result stayed unknown"
+    );
+    assert_eq!(f.outcome_in("roots", "three"), "success");
+}
+
+/// A directory that is unmodeled and bounded by no known checkout may be
+/// any repository's: every episode's result becomes unknown.
+#[test]
+fn a_truly_unknown_directory_still_marks_every_episode() {
+    let f = Fixture::new(&["one", "two"]);
+    let (one, two) = (f.repo("one"), f.repo("two"));
+    f.prompt("unknown", &one);
+    f.bash(
+        "unknown",
+        &one,
+        "t1",
+        "cargo test",
+        &Run::Pass("test result: ok"),
+    );
+    f.bash(
+        "unknown",
+        &two,
+        "t2",
+        "cargo test",
+        &Run::Pass("test result: ok"),
+    );
+    f.bash(
+        "unknown",
+        &one,
+        "t3",
+        "cd \"$REPO\" && cargo test",
+        &Run::Pass("test result: ok"),
+    );
+    f.end("unknown", &one);
+    assert_eq!(f.outcome_in("unknown", "one"), "abandoned");
+    assert_eq!(
+        f.outcome_in("unknown", "two"),
+        "abandoned",
+        "the run may have been in repository two"
+    );
+}
+
+/// Episodes from an earlier build knew no checkout before their first
+/// resolved verification. The next prompt gives them the project's
+/// registered checkouts, so the write-ahead targets precisely again.
+#[test]
+fn episodes_from_an_earlier_build_learn_their_checkouts() {
+    let f = Fixture::new(&["one", "two"]);
+    let one = f.repo("one");
+    f.prompt("legacy", &one);
+    f.bash(
+        "legacy",
+        &one,
+        "t1",
+        "cargo test",
+        &Run::Pass("test result: ok"),
+    );
+    f.forget_checkouts();
+    assert!(
+        f.sidecars()
+            .iter()
+            .all(|(_, sidecar)| sidecar["root"].is_null())
+    );
+    f.prompt("legacy", &one);
+    let canonical = one.canonicalize().unwrap();
+    assert!(
+        f.sidecars()
+            .iter()
+            .all(|(_, sidecar)| sidecar["root"] == json!(canonical)),
+        "{:?}",
+        f.sidecars()
+    );
+    f.bash(
+        "legacy",
+        &one,
+        "t2",
+        "cd ../two && cargo test",
+        &Run::Pass("test result: ok"),
+    );
+    f.end("legacy", &one);
+    assert_eq!(f.outcome_in("legacy", "one"), "success");
+    assert_eq!(f.outcome_in("legacy", "two"), "success");
 }

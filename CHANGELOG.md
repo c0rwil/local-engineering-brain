@@ -221,6 +221,16 @@ not yet stable, and the schema version is 7.
 
 ### Fixed
 
+- In a session that works in several repositories, a verification in one
+  repository no longer leaves another repository's earlier pass unknown, which
+  kept that episode from closing as success. An episode recorded its checkout
+  only at its first resolved verification. Until then, the write-ahead marked
+  every episode. Episodes now record the checkout a tool call used and the
+  project's registered checkouts when they open (`/api/v1/projects/checkouts`).
+  Episodes from an earlier build get them at the next prompt or verification.
+  A known directory outside every checkout marks no episode. A `cd` that may
+  not take effect is bounded by the tool's directory when every change is a
+  relative descent. A truly unknown directory still marks every episode.
 - Hooks resolve paths anywhere inside a registered folder that is not a Git
   repository. Before, only paths at the folder's root resolved: reads, edits
   and verifications in its subdirectories were dropped, and `engram index` or
