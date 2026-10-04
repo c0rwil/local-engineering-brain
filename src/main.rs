@@ -3011,6 +3011,7 @@ fn run_hook_payload(
             for (resolved, observed_paths) in hook_tool_projects(&client, &target_dir, &tool_paths)
             {
                 let project_id = resolved.resolved.project.id.clone();
+                let checkout_root = resolved.resolved.root.clone();
                 let Some((scope, session)) =
                     hook_episode(&client, &state_dir, &session_id, &project_id)
                 else {
@@ -3090,25 +3091,33 @@ fn run_hook_payload(
                         block_on(client.file_shape(&engram::daemon::FileShapeRequest {
                             project_id: project_id.clone(),
                             file_path: relative.clone(),
+                            repository_root: Some(checkout_root.clone()),
                         }))
                     else {
                         continue;
                     };
-                    let symbols: Vec<(String, String)> = shape
+                    let symbols: Vec<_> = shape
                         .symbols
                         .iter()
-                        .map(|symbol| (symbol.kind.clone(), symbol.label.clone()))
+                        .map(|symbol| (symbol.kind.clone(), symbol.label.clone(), symbol.lines))
                         .collect();
                     let callers: Vec<(String, String)> = shape
                         .callers
                         .iter()
                         .map(|caller| (caller.label.clone(), caller.file_path.clone()))
                         .collect();
+                    // Bounded by the client's whole-message cap, so a brief
+                    // that misses the remaining budget can still fit later.
                     if let Some(text) = engram::agenthooks::render_file_shape(
-                        &relative,
-                        &symbols,
-                        &callers,
-                        &shape.imports,
+                        &engram::agenthooks::FileBrief {
+                            file_path: &relative,
+                            symbols: &symbols,
+                            callers: &callers,
+                            imports: &shape.imports,
+                            size_bytes: shape.size_bytes,
+                        },
+                        config.context.large_file_bytes,
+                        byte_limit,
                     ) {
                         if text.len() <= byte_limit.saturating_sub(pretool_context.len())
                             && engram::agenthooks::mark_file_briefed(

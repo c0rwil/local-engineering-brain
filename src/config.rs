@@ -371,6 +371,10 @@ pub struct ContextConfig {
     /// callers and same-file shared calls) after all direct source pointers,
     /// within the remaining source budget. Disable for ablation.
     pub related_use_cues: bool,
+    /// A pre-tool file brief for a file of at least this many bytes states
+    /// its size on one line, since a whole-file read of it can exceed a
+    /// client's read limit. 0 disables the line.
+    pub large_file_bytes: u64,
 }
 
 /// Bounds and embedding provider for the optional semantic retrieval stage.
@@ -562,6 +566,7 @@ impl Default for ContextConfig {
             include_linked_projects: true,
             source_line_ranges: true,
             related_use_cues: true,
+            large_file_bytes: 64 * 1024,
         }
     }
 }
@@ -1469,10 +1474,12 @@ mod tests {
     fn source_line_ranges_and_related_use_cues_default_on_and_stay_ablatable() {
         let defaults = Config::default().context;
         assert!(defaults.source_line_ranges && defaults.related_use_cues);
+        assert_eq!(defaults.large_file_bytes, 65_536);
         let temp = TempDir::new().expect("temp dir");
-        for (body, ranges, uses) in [
-            ("source_line_ranges = false", false, true),
-            ("related_use_cues = false", true, false),
+        for (body, ranges, uses, large) in [
+            ("source_line_ranges = false", false, true, 65_536),
+            ("related_use_cues = false", true, false, 65_536),
+            ("large_file_bytes = 0", true, true, 0),
         ] {
             let path = temp.path().join("sources.toml");
             fs::write(&path, format!("[context]\n{body}\n")).expect("config");
@@ -1481,6 +1488,7 @@ mod tests {
                     .expect("source map options are configurable");
             assert_eq!(config.context.source_line_ranges, ranges, "{body}");
             assert_eq!(config.context.related_use_cues, uses, "{body}");
+            assert_eq!(config.context.large_file_bytes, large, "{body}");
         }
     }
 

@@ -12,6 +12,7 @@ use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
 
 use rusqlite::{OptionalExtension, params};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::Result;
@@ -26,7 +27,7 @@ const MAX_TOTAL_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_LEADING_LINES: usize = 16;
 
 /// A 1-based, inclusive line range.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LineRange {
     pub start: u32,
     pub end: u32,
@@ -182,6 +183,21 @@ impl<'a> LiveSpans<'a> {
             Some(FileState::Changed) => SpanCheck::Changed,
             Some(FileState::Unavailable) | None => SpanCheck::Unavailable,
         })
+    }
+
+    /// Size of a repository file in this checkout, under the same path rules
+    /// as a range check. `None` without a usable root, or for a missing,
+    /// symlinked or escaping path.
+    #[must_use]
+    pub fn checkout_size(&self, relative: &str) -> Option<u64> {
+        let root = self.root.as_deref()?;
+        let path = contained_path(root, relative)?;
+        let metadata = std::fs::symlink_metadata(&path).ok()?;
+        (metadata.file_type().is_file()
+            && path
+                .canonicalize()
+                .is_ok_and(|resolved| resolved.starts_with(root)))
+        .then_some(metadata.len())
     }
 
     fn load(&mut self, relative: &str, digest: &str, size: u64) -> FileState {
@@ -429,6 +445,14 @@ Use it.
         assert_eq!(check(&repo, "Engine::run"), current(10, 13));
         assert_eq!(check(&repo, "helper"), current(16, 18));
         assert_eq!(LineRange { start: 3, end: 7 }.to_string(), "3-7");
+        let spans = LiveSpans::new(&repo.database, repo.id().as_str(), Some(&repo.root));
+        assert_eq!(
+            spans.checkout_size("src/lib.rs"),
+            Some(u64::try_from(SOURCE.len()).unwrap())
+        );
+        for missing in ["src/missing.rs", "../repo/src/lib.rs", "src", ""] {
+            assert_eq!(spans.checkout_size(missing), None, "{missing}");
+        }
     }
 
     #[test]
@@ -467,6 +491,11 @@ Use it.
         std::fs::remove_file(repo.root.join("src/lib.rs")).unwrap();
         std::os::unix::fs::symlink(&outside, repo.root.join("src/lib.rs")).unwrap();
         assert_eq!(check(&repo, "helper"), SpanCheck::Unavailable);
+        assert_eq!(
+            LiveSpans::new(&repo.database, repo.id().as_str(), Some(&repo.root))
+                .checkout_size("src/lib.rs"),
+            None
+        );
         // A corrupted indexed path cannot climb out of the checkout either.
         repo.database
             .write_immediate(|tx| {
@@ -503,6 +532,10 @@ Use it.
         assert_eq!(
             LiveSpans::disabled(&repo.database).check(&helper).unwrap(),
             SpanCheck::Unavailable
+        );
+        assert_eq!(
+            LiveSpans::disabled(&repo.database).checkout_size("src/lib.rs"),
+            None
         );
         assert_eq!(
             LiveSpans::new(&repo.database, repo.id().as_str(), Some(&repo.root))

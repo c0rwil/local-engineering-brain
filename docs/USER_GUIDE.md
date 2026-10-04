@@ -161,7 +161,7 @@ What the hooks do, invisibly, in every session — five injection moments:
 |---|---|---|
 | session-start | session opens | standing brief: open episodes from earlier sessions (resume or close), last completed outcome. In an untracked git repo: a one-line enrollment hint, nothing else |
 | prompt | first prompt of a session | compiles task context and retains a redacted prompt; the first relevant tool use opens the episode |
-| pretool | before file tools, Codex patches or Codex shell calls | repo-scoped task context; file graph shapes when explicit paths are available. Multi-file patches route to their edited repositories |
+| pretool | before file tools, Codex patches or Codex shell calls | repo-scoped task context; file briefs with checked line spans when explicit paths are available (see **File briefs** below). Multi-file patches route to their edited repositories |
 | bash | after each Bash tool call | recognizable verifications (test/build/lint/typecheck) recorded as deterministic evidence with the exit status the client reported — failures included. Runs whose status a pipe or `||` hides are not recorded (see [Verification evidence from hooks](#verification-evidence-from-hooks)) |
 | session-end | session closes | episode auto-closed conservatively (success only if the last verification passed) |
 
@@ -216,6 +216,18 @@ indexed file once; definitions in unchanged files keep their node ids and the
 lessons anchored to them. File shapes, module maps and the vault match a call
 to a definition by name alone, so they count it only when exactly one file
 defines that name.
+
+**File briefs.** Before a file tool touches a file, the pretool hook lists what
+the index knows about it once per conversation: up to 20 definitions in file
+order, callers in other files and imports. When the checkout's copy still has
+the indexed digest, each definition carries its lines, checked as for the
+task source map (`Defines (line spans): Engine::run (Function) 120-188`);
+otherwise the list has no spans. A file of at least `context.large_file_bytes`
+(default 65536; 0 turns it off) gets one more line with its size. A brief
+always fits the client's limit for one response, 8,000 bytes for Cursor and
+the injected-token budget for Codex. It drops its spans when only that form
+fits, and a brief that does not fit what is left of a call's budget waits for
+a later call. `context.source_line_ranges = false` also removes the spans.
 
 **Codex subagents.** Codex runs subagents in their own threads, but their
 hooks carry the parent conversation's session id. Engram counts a spawned
