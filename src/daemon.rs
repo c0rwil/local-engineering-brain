@@ -113,6 +113,7 @@ const API_MEMORY_PROVENANCE: &str = "/api/v1/memories/provenance";
 const API_EFFECTIVENESS: &str = "/api/v1/effectiveness";
 const API_USAGE_RECORD: &str = "/api/v1/effectiveness/usage";
 const API_TOOL_OBSERVATION: &str = "/api/v1/effectiveness/tool";
+const API_VERIFICATION_OBSERVATION: &str = "/api/v1/effectiveness/verification";
 const API_JUDGE_STATUS: &str = "/api/v1/judge";
 const API_JUDGE_RUN: &str = "/api/v1/judge/run";
 const API_PROJECT_MERGE: &str = "/api/v1/projects/merge";
@@ -1016,6 +1017,22 @@ impl DaemonClient {
     ) -> Result<crate::effectiveness::ToolObservationReceipt> {
         self.request(hyper::Method::POST, API_TOOL_OBSERVATION, Some(request))
             .await
+    }
+
+    /// Queue one hook-observed verification run for the effectiveness report.
+    /// Returns once the daemon has validated, timestamped and queued it.
+    /// # Errors
+    /// Returns validation, backpressure or transport errors.
+    pub async fn record_verification_observation(
+        &self,
+        request: &crate::effectiveness::VerificationObservationRequest,
+    ) -> Result<crate::effectiveness::VerificationObservationReceipt> {
+        self.request(
+            hyper::Method::POST,
+            API_VERIFICATION_OBSERVATION,
+            Some(request),
+        )
+        .await
     }
 
     /// Inspect automatic review configuration and recent decisions.
@@ -2141,6 +2158,10 @@ where
         .route(API_EFFECTIVENESS, post(effectiveness_report))
         .route(API_USAGE_RECORD, post(record_usage))
         .route(API_TOOL_OBSERVATION, post(record_tool_observation))
+        .route(
+            API_VERIFICATION_OBSERVATION,
+            post(record_verification_observation),
+        )
         .route(API_JUDGE_STATUS, get(judge_status))
         .route(API_JUDGE_RUN, post(judge_run))
         .route("/api/v1/product/lessons", post(lesson_mutate))
@@ -5541,6 +5562,38 @@ async fn record_tool_observation(
         })
         .map_err(|error| ApiError::from_core(&error))?;
     Ok(Json(crate::effectiveness::ToolObservationReceipt {
+        call_id,
+        observed_at_ms,
+        queued: true,
+    }))
+}
+
+async fn record_verification_observation(
+    State(state): State<DaemonState>,
+    Json(mut request): Json<crate::effectiveness::VerificationObservationRequest>,
+) -> std::result::Result<Json<crate::effectiveness::VerificationObservationReceipt>, ApiError> {
+    admit_work(&state, MutationPriority::Analytics)?;
+    // Labels come from external adapters; never persist credentials.
+    request.source = state.redactor.redact_text(&request.source);
+    let call_id = request
+        .call_id()
+        .map_err(|error| ApiError::from_core(&error))?;
+    // Time the run on receipt: a note's run must stay ordered before the
+    // runs that follow it, whenever the low-priority writes commit.
+    let observed_at_ms = job_time_ms();
+    let store = crate::effectiveness::EffectivenessStore::new(state.database.clone());
+    // Acknowledge once queued, like tool observations: the post-tool hook
+    // must not wait behind every higher-priority write. Scope errors are
+    // logged, not returned.
+    let _queued = state
+        .scheduler
+        .submit(MutationPriority::Analytics, move || {
+            store
+                .record_verification_observation_at(&request, observed_at_ms)
+                .inspect_err(|error| eprintln!("verification observation not recorded: {error}"))
+        })
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(crate::effectiveness::VerificationObservationReceipt {
         call_id,
         observed_at_ms,
         queued: true,

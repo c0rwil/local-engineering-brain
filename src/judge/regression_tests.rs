@@ -944,3 +944,263 @@ fn conflicts_must_be_presented_and_rejections_quarantine_nothing() {
         MemoryStatus::Active
     );
 }
+
+// Touched files the indexer does not cover, and recorded revisions that the
+// live HEAD has moved past. Measured after integration: 3 reviews blocked on
+// unindexed files and 28 on revision differences.
+
+const CONFIG: &[u8] = b"retries: 3\n";
+
+impl Lab {
+    /// Replace a review's evidence with one hook-observed verification whose
+    /// hook-only provenance recorded these checkout-relative source digests.
+    fn hook_evidence(&self, review: &str, revision: Option<&str>, digests: &[(&str, &[u8])]) {
+        let task: String = self
+            .database
+            .with_reader(|c| {
+                Ok(c.query_row(
+                    "SELECT task_id FROM lesson_reviews WHERE id=?1",
+                    [review],
+                    |r| r.get(0),
+                )?)
+            })
+            .expect("review task");
+        let digests: serde_json::Map<String, Value> = digests
+            .iter()
+            .map(|(path, bytes)| ((*path).to_owned(), json!(crate::experience::sha256(bytes))))
+            .collect();
+        let metadata = json!({"source": crate::agenthooks::CLAUDE_HOOK_SOURCE,
+            "exit_status": "success_event", "source_digests": digests});
+        let record = ExperienceStore::new(self.database.clone())
+            .record_evidence(
+                &self.project,
+                Some(&crate::ids::TaskId::parse(&task).expect("task")),
+                None,
+                "test_result",
+                EvidenceStrength::Deterministic,
+                revision,
+                Some("cargo test rejects_missing_token"),
+                Some(0),
+                ARTIFACT.as_bytes(),
+                &metadata,
+            )
+            .expect("hook evidence");
+        self.database
+            .write_immediate(|tx| {
+                tx.execute(
+                    "UPDATE lesson_reviews SET evidence_ids_json=json_array(?1),
+                     updated_at_ms=updated_at_ms+1 WHERE id=?2",
+                    params![record.id.as_str(), review],
+                )?;
+                Ok(())
+            })
+            .expect("review evidence");
+    }
+
+    fn commit(&self, path: &str, bytes: &[u8], message: &str) {
+        std::fs::write(self.root.join(path), bytes).expect("write");
+        git(&self.root, &["add", path]);
+        git(&self.root, &["commit", "--quiet", "-m", message]);
+    }
+}
+
+fn live_file<'a>(packet: &'a JudgePacket, path: &str) -> &'a Value {
+    packet.source_anchors["live"]["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|file| file["path"] == path)
+        .expect("touched file")
+}
+
+#[test]
+fn hook_digests_of_the_live_content_certify_unindexed_files() {
+    let lab = Lab::new(false);
+    std::fs::create_dir_all(lab.root.join("deploy")).expect("deploy");
+    std::fs::write(lab.root.join("deploy/app.yml"), CONFIG).expect("config");
+    let review = lab.complete(
+        vec!["src/auth.rs".to_owned(), "deploy/app.yml".to_owned()],
+        None,
+        false,
+        CLAIM,
+    );
+    lab.hook_evidence(
+        &review,
+        None,
+        &[("deploy/app.yml", CONFIG), ("src/auth.rs", SOURCE)],
+    );
+    let packet = lab.packet(&review);
+    assert!(
+        packet.blocked_reason.is_none(),
+        "{:?}",
+        packet.blocked_reason
+    );
+    let config = live_file(&packet, "deploy/app.yml");
+    assert!(config["indexed_digest"].is_null(), "the indexer skips YAML");
+    assert_eq!(config["hook_digest_matches_live"], true);
+    assert!(live_file(&packet, "src/auth.rs")["hook_digest_matches_live"].is_null());
+    let audit = lab
+        .store
+        .apply(
+            &lab.config,
+            &packet,
+            &verdict(&packet, VerdictDecision::Accept),
+        )
+        .expect("apply");
+    assert_eq!(audit.outcome, "accepted");
+}
+
+#[test]
+fn unindexed_files_without_matching_hook_digests_stay_deferred() {
+    let lab = Lab::new(false);
+    std::fs::create_dir_all(lab.root.join("deploy")).expect("deploy");
+    std::fs::write(lab.root.join("deploy/app.yml"), CONFIG).expect("config");
+    let touched = || vec!["deploy/app.yml".to_owned()];
+    // Agent-reported evidence carries no hook digests and gets no new path.
+    let agent = lab.complete(touched(), None, true, CLAIM);
+    assert_eq!(
+        lab.packet(&agent).blocked_reason.as_deref(),
+        Some(sources::UNANCHORED_UNOBSERVED)
+    );
+    // A hook run that did not record this file.
+    let unrecorded = lab.complete(touched(), None, false, CLAIM);
+    lab.hook_evidence(&unrecorded, None, &[("src/auth.rs", SOURCE)]);
+    assert_eq!(
+        lab.packet(&unrecorded).blocked_reason.as_deref(),
+        Some(sources::UNANCHORED_UNOBSERVED)
+    );
+    // The file changed after the hook-observed run: the digests disagree.
+    let changed = lab.complete(touched(), None, false, CLAIM);
+    lab.hook_evidence(&changed, None, &[("deploy/app.yml", b"retries: 1\n")]);
+    assert_eq!(
+        lab.packet(&changed).blocked_reason.as_deref(),
+        Some(sources::UNANCHORED_CHANGED)
+    );
+    // Editing the file after a matching run blocks it the same way.
+    let matched = lab.complete(touched(), None, false, CLAIM);
+    lab.hook_evidence(&matched, None, &[("deploy/app.yml", CONFIG)]);
+    assert!(lab.packet(&matched).blocked_reason.is_none());
+    std::fs::write(lab.root.join("deploy/app.yml"), b"retries: 9\n").expect("edit");
+    assert_eq!(
+        lab.packet(&matched).blocked_reason.as_deref(),
+        Some(sources::UNANCHORED_CHANGED)
+    );
+    // Files in an explicitly linked repository keep the index requirement.
+    let other = lab.temp.path().join("client");
+    std::fs::create_dir_all(&other).expect("linked repository");
+    std::fs::write(other.join("client.yml"), CONFIG).expect("linked config");
+    let linked = lab.register(&other);
+    lab.database
+        .write_immediate(|tx| {
+            tx.execute("INSERT INTO project_links(project_id,linked_project_id,relation,note,created_at_ms) VALUES(?1,?2,'uses',NULL,0)",
+                params![lab.project.as_str(), linked.as_str()])?;
+            Ok(())
+        })
+        .expect("link");
+    let recorded = other.canonicalize().expect("canonical").join("client.yml");
+    let review = lab.complete(vec![recorded.display().to_string()], None, false, CLAIM);
+    lab.hook_evidence(&review, None, &[("client.yml", CONFIG)]);
+    assert_eq!(
+        lab.packet(&review).blocked_reason.as_deref(),
+        Some(sources::NOT_INDEXED)
+    );
+}
+
+#[test]
+fn a_newer_head_is_immaterial_when_the_touched_files_are_unchanged() {
+    let lab = Lab::new(true);
+    let recorded = git(&lab.root, &["rev-parse", "HEAD"]);
+    // Agents often record abbreviated hashes (migration 0019 accepts 7+ digits).
+    let short = recorded[..7].to_owned();
+    let review = lab.complete(vec!["src/auth.rs".to_owned()], Some(&short), true, CLAIM);
+    lab.commit("README.md", b"notes\n", "unrelated");
+    let packet = lab.packet(&review);
+    assert!(
+        packet.blocked_reason.is_none(),
+        "{:?}",
+        packet.blocked_reason
+    );
+    assert_ne!(packet.source_anchors["live"]["head"], recorded.as_str());
+    assert_eq!(
+        packet.source_anchors["live"]["touched_files_unchanged_since"],
+        json!([short])
+    );
+    let packets = lab.pending();
+    assert_eq!(packets.len(), 1);
+    lab.store
+        .apply(
+            &lab.config,
+            &packets[0],
+            &verdict(&packets[0], VerdictDecision::Defer),
+        )
+        .expect("defer");
+    for round in 0..2 {
+        lab.commit("README.md", format!("notes {round}\n").as_bytes(), "more");
+        assert!(lab.pending().is_empty(), "unrelated commits re-judged it");
+    }
+    assert_eq!(lab.judgments(), 1);
+    // Changing the touched file changes the gate result: recorded once.
+    let changed = b"fn authorize(_: Option<&str>) -> bool { true }\n";
+    lab.commit("src/auth.rs", changed, "change the touched file");
+    lab.index(&lab.project, "src/auth.rs", changed, "scan-a", 0);
+    for packet in lab.pending() {
+        assert!(
+            packet
+                .blocked_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("revision differs")),
+            "{:?}",
+            packet.blocked_reason
+        );
+        lab.store
+            .apply(&lab.config, &packet, &deferred_evaluation(&packet, "gate"))
+            .expect("defer");
+    }
+    lab.commit("README.md", b"notes again\n", "unrelated again");
+    assert!(lab.pending().is_empty());
+    assert_eq!(lab.judgments(), 2);
+}
+
+#[test]
+fn changed_files_and_unknown_revisions_keep_the_revision_gate() {
+    let lab = Lab::new(true);
+    let recorded = git(&lab.root, &["rev-parse", "HEAD"]);
+    let reason = |review: &str| lab.packet(review).blocked_reason.unwrap_or_default();
+    // The touched file changed between the recorded revision and HEAD; the
+    // index already holds the new bytes, so only the revision check differs.
+    let changed_review = lab.complete(vec!["src/auth.rs".to_owned()], Some(&recorded), true, CLAIM);
+    let changed = b"fn authorize(_: Option<&str>) -> bool { true }\n";
+    lab.commit("src/auth.rs", changed, "change the touched file");
+    lab.index(&lab.project, "src/auth.rs", changed, "scan-a", 0);
+    assert!(reason(&changed_review).contains("revision differs"));
+    assert!(
+        lab.packet(&changed_review).source_anchors["live"]
+            .get("touched_files_unchanged_since")
+            .is_none()
+    );
+    // A revision the repository does not contain.
+    let unknown = "0123456789abcdef0123456789abcdef01234567";
+    let missing = lab.complete(vec!["src/auth.rs".to_owned()], Some(unknown), true, CLAIM);
+    assert!(reason(&missing).contains("revision differs"));
+    // Fewer than seven hexadecimal digits is never passed to Git.
+    let current = git(&lab.root, &["rev-parse", "HEAD"]);
+    lab.commit("README.md", b"notes\n", "unrelated");
+    let too_short = lab.complete(
+        vec!["src/auth.rs".to_owned()],
+        Some(&current[..6]),
+        true,
+        CLAIM,
+    );
+    assert!(reason(&too_short).contains("revision differs"));
+    // The same revision at seven digits passes: the touched file is unchanged.
+    let seven = lab.complete(
+        vec!["src/auth.rs".to_owned()],
+        Some(&current[..7]),
+        true,
+        CLAIM,
+    );
+    assert_eq!(lab.packet(&seven).blocked_reason, None);
+    // Without touched files nothing shows that the difference is immaterial.
+    let untouched = lab.complete(Vec::new(), Some(&current), true, CLAIM);
+    assert!(reason(&untouched).contains("revision differs"));
+}

@@ -158,6 +158,67 @@ production the safety screen holds all nine adversarial fixtures before inferenc
 `tests/injection_defenses.rs`); this harness measures the model when such text gets past
 the screen.
 
+## Unindexed files and immaterial revisions
+
+The integrated judge (738d702) still blocked reviews in two ways that no index
+refresh could clear:
+
+- a touched file the indexer does not parse had no index anchor;
+- a recorded task or evidence revision was older than the live HEAD.
+
+This change adds two paths. First, an unindexed file is accepted when a hook-recorded
+`source_digests` entry equals its live SHA-256. Second, an older revision is immaterial
+when every touched file has the same bytes at that revision, live and in the index.
+
+Both versions swept separate copies of the pre-roadmap backup
+(`pre-roadmap-20261004.sqlite`, schema 16, migrated to 19 in the copy), prior judgments
+removed, 135 pending reviews, against today's checkouts. No model was called.
+
+| Gate result | Before (738d702) | After |
+| --- | ---: | ---: |
+| No readable, independently verified evidence | 90 | 90 |
+| Unindexed file without a matching hook-recorded digest | — | 30 |
+| Touched file has no indexed anchor | 3 | 0 |
+| Evidence revision differs from the live checkout | 15 | 2 |
+| Source task revision differs from the live checkout | 13 | 3 |
+| Touched source file is missing | 6 | 2 |
+| Touched file differs from indexed source | 3 | 3 |
+| Touched path is outside every registered checkout | 3 | 3 |
+| Passed every gate (model would be called) | 2 | 2 |
+| A second sweep of the unchanged copy | 0 | 0 |
+
+No additional review reaches the model in this snapshot.
+
+- **Unindexed files.** The 30 reviews with unindexed touched files have no hook-recorded
+  digests. The backup predates hook provenance: none of its 500 evidence rows carries
+  `source_digests`. Their agent-reported evidence now stops at this precise reason, which
+  replaces the generic, revision and missing-file reasons they showed before.
+- **Older revisions.** A read-only diagnostic examined 73 reviews whose recorded revision
+  differs from the live HEAD. It counted these before the evidence gate, so it also
+  covers reviews the table reports for other reasons:
+  - 45 have a touched file that changed since that revision;
+  - 22 have a touched file that is unreadable, missing or in another checkout;
+  - 4 have no touched files;
+  - 2 have identical bytes at the revision and live, but an index that differs from
+    the live file.
+
+Of the 344 file comparisons, 91 were identical and 253 had changed:
+
+| Changed files | Count |
+| --- | ---: |
+| Live content equals the first commit after the recorded revision that touched the file | 47 |
+| Changed only in the working tree | 49 |
+| Changed again after that first commit | 157 |
+
+The 47 suggest the agent recorded the HEAD before committing the change it tested. The
+recorded revision does not pin tested content that was not yet committed. Hook-recorded
+digests do pin it.
+
+Smoke check: the 2 reviews that pass every gate were sent to the local judge
+(`engram-judge`, schema-constrained), one at a time. Both decisions were `defer`, with no
+citations, no named conflicts and no errors (1,275 and 1,782 input tokens; 3.9 s and
+11.0 s). Nothing was applied.
+
 ## Limitations
 
 - 15 synthetic cases are a smoke test, not statistical calibration or real-repository
@@ -175,3 +236,7 @@ the screen.
 - Mutation checks: adding live state back to the dedupe key fails the churn regression;
   treating absolute paths as invalid fails the three containment regressions; requiring
   full-length revisions fails the worktree regression.
+- Unindexed files and immaterial revisions: the same gates passed (588 Rust tests, 1
+  ignored helper; 231 Python tests from `python3 -B -m unittest discover -s tests -p
+  'test_*.py'`). Disabling the hook-digest match fails both unindexed-file regressions.
+  Disabling the per-file revision comparison fails both revision regressions.

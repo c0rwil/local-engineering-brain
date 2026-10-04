@@ -167,6 +167,35 @@ repository root; absolute paths and empty, `.` or `..` segments are rejected wit
 }
 ```
 
+### Verification status
+
+Post-tool hooks also count every test, lint, type-check and build run they
+recognize. Reports then show how many runs carry an exit status that Engram can
+record, and how that share moves after a [status
+note](USER_GUIDE.md#status-notes-when-a-run-cannot-be-recorded). A record keeps
+three things: the verification kind, the cause that hid the status (`pipe`,
+`sequence`, `or`, `background`, `directory` or `syntax`) and whether the hook
+delivered a note. It never keeps the command, its output or paths. Calls need
+agent-reported session and tool-use IDs. Records follow the
+`[jobs] context_run_retention_days` window. Hooks send them to
+`POST /api/v1/effectiveness/verification`. Like tool observations, the daemon
+validates them, stamps the receipt time and queues a lowest-priority write
+without waiting for the commit. Hooks wait at most 500 ms.
+
+Every report has `verification_status` for the workspace and for each repository:
+
+- `runs`: recognized runs, the runs with a recordable status, and their share.
+- `notes` and `noted_conversations`.
+- `before_note` and `after_note`: runs in conversations that received a note,
+  split at the first note, which may fall in an earlier period. The run that
+  prompted the note counts before it.
+- `without_note`: runs in conversations without a note. Either every run there
+  was recordable, notes were off (brain-off mode), or no note could be
+  delivered.
+- `hidden_by_reason`: hidden runs by cause.
+
+The split is observational, not a controlled trial.
+
 The usage ledger records reported input/output/cache tokens, tool calls and cost.
 Missing values stay unknown. Coverage appears beside totals; partial observations
 are not the full cost of a session. Cache token categories remain separate because
@@ -262,6 +291,20 @@ the same bytes eligible. Evidence reported by agents carries no hook digests and
 must be newer than every touched file's indexed version. The hook records only
 runs whose exit status the client reported; see the user guide on
 [verification evidence from hooks](USER_GUIDE.md#verification-evidence-from-hooks).
+
+Some touched files have no index anchor, for example YAML or Terraform files that
+the indexer does not parse. Evidence certifies such a file only when its hook-recorded
+digest equals the file's live SHA-256. Evidence reported by agents has no such digests,
+so these tasks stay deferred until a native hook records a verification. A digest
+that no longer matches means the file changed after the verification. Files in
+linked repositories still need an index anchor.
+
+A recorded task or evidence revision older than the live HEAD is immaterial when
+every touched file has the same bytes at that revision, in the live checkout and in
+the index. The judge compares them with one bounded `git cat-file --batch` read and
+passes only hexadecimal revisions of at least seven digits to Git. A missing or
+ambiguous revision, a changed file, an unreadable file or a task without touched
+files keeps the deferral.
 
 Hook provenance (a hook `source` label and `source_digests`) is attached only
 through the daemon's hook evidence endpoint, which the CLI and MCP do not use;

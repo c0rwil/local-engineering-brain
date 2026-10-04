@@ -104,6 +104,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         include_str!("migrations/0019_abbreviated_commit_evidence.sql"),
     ),
     (
+        20,
+        "verification_observations",
+        include_str!("migrations/0020_verification_observations.sql"),
+    ),
+    (
         21,
         "project_merge",
         include_str!("migrations/0021_project_merge.sql"),

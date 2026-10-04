@@ -143,6 +143,10 @@ pub const TABLE_ROLES: &[(&str, TableRole)] = &[
         TableRole::Moved(CollisionRule::UnionPaths),
     ),
     (
+        "verification_observations",
+        TableRole::Moved(CollisionRule::KeepSurvivor),
+    ),
+    (
         "project_merge_anchors",
         TableRole::Moved(CollisionRule::Impossible),
     ),
