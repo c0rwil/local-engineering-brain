@@ -323,6 +323,70 @@ Only the hook path can attach a hook label and digests: the daemon removes them
 from metadata that the CLI, MCP or other clients supply. Only new runs carry
 digests; existing evidence is not changed.
 
+### Status notes: when a run cannot be recorded
+
+When the post-tool hook recognizes a verification whose exit status the shell
+hid, it tells the agent in that same hook's output. The note is one short
+reference-data paragraph that names the cause and shows the same command in a
+form Engram can record:
+
+```text
+# Engram verification note (reference data)
+Engram did not record this verification's result because its exit status was hidden: a pipe reports its last command's exit status, not the verification's. To record it, run `set -o pipefail; cargo test 2>&1 | tail -20`. This note appears once per session for this cause.
+```
+
+The causes are:
+
+- a pipe without `pipefail`;
+- a command after the verification joined by `;` or a newline;
+- `||`;
+- a background run (`&`, or Claude Code's `run_in_background`);
+- a directory change that may not take effect;
+- shell syntax Engram does not read (subshells, groups, here-documents,
+  backquotes).
+
+The suggested form keeps the setup and the verifications joined by `&&` and
+drops the commands after the last verification. It adds `set -o pipefail;` when
+the output is still piped. It replaces `head` and `grep` filters with
+`tail -n 40`, because under `pipefail` `head` can stop the run early and `grep`
+fails when nothing matches. Engram checks the suggested form with the same
+reader that records results. When it cannot build a checked form (for example a
+`cd` with variables), the note gives the general fix instead.
+
+- **Once per conversation and cause.** Each session gets at most one note for
+  each cause. So does each subagent thread in it, such as Claude Code subagents
+  and Codex workers (payloads with an `agent_id`): a subagent has its own
+  context and does not see the main thread's note. When user- and
+  project-level hooks run concurrently, they deliver a single note between
+  them. A note that could not be written is offered again at the next hidden
+  run. Note claims age out with the other hook session files.
+- **Never in brain-off mode.** With `ENGRAM_MODE=off`, as `engram eval run` and
+  the launchers set it for the control arm, hooks still capture evidence but
+  never add a note.
+- **Same-call delivery on every client.** Each client's documented post-tool
+  context field carries the note, so the agent reads it right after the call:
+  - Claude Code: `hookSpecificOutput.additionalContext` on `PostToolUse` and
+    `PostToolUseFailure`.
+  - Codex: the same field on `PostToolUse`, which also runs for failed
+    commands.
+  - Cursor: `additional_context` on `postToolUse` and `postToolUseFailure`.
+
+  A note is at most 900 bytes, well inside Codex's per-message limit. In
+  Cursor the note shares the call's single response with any repository
+  context and relayed messages. Together they stay under the 10,000 characters
+  that Cursor accepts.
+- **Measured.** The effectiveness ledger counts every recognized verification
+  run. It keeps the kind, the cause and whether a note went out, never the
+  command or its output. `engram effectiveness` reports:
+  - the share of runs with a recordable exit status;
+  - the notes delivered;
+  - the recordable share before and after each conversation's first note;
+  - the hidden runs by cause.
+
+  `--json` adds the same figures for each repository (`verification_status`).
+  The comparison is observational: the run that prompted a note counts before
+  it.
+
 ## 6. Day to day: what's automatic vs. what you do
 
 **Automatic with active native hooks:** context injection, evidence capture and

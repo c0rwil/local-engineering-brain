@@ -103,9 +103,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "abbreviated_commit_evidence",
         include_str!("migrations/0019_abbreviated_commit_evidence.sql"),
     ),
+    (
+        20,
+        "verification_observations",
+        include_str!("migrations/0020_verification_observations.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 19;
+pub const LATEST_MIGRATION_VERSION: i64 = 20;
 
 /// Reopenable handle to the canonical database.
 ///

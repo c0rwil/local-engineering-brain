@@ -167,6 +167,35 @@ repository root; absolute paths and empty, `.` or `..` segments are rejected wit
 }
 ```
 
+### Verification status
+
+Post-tool hooks also count every test, lint, type-check and build run they
+recognize. Reports then show how many runs carry an exit status that Engram can
+record, and how that share moves after a [status
+note](USER_GUIDE.md#status-notes-when-a-run-cannot-be-recorded). A record keeps
+three things: the verification kind, the cause that hid the status (`pipe`,
+`sequence`, `or`, `background`, `directory` or `syntax`) and whether the hook
+delivered a note. It never keeps the command, its output or paths. Calls need
+agent-reported session and tool-use IDs. Records follow the
+`[jobs] context_run_retention_days` window. Hooks send them to
+`POST /api/v1/effectiveness/verification`. Like tool observations, the daemon
+validates them, stamps the receipt time and queues a lowest-priority write
+without waiting for the commit. Hooks wait at most 500 ms.
+
+Every report has `verification_status` for the workspace and for each repository:
+
+- `runs`: recognized runs, the runs with a recordable status, and their share.
+- `notes` and `noted_conversations`.
+- `before_note` and `after_note`: runs in conversations that received a note,
+  split at the first note, which may fall in an earlier period. The run that
+  prompted the note counts before it.
+- `without_note`: runs in conversations without a note. Either every run there
+  was recordable, notes were off (brain-off mode), or no note could be
+  delivered.
+- `hidden_by_reason`: hidden runs by cause.
+
+The split is observational, not a controlled trial.
+
 The usage ledger records reported input/output/cache tokens, tool calls and cost.
 Missing values stay unknown. Coverage appears beside totals; partial observations
 are not the full cost of a session. Cache token categories remain separate because

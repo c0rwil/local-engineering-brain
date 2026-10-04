@@ -865,6 +865,27 @@ impl JobExecutor {
                 break;
             }
         }
+        // So do hook-observed verification runs.
+        let mut deleted_verifications = 0_u64;
+        let mut verifications_truncated = true;
+        for _ in 0..GC_MAX_BATCHES {
+            let database = self.database.clone();
+            let batch = self
+                .scheduler
+                .submit(MutationPriority::BackgroundLearning, move || {
+                    crate::effectiveness::delete_verification_observation_batch(
+                        &database,
+                        cutoff_ms,
+                        GC_BATCH_ROWS,
+                    )
+                })?
+                .wait()?;
+            deleted_verifications = deleted_verifications.saturating_add(batch);
+            if usize::try_from(batch).unwrap_or(usize::MAX) < GC_BATCH_ROWS {
+                verifications_truncated = false;
+                break;
+            }
+        }
         let gc_database = self.database.clone();
         let orphans_removed = self
             .scheduler
@@ -881,10 +902,11 @@ impl JobExecutor {
         Ok(serde_json::json!({
             "context_runs_deleted": deleted_runs,
             "tool_observations_deleted": deleted_observations,
+            "verification_observations_deleted": deleted_verifications,
             "orphan_blobs_removed": orphans_removed,
             "hook_session_files_removed": hook_session_files_removed,
             "stale_open_tasks_abandoned": stale_open_tasks_abandoned,
-            "truncated": truncated || observations_truncated,
+            "truncated": truncated || observations_truncated || verifications_truncated,
         }))
     }
 
