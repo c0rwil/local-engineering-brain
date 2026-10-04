@@ -52,6 +52,12 @@ const EMBEDDING_DIMENSION_U64: u64 = 256;
 /// can detect and rebuild incompatible vectors.
 pub const EMBEDDER_ID: &str = "engram-hashed-ngram-v1-d256";
 
+/// Every local model identity starts with this prefix. Any other identity
+/// belongs to a built-in embedder, of which only [`EMBEDDER_ID`] is current;
+/// older built-in identities (such as the pre-rename
+/// `leb-hashed-ngram-v1-d256`) are never searched and are dead state.
+pub const MODEL_IDENTITY_PREFIX: &str = "local:";
+
 /// Largest vector a local embedding model may return.
 pub const MAX_MODEL_DIMENSION: usize = 8_192;
 /// Largest number of texts sent in one embeddings request.
@@ -252,10 +258,10 @@ impl LocalEmbedderSettings {
     #[must_use]
     pub fn identity(&self) -> String {
         if self.document_prefix.is_empty() {
-            format!("local:{}", self.model)
+            format!("{MODEL_IDENTITY_PREFIX}{}", self.model)
         } else {
             let digest = crate::experience::sha256(self.document_prefix.as_bytes());
-            format!("local:{}#{}", self.model, &digest[..12])
+            format!("{MODEL_IDENTITY_PREFIX}{}#{}", self.model, &digest[..12])
         }
     }
 }
@@ -942,9 +948,11 @@ impl VectorIndex for SqliteVectorIndex {
         })
     }
 
-    /// Regenerate hashed vectors inside one canonical transaction. Model
-    /// vectors need an embedding endpoint, which must never be called while
-    /// holding the canonical writer: use [`rebuild_project`] for those.
+    /// Regenerate hashed vectors inside one canonical transaction, removing
+    /// rows of older built-in embedder identities on the way. Model vectors
+    /// need an embedding endpoint, which must never be called while holding
+    /// the canonical writer: use [`rebuild_project`] for those; their rows
+    /// are kept here.
     fn rebuild(&self, project_id: Option<&ProjectId>) -> Result<u64> {
         if self.embedder != EMBEDDER_ID {
             return Err(Error::Semantic(format!(
@@ -957,8 +965,13 @@ impl VectorIndex for SqliteVectorIndex {
         self.database.write_immediate(|transaction| {
             transaction.execute(
                 "DELETE FROM memory_vectors
-                 WHERE embedder = ?2 AND (?1 IS NULL OR project_id = ?1)",
-                params![project_id.map(ProjectId::as_str), EMBEDDER_ID],
+                 WHERE (?1 IS NULL OR project_id = ?1)
+                   AND (embedder = ?2 OR substr(embedder, 1, length(?3)) <> ?3)",
+                params![
+                    project_id.map(ProjectId::as_str),
+                    EMBEDDER_ID,
+                    MODEL_IDENTITY_PREFIX
+                ],
             )?;
             let sources = {
                 let mut statement = transaction.prepare(
@@ -2248,6 +2261,87 @@ mod tests {
         assert!(
             model_index.rebuild(Some(&project)).is_err(),
             "model vectors must never be embedded inside the canonical writer"
+        );
+    }
+
+    #[test]
+    fn hashed_rebuild_removes_legacy_builtin_rows_and_keeps_model_rows() {
+        const LEGACY: &str = "leb-hashed-ngram-v1-d256";
+        let (temp, database, project) = fixture();
+        let other_root = temp.path().join("other");
+        std::fs::create_dir(&other_root).expect("other root");
+        let other = ProjectRegistry::new(database.clone())
+            .resolve_or_register(&other_root)
+            .expect("other project")
+            .project
+            .id;
+        let memory = validated_memory(&database, &project, ABORT_CLAIM);
+        let foreign = validated_memory(&database, &other, LOG_CLAIM);
+        for (memory_id, project_id, embedder) in [
+            (&memory, &project, LEGACY),
+            (&memory, &project, "local:embed-a"),
+            (&foreign, &other, LEGACY),
+        ] {
+            database
+                .write_immediate(|transaction| {
+                    store_vector(
+                        transaction,
+                        memory_id,
+                        project_id.as_str(),
+                        embedder,
+                        &[1.0, 0.0],
+                        None,
+                        0,
+                    )
+                })
+                .expect("seed sidecar row");
+        }
+        assert_eq!(vector_rows(&database, LEGACY), 2);
+
+        let index = SqliteVectorIndex::new(database.clone(), 50_000);
+        assert_eq!(index.rebuild(Some(&project)).expect("scoped rebuild"), 1);
+        assert_eq!(
+            vector_rows(&database, LEGACY),
+            1,
+            "a scoped rebuild removes only its own project's legacy rows"
+        );
+        assert_eq!(
+            vector_rows(&database, "local:embed-a"),
+            1,
+            "model rows are left to the model rebuild"
+        );
+        assert_eq!(vector_rows(&database, EMBEDDER_ID), 2);
+
+        // The daemon's rebuild path without a local model cleans the same way.
+        let report = rebuild_project(&database, &MutationScheduler::start(4), None, &other, None)
+            .expect("project rebuild");
+        assert_eq!((report.vectors, report.model), (1, None));
+        assert_eq!(vector_rows(&database, LEGACY), 0);
+        assert_eq!(vector_rows(&database, "local:embed-a"), 1);
+        assert_eq!(vector_rows(&database, EMBEDDER_ID), 2);
+
+        database
+            .write_immediate(|transaction| {
+                store_vector(
+                    transaction,
+                    &foreign,
+                    other.as_str(),
+                    LEGACY,
+                    &[1.0, 0.0],
+                    None,
+                    0,
+                )
+            })
+            .expect("reseed legacy row");
+        assert_eq!(index.rebuild(None).expect("full rebuild"), 2);
+        assert_eq!(vector_rows(&database, LEGACY), 0);
+        assert_eq!(vector_rows(&database, "local:embed-a"), 1);
+        assert_eq!(vector_rows(&database, EMBEDDER_ID), 2);
+        assert!(
+            settings("http://127.0.0.1:1/v1/embeddings", "embed-a")
+                .identity()
+                .starts_with(MODEL_IDENTITY_PREFIX),
+            "every model identity lives in the namespace the cleanup keeps"
         );
     }
 
