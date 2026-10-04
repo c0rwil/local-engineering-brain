@@ -1,4 +1,5 @@
-//! Conservative redaction for durable human/agent-authored text.
+//! Conservative redaction for durable human/agent-authored text, plus
+//! prompt-injection screening and framing neutralization ([`injection`]).
 
 use std::sync::{Arc, OnceLock};
 
@@ -6,6 +7,14 @@ use regex::{Regex, RegexBuilder};
 use serde_json::Value;
 
 use crate::error::{Error, Result};
+
+pub mod injection;
+
+pub use injection::{
+    InjectionFinding, InjectionKind, SCREEN_VERSION, escape_char, hold_reason, is_invisible_format,
+    neutralize_block, neutralize_inline, screen_fields, screen_text, summarize,
+    validated_memory_check,
+};
 
 const SECRET_MARKERS: &[&str] = &[
     "api_key=",

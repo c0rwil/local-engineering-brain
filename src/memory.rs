@@ -363,6 +363,22 @@ impl MemoryStore {
                             .to_owned(),
                     ));
                 }
+                // Evidence proves behavior, not that the text is safe to inject.
+                let (claim, rationale): (String, String) = transaction.query_row(
+                    "SELECT claim, rationale FROM memories WHERE id = ?1",
+                    [id.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                let findings = crate::security::screen_fields([
+                    ("claim".to_owned(), claim.as_str()),
+                    ("rationale".to_owned(), rationale.as_str()),
+                ]);
+                if !findings.is_empty() {
+                    return Err(Error::Config(format!(
+                        "memory text matches prompt-injection patterns ({}); evidence-gated promotion is refused. A human can review it and promote with --human-override",
+                        crate::security::summarize(&findings)
+                    )));
+                }
             }
             transaction.execute(
                 "UPDATE memories

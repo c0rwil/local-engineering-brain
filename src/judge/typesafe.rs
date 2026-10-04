@@ -12,7 +12,7 @@ fn question(text: &str) -> Value {
         "criteria":{"true":"Directly established by the supplied observations within their exact scope and revision.","false":"False, speculative, not demonstrated, or unclear from the observations."}})
 }
 
-fn request(config: &JudgeConfig, packet: &JudgePacket) -> (Value, Vec<Citation>) {
+pub(super) fn request(config: &JudgeConfig, packet: &JudgePacket) -> (Value, Vec<Citation>) {
     let citations: Vec<Citation> = packet
         .evidence
         .iter()

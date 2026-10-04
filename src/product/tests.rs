@@ -370,6 +370,7 @@ fn completion_review_retry_expiry_and_purge_preserve_evidence_gates() {
             rationale: None,
             contradicts: vec![],
             reviewed_related: false,
+            acknowledge_security_flags: false,
         })
         .unwrap();
     let id = accepted.memory_id.unwrap();
@@ -433,7 +434,8 @@ fn unsupported_proposals_cannot_be_accepted_and_acceptance_remains_unknown() {
                 claim: None,
                 rationale: None,
                 contradicts: vec![],
-                reviewed_related: false
+                reviewed_related: false,
+                acknowledge_security_flags: false,
             })
             .is_err()
     );
@@ -460,6 +462,7 @@ fn purging_shared_memory_evidence_invalidates_product_observations() {
             rationale: None,
             contradicts: vec![],
             reviewed_related: false,
+            acknowledge_security_flags: false,
         })
         .unwrap();
     let item = json!({"type":"entity","value":{"kind":"service","name":"traffic","basis":"observed","anchors":[{"project_id":task.project_id,"evidence_id":result.evidence_ids[0]}]}});
@@ -511,7 +514,8 @@ fn failed_then_passing_verifications_do_not_poison_auto_proposals() {
                 claim: None,
                 rationale: None,
                 contradicts: vec![],
-                reviewed_related: false
+                reviewed_related: false,
+                acknowledge_security_flags: false,
             })
             .unwrap()
             .status,
@@ -539,6 +543,7 @@ fn rejected_duplicates_stay_rejected_and_reverification_renews_expiry() {
             rationale: None,
             contradicts: vec![],
             reviewed_related: false,
+            acknowledge_security_flags: false,
         })
     };
     let first = complete();

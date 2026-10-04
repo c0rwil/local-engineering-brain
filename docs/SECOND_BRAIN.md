@@ -196,6 +196,8 @@ The runtime must already be running. Engram does not download or launch a model.
 The adapter disables redirects, enforces loopback and bounds request/response size
 and time. A model's semantic judgment can still be wrong; inspect audit samples and
 test on held-out supported/unsupported lessons before trusting a new model widely.
+Proposals whose text or evidence matches prompt-injection patterns are held for
+human review and never sent to the model; see [SECURITY.md](SECURITY.md).
 
 A small Apple Silicon runtime can serve the local judge separately from a coding
 model. The tested MTPLX configuration uses a 4-bit Qwen3.5-4B model on port 8011:
