@@ -111,6 +111,7 @@ const API_ORIGIN_REFRESH: &str = "/api/v1/projects/origin-refresh";
 const API_MEMORY_PROVENANCE: &str = "/api/v1/memories/provenance";
 const API_EFFECTIVENESS: &str = "/api/v1/effectiveness";
 const API_USAGE_RECORD: &str = "/api/v1/effectiveness/usage";
+const API_TOOL_OBSERVATION: &str = "/api/v1/effectiveness/tool";
 const API_JUDGE_STATUS: &str = "/api/v1/judge";
 const API_JUDGE_RUN: &str = "/api/v1/judge/run";
 
@@ -914,6 +915,17 @@ impl DaemonClient {
         request: &crate::effectiveness::UsageRecordRequest,
     ) -> Result<crate::effectiveness::UsageRecordResult> {
         self.request(hyper::Method::POST, API_USAGE_RECORD, Some(request))
+            .await
+    }
+
+    /// Record or merge one hook observation of an agent tool call.
+    /// # Errors
+    /// Returns validation, scope or transport errors.
+    pub async fn record_tool_observation(
+        &self,
+        request: &crate::effectiveness::ToolObservationRequest,
+    ) -> Result<crate::effectiveness::ToolObservationResult> {
+        self.request(hyper::Method::POST, API_TOOL_OBSERVATION, Some(request))
             .await
     }
 
@@ -1938,6 +1950,7 @@ where
     let router = Router::new()
         .route(API_EFFECTIVENESS, post(effectiveness_report))
         .route(API_USAGE_RECORD, post(record_usage))
+        .route(API_TOOL_OBSERVATION, post(record_tool_observation))
         .route(API_JUDGE_STATUS, get(judge_status))
         .route(API_JUDGE_RUN, post(judge_run))
         .route("/api/v1/product/lessons", post(lesson_mutate))
@@ -4934,6 +4947,30 @@ async fn record_usage(
     let handle = state
         .scheduler
         .submit(MutationPriority::Analytics, move || store.record(&request))
+        .map_err(|error| ApiError::from_core(&error))?;
+    Ok(Json(wait_for_mutation(&state, handle).await?))
+}
+
+async fn record_tool_observation(
+    State(state): State<DaemonState>,
+    Json(mut request): Json<crate::effectiveness::ToolObservationRequest>,
+) -> std::result::Result<Json<crate::effectiveness::ToolObservationResult>, ApiError> {
+    admit_work(&state, MutationPriority::Analytics)?;
+    // Labels and paths come from external adapters; never persist credentials.
+    request.source = state.redactor.redact_text(&request.source);
+    request.tool_name = state.redactor.redact_text(&request.tool_name);
+    for path in &mut request.paths {
+        *path = state.redactor.redact_text(path);
+    }
+    // Time the observation on receipt, not when the low-priority write runs:
+    // a pre-tool touch must stay ordered before the context compiled after it.
+    let observed_at_ms = job_time_ms();
+    let store = crate::effectiveness::EffectivenessStore::new(state.database.clone());
+    let handle = state
+        .scheduler
+        .submit(MutationPriority::Analytics, move || {
+            store.record_tool_observation_at(&request, observed_at_ms)
+        })
         .map_err(|error| ApiError::from_core(&error))?;
     Ok(Json(wait_for_mutation(&state, handle).await?))
 }

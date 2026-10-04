@@ -2539,6 +2539,17 @@ fn run_hook_event(
                 else {
                     continue;
                 };
+                // Observe the touch before any context it triggers is compiled.
+                record_hook_tool_observation(
+                    &client,
+                    &state_dir,
+                    &scope,
+                    &session,
+                    &payload,
+                    &observed_paths,
+                    engram::effectiveness::ToolPhase::Pre,
+                    codex,
+                );
                 let _ = engram::agenthooks::remember_paths(&state_dir, &scope, &observed_paths);
                 let current_paths = engram::agenthooks::recent_paths(&state_dir, &scope);
                 // Capture each touched repository even if an earlier block used
@@ -2694,6 +2705,16 @@ fn run_hook_event(
                 };
                 // PostToolUse can be the only observed event for an edit.
                 let _ = engram::agenthooks::remember_paths(&state_dir, &scope, &paths);
+                record_hook_tool_observation(
+                    &client,
+                    &state_dir,
+                    &scope,
+                    &session,
+                    &payload,
+                    &paths,
+                    engram::effectiveness::post_tool_phase(&payload),
+                    codex,
+                );
                 if primary.is_none() {
                     primary = Some((scope, session));
                 }
@@ -2862,6 +2883,32 @@ fn record_hook_tool_usage(
             observed_at_ms: None,
         }),
     );
+}
+
+/// Observe one tool call for context-use attribution: action, repository-relative
+/// paths and Read flags/sizes only, never content, commands or error text.
+#[allow(clippy::too_many_arguments)]
+fn record_hook_tool_observation(
+    client: &engram::daemon::DaemonClient,
+    state_dir: &Path,
+    scope: &str,
+    session: &engram::agenthooks::HookSession,
+    payload: &serde_json::Value,
+    paths: &[String],
+    phase: engram::effectiveness::ToolPhase,
+    codex: bool,
+) {
+    let context_run_id = engram::agenthooks::context_run_id(state_dir, scope);
+    if let Some(request) = engram::effectiveness::hook_tool_observation(
+        payload,
+        session,
+        context_run_id,
+        paths,
+        phase,
+        codex,
+    ) {
+        let _ = block_on(client.record_tool_observation(&request));
+    }
 }
 
 /// A resumed session starts with existing transcript samples already consumed.
@@ -3912,6 +3959,9 @@ fn run_effectiveness(
                 project.memories.active_validated,
                 project.memories.pending_reviews
             );
+            for line in project.context_use.summary_lines() {
+                println!("{line}");
+            }
         }
         println!(
             "Coverage is partial. Use --json for per-field reporting coverage and controlled comparisons. Daily totals alone do not establish savings."
