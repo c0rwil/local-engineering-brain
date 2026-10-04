@@ -231,7 +231,7 @@ pub fn hook_tool_observation(
     context_run_id: Option<ContextRunId>,
     paths: &[String],
     phase: ToolPhase,
-    codex: bool,
+    client: crate::agenthooks::HookClient,
 ) -> Option<ToolObservationRequest> {
     let session_id = session
         .session_id
@@ -252,7 +252,7 @@ pub fn hook_tool_observation(
         tool_use_id: tool_use_id.to_owned(),
         task_id: Some(session.task_id.clone()),
         context_run_id,
-        source: if codex { "codex" } else { "claude_code" }.to_owned(),
+        source: client.usage_source().to_owned(),
         tool_name: tool_name.chars().take(128).collect(),
         phase,
         // A repository root resolves to an empty path; keep the call, not the path.
@@ -1312,8 +1312,15 @@ mod tests {
         let pre = json!({"session_id":"s1","tool_name":"Read","tool_use_id":"toolu_1",
             "hook_event_name":"PreToolUse",
             "tool_input":{"file_path":"/repo/src/a.rs","offset":10,"limit":40}});
-        let observed = hook_tool_observation(&pre, &hook, None, &paths, ToolPhase::Pre, false)
-            .expect("observation");
+        let observed = hook_tool_observation(
+            &pre,
+            &hook,
+            None,
+            &paths,
+            ToolPhase::Pre,
+            crate::agenthooks::HookClient::ClaudeCode,
+        )
+        .expect("observation");
         assert_eq!(
             (observed.ranged, observed.result_bytes, observed.limit_hit),
             (Some(true), None, None)
@@ -1325,9 +1332,15 @@ mod tests {
         post["tool_response"] = json!({"type":"text","file":{"filePath":"/repo/src/a.rs",
             "content":"synthetic body","numLines":1,"startLine":1,"totalLines":1}});
         assert_eq!(post_tool_phase(&post), ToolPhase::Post);
-        let observed =
-            hook_tool_observation(&post, &hook, None, &paths, post_tool_phase(&post), false)
-                .expect("observation");
+        let observed = hook_tool_observation(
+            &post,
+            &hook,
+            None,
+            &paths,
+            post_tool_phase(&post),
+            crate::agenthooks::HookClient::ClaudeCode,
+        )
+        .expect("observation");
         assert_eq!(
             (observed.ranged, observed.result_bytes, observed.limit_hit),
             (Some(false), Some(14), Some(false))
@@ -1338,17 +1351,38 @@ mod tests {
             "content never leaves the hook"
         );
         post["tool_response"]["file"]["truncatedByTokenCap"] = json!(true);
-        let truncated =
-            hook_tool_observation(&post, &hook, None, &paths, ToolPhase::Post, false).unwrap();
+        let truncated = hook_tool_observation(
+            &post,
+            &hook,
+            None,
+            &paths,
+            ToolPhase::Post,
+            crate::agenthooks::HookClient::ClaudeCode,
+        )
+        .unwrap();
         assert_eq!(truncated.limit_hit, Some(true));
         post["tool_response"] =
             json!({"type":"file_unchanged","file":{"filePath":"/repo/src/a.rs"}});
-        let unchanged =
-            hook_tool_observation(&post, &hook, None, &paths, ToolPhase::Post, false).unwrap();
+        let unchanged = hook_tool_observation(
+            &post,
+            &hook,
+            None,
+            &paths,
+            ToolPhase::Post,
+            crate::agenthooks::HookClient::ClaudeCode,
+        )
+        .unwrap();
         assert_eq!(unchanged.result_bytes, Some(0));
         post["tool_response"] = json!({"type":"image","file":{"base64":"AAAA","type":"image/png"}});
-        let image =
-            hook_tool_observation(&post, &hook, None, &paths, ToolPhase::Post, false).unwrap();
+        let image = hook_tool_observation(
+            &post,
+            &hook,
+            None,
+            &paths,
+            ToolPhase::Post,
+            crate::agenthooks::HookClient::ClaudeCode,
+        )
+        .unwrap();
         assert_eq!(
             image.result_bytes, None,
             "non-text results have unknown size"
@@ -1357,9 +1391,15 @@ mod tests {
             "hook_event_name":"PostToolUseFailure","tool_input":{"file_path":"/repo/big.rs"},
             "error":"File content (300KB) exceeds maximum allowed size (256KB).","is_interrupt":false});
         assert_eq!(post_tool_phase(&failure), ToolPhase::Failure);
-        let failed =
-            hook_tool_observation(&failure, &hook, None, &paths, ToolPhase::Failure, false)
-                .unwrap();
+        let failed = hook_tool_observation(
+            &failure,
+            &hook,
+            None,
+            &paths,
+            ToolPhase::Failure,
+            crate::agenthooks::HookClient::ClaudeCode,
+        )
+        .unwrap();
         assert_eq!(
             (failed.ranged, failed.result_bytes, failed.limit_hit),
             (Some(false), None, Some(true))
@@ -1374,8 +1414,15 @@ mod tests {
         let paths = vec!["src/a.rs".to_owned(), "src/b.rs".to_owned()];
         let read = json!({"session_id":"s1","tool_name":"read_file","tool_use_id":"call_1",
             "tool_input":{"file_path":"src/a.rs"},"tool_response":"L1: synthetic\nL2: text"});
-        let observed =
-            hook_tool_observation(&read, &hook, None, &paths[..1], ToolPhase::Post, true).unwrap();
+        let observed = hook_tool_observation(
+            &read,
+            &hook,
+            None,
+            &paths[..1],
+            ToolPhase::Post,
+            crate::agenthooks::HookClient::Codex,
+        )
+        .unwrap();
         assert_eq!(observed.source, "codex");
         assert_eq!(
             (observed.ranged, observed.result_bytes, observed.limit_hit),
@@ -1383,8 +1430,15 @@ mod tests {
         );
         let patch = json!({"session_id":"s1","tool_name":"apply_patch","tool_use_id":"call_2",
             "tool_input":{"command":"*** Begin Patch\n*** End Patch"},"tool_response":{"exit_code":0}});
-        let edit =
-            hook_tool_observation(&patch, &hook, None, &paths, ToolPhase::Post, true).unwrap();
+        let edit = hook_tool_observation(
+            &patch,
+            &hook,
+            None,
+            &paths,
+            ToolPhase::Post,
+            crate::agenthooks::HookClient::Codex,
+        )
+        .unwrap();
         assert_eq!(edit.paths, paths);
         assert_eq!(
             (edit.ranged, edit.result_bytes, edit.limit_hit),
@@ -1392,21 +1446,52 @@ mod tests {
         );
         // A repository-root argument keeps the call but not an empty path.
         let rooted = [String::new(), "/abs/x.rs".to_owned(), "src/a.rs".to_owned()];
-        let scoped =
-            hook_tool_observation(&patch, &hook, None, &rooted, ToolPhase::Post, true).unwrap();
+        let scoped = hook_tool_observation(
+            &patch,
+            &hook,
+            None,
+            &rooted,
+            ToolPhase::Post,
+            crate::agenthooks::HookClient::Codex,
+        )
+        .unwrap();
         assert_eq!(scoped.paths, vec!["src/a.rs".to_owned()]);
         let mut anonymous = patch.clone();
         anonymous.as_object_mut().unwrap().remove("tool_use_id");
         assert!(
-            hook_tool_observation(&anonymous, &hook, None, &paths, ToolPhase::Post, true).is_none()
+            hook_tool_observation(
+                &anonymous,
+                &hook,
+                None,
+                &paths,
+                ToolPhase::Post,
+                crate::agenthooks::HookClient::Codex
+            )
+            .is_none()
         );
         let unknown = session(&f.app, &f.app_task, Some("unknown-session"));
         assert!(
-            hook_tool_observation(&patch, &unknown, None, &paths, ToolPhase::Post, true).is_none()
+            hook_tool_observation(
+                &patch,
+                &unknown,
+                None,
+                &paths,
+                ToolPhase::Post,
+                crate::agenthooks::HookClient::Codex
+            )
+            .is_none()
         );
         let legacy = session(&f.app, &f.app_task, None);
         assert!(
-            hook_tool_observation(&patch, &legacy, None, &paths, ToolPhase::Post, true).is_none()
+            hook_tool_observation(
+                &patch,
+                &legacy,
+                None,
+                &paths,
+                ToolPhase::Post,
+                crate::agenthooks::HookClient::Codex
+            )
+            .is_none()
         );
     }
 

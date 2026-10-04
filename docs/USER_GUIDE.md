@@ -85,9 +85,10 @@ The workspace UI and canonical documentation do not depend on it.
 
 ## 5. Connect your agents (once, machine-wide)
 
-Use your existing Claude Code or Codex client and its chosen model/provider.
-Engram attaches through native hooks and MCP. No replacement launcher or local
-model is required. `claude-mtplx` is only the optional MTPLX/local-model path.
+Use your existing Claude Code, Codex or Cursor client and its chosen
+model/provider. Engram attaches through native hooks and MCP. No replacement
+launcher or local model is required. `claude-mtplx` is only the optional
+MTPLX/local-model path.
 
 ```bash
 engram hooks install --global   # Claude Code: ~/.claude/settings.json
@@ -95,6 +96,8 @@ engram agent-md --global        # the agent tool loop: ~/.claude/CLAUDE.md
 claude mcp add --scope user engram -- "$HOME/.local/bin/engram-mcp"
 codex mcp add engram -- "$HOME/.local/bin/engram-mcp"
 engram hooks codex --install    # Codex native hooks; review them with /hooks
+engram hooks cursor --install   # Cursor agent hooks: ~/.cursor/hooks.json
+engram hooks cursor --mcp       # optional: engram-mcp in ~/.cursor/mcp.json
 ```
 
 These commands assume the default Engram install location. Keep an existing
@@ -112,18 +115,38 @@ definitions, using the rule Codex CLI 0.155.0-alpha.2.6 applies; `/hooks` in
 Codex stays the authority. A reinstall that changes a definition (for example
 a different executable path) needs trust again.
 
+Cursor's installer merges Engram's entries into `hooks.json` in the Cursor
+configuration directory: `--cursor-home DIR`, else `$ENGRAM_CURSOR_HOME`, else
+`~/.cursor`. It preserves other hooks, refuses a file it cannot parse, and
+leaves `mcp.json` alone unless you pass `--mcp`. `--mcp` registers the absolute
+`engram-mcp` path as the `engram` server; it keeps an existing server that
+already launches `engram-mcp` or `leb-mcp` and refuses to replace a foreign
+`engram` entry. `--print` shows the entries without writing anything.
+`--uninstall` removes only Engram's hook entries; add `--mcp` to also remove
+Engram's server entry. Cursor reloads `hooks.json` on save; the Hooks tab under
+Customize and the Hooks output channel show what ran. The entries point at
+`~/.local/bin/engram` when it exists. An `engram` without the Cursor adapter
+rejects `--cursor` with exit code 2, which Cursor treats as a block, so
+`--install` first runs the target binary's adapter and refuses to write when
+it fails. Install the Engram build before `--install`, and run `--uninstall`
+before downgrading to a build without Cursor support.
+
 | Client | Native connection |
 |---|---|
 | Claude Code CLI, IDE and local Code sessions in Claude Desktop | Shared Claude Code hooks and MCP settings |
 | Codex CLI, desktop app and IDE on the same host | Shared Codex hooks and MCP configuration, subject to hook trust |
+| Cursor desktop agent on the same host | Cursor user hooks (`engram hooks cursor --install`); MCP is a separate opt-in (`--mcp`) |
 | Other GUI clients with local stdio MCP support | Register the absolute `engram-mcp` executable; tools are available, but MCP alone does not guarantee automatic capture |
 | Remote/cloud agent sessions | Configure Engram on the execution host; local machine settings and localhost do not automatically follow |
 
 Claude Desktop's ordinary Chat tab is separate from its Code sessions. Configure
 its supported MCP integration separately; do not assume it runs coding hooks.
 See the official [Claude Code desktop configuration](https://code.claude.com/docs/en/desktop#coming-from-the-cli),
-[Codex hooks](https://learn.chatgpt.com/docs/hooks) and
-[shared Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+[Codex hooks](https://learn.chatgpt.com/docs/hooks),
+[shared Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli),
+[Cursor hooks](https://cursor.com/docs/hooks),
+[Cursor third-party hooks](https://cursor.com/docs/reference/third-party-hooks) and
+[Cursor MCP](https://cursor.com/docs/mcp).
 
 What the hooks do, invisibly, in every session — five injection moments:
 
@@ -139,6 +162,46 @@ The global hooks are **safe by design**: they engage only in repositories
 already registered in the brain and silently no-op everywhere else — a
 repo joins the brain only when you `engram index` it. Every hook fails open;
 a broken brain can never break a coding session.
+
+**Codex subagents.** Codex runs subagents in their own threads, but their
+hooks carry the parent conversation's session id. Engram counts a spawned
+worker's tool calls and verifications toward the parent's episode; the
+worker's prompt, written by the parent agent, does not replace the task
+prompt, drain the parent's relay inbox or receive prompt-time context.
+Internal sub-sessions, such as the guardian that reviews approval requests,
+are recognized from the `session_meta` record of their transcript and stay
+silent: no context, prompt capture, episode, usage or evidence, and they never
+close the parent's episode. Codex 0.155 turns hooks off inside guardian
+sessions unless managed requirements pin `features.hooks = true`.
+
+**Cursor sessions.** The Cursor entries handle `sessionStart`,
+`beforeSubmitPrompt`, `postToolUse`, `postToolUseFailure`, `stop` and
+`sessionEnd`, and answer with documented output fields only. Differences from
+Claude Code and Codex:
+
+- Cursor's documented prompt hook output has no context field, so Engram
+  records the redacted prompt and delivers task context and relay messages
+  with the first file (`Read`, `Write`, `Delete`) or shell result of a turn. A
+  turn without such a tool receives no Engram context. Each response carries
+  at most 8,000 bytes of context and 1,000 bytes of relay messages; the shipped
+  Cursor 3.17 client discards `additional_context` above 10,000 characters.
+- Permission hooks (`preToolUse`, `beforeReadFile`, `beforeShellExecution`)
+  are not used: Cursor blocks the action when such a hook returns invalid
+  output.
+- A shell verification becomes evidence only when its tool result carries an
+  exit code. The shipped Cursor 3.17 shell reports a failing command through
+  `postToolUseFailure` without one: it counts as a tool call, not evidence,
+  and it clears the session's last recorded result, so the episode cannot
+  auto-close as a success on an earlier pass.
+- Cursor 3.17 transcripts carry no token counters that Engram's transcript
+  reader recognizes, so Cursor sessions report tool calls but no model token
+  usage. Usage rows are labeled `cursor` and evidence `cursor-hook`.
+- Cursor also runs Claude Code hooks from `~/.claude/settings.json` by default
+  (Settings, Agents, Third-Party Imports). Engram's Claude Code entries
+  recognize Cursor's input and stay silent there, so Cursor sessions are
+  captured only through the Cursor entries, once.
+- Session-level events use the first workspace root; tool events route by
+  the tool's own paths. Cursor cloud agents do not read user-level hooks.
 
 MCP exposes the episode lifecycle to agents; clients without native hooks must
 call those tools to capture it. Optional local-model proxy injection runs through
@@ -229,6 +292,10 @@ Never copy `brain.sqlite` with `cp` — WAL contents are lost. Backups only.
 
 - **Hook prints nothing in a repo** — the repo isn't registered
   (`engram index <repo>`), or the daemon is down (`engram doctor`).
+- **No Engram context in Cursor** — Cursor receives context after the first
+  file or shell tool of a turn, not at the prompt. Check the entries under
+  Customize, Hooks, and that `engram hooks cursor --install` targeted the
+  directory Cursor reads.
 - **Stale responses after upgrading** — restart the daemon
   (`engram daemon restart`, or `engram daemon stop` and let the next CLI call
   auto-start the new binary).
