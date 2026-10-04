@@ -321,7 +321,7 @@ def receipt_summary(state):
                 "compiled_estimated_tokens": tokens, "delivered_run_ids": [r[0] for r in delivered],
                 "delivered_sessions": list({r[2] for r in delivered}),
                 "delivered_compiled_estimated_tokens": sum(r[1] for r in delivered),
-                "source_items": con.execute("SELECT count(*) FROM context_items WHERE source_type IN ('code','code_dependency','verification')").fetchone()[0]}
+                "source_items": con.execute("SELECT count(*) FROM context_items WHERE source_type IN ('code','code_dependency','code_use','verification')").fetchone()[0]}
 
 
 def agent_command(settings_path, cost):

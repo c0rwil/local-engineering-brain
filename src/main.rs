@@ -272,6 +272,11 @@ enum Commands {
         /// Codex CLI contract) instead of plain stdout.
         #[arg(long)]
         codex: bool,
+        /// Read Cursor hook input and answer with one JSON object of Cursor's
+        /// documented output fields. Takes precedence over `--codex`; no
+        /// argument error is raised, because exit code 2 blocks in Cursor.
+        #[arg(long)]
+        cursor: bool,
     },
 
     /// Install or inspect the stock-agent integration (hooks + MCP).
@@ -592,6 +597,32 @@ enum HooksAction {
         #[arg(long)]
         install: bool,
     },
+    /// Cursor agent hooks (hooks.json) and optional MCP registration
+    /// (mcp.json). Without flags, prints the setup steps.
+    Cursor(CursorSetupArgs),
+}
+
+#[derive(Debug, clap::Args)]
+#[allow(clippy::struct_excessive_bools)] // independent CLI switches
+struct CursorSetupArgs {
+    /// Merge Engram's hooks into hooks.json (idempotent; other hooks are
+    /// preserved).
+    #[arg(long, conflicts_with_all = ["uninstall", "print"])]
+    install: bool,
+    /// Remove only Engram's hook entries.
+    #[arg(long, conflicts_with = "print")]
+    uninstall: bool,
+    /// Print the entries Engram would merge, keyed by file; write nothing.
+    #[arg(long)]
+    print: bool,
+    /// Register the engram-mcp server in mcp.json. Alone: MCP only. With
+    /// --install, --uninstall or --print: hooks and MCP together.
+    #[arg(long)]
+    mcp: bool,
+    /// Cursor's user configuration directory (default: `ENGRAM_CURSOR_HOME`,
+    /// then ~/.cursor).
+    #[arg(long, value_name = "DIR")]
+    cursor_home: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -620,6 +651,15 @@ enum DaemonAction {
     },
     /// Ask the daemon to finish in-flight requests and stop.
     Stop {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop the daemon gracefully and start a new one from this terminal, so
+    /// it inherits this terminal's environment and macOS folder access.
+    Restart {
+        /// Seconds to wait for the old daemon to finish in-flight work.
+        #[arg(long, default_value_t = 120)]
+        wait_secs: u64,
         #[arg(long)]
         json: bool,
     },
@@ -903,9 +943,17 @@ fn run(cli: Cli) -> Result<bool> {
             json,
         ),
         Commands::Fact { action } => run_fact(&overrides, socket_override.as_deref(), &action),
-        Commands::Hook { event, codex } => {
-            run_hook_event(&overrides, socket_override.as_deref(), &event, codex)
-        }
+        Commands::Hook {
+            event,
+            codex,
+            cursor,
+        } => run_hook_event(
+            &overrides,
+            socket_override.as_deref(),
+            &event,
+            codex,
+            cursor,
+        ),
         Commands::Hooks { action } => run_hooks_action(&action),
         Commands::Skills { action } => run_skills_action(&action),
         Commands::Update { check } => run_update(check),
@@ -1649,7 +1697,14 @@ fn run_semantic(
             let config = load_daemon_config(overrides, socket, Some(&root))?;
             let client = client(&config);
             let status = block_on(client.resolve_project(path))?;
-            let response = block_on(client.rebuild_semantic_index(&SemanticRebuildRequest {
+            // A local embedding model rebuild may outlive the default
+            // deadline; the daemon allows it at least ten minutes.
+            let patient = DaemonClient::new(
+                &config.daemon.socket_path,
+                Duration::from_millis(config.daemon.request_timeout_ms)
+                    .max(Duration::from_secs(660)),
+            );
+            let response = block_on(patient.rebuild_semantic_index(&SemanticRebuildRequest {
                 project_id: status.resolved.project.id,
             }))?;
             if *json {
@@ -1659,6 +1714,26 @@ fn run_semantic(
                     "Rebuilt {} semantic vectors for {}",
                     response.vectors, response.project_id
                 );
+                if let Some(model) = &response.model {
+                    println!(
+                        "{}: {} embedded, {} unchanged, {} removed, {} changed during the run \
+                         ({} active memories, dimension {}, {} requests, {} ms){}",
+                        model.embedder,
+                        model.embedded,
+                        model.unchanged,
+                        model.removed,
+                        model.skipped_changed,
+                        model.active_memories,
+                        model.dimension,
+                        model.requests,
+                        model.duration_ms,
+                        if model.complete {
+                            ""
+                        } else {
+                            "; stopped at the deadline, rerun to continue"
+                        }
+                    );
+                }
             }
         }
     }
@@ -1925,7 +2000,8 @@ fn run_doctor(overrides: &ConfigOverrides, socket: Option<&Path>, json: bool) ->
         block_on(client(&config).doctor())?
     } else {
         DoctorReport::run(&config)
-    };
+    }
+    .with_agent_checks();
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -2281,7 +2357,10 @@ While working (substantive tasks, not trivial edits):
    the reusable takeaway, outcome success/failure).
 3. When tests/builds/lints run, `engram_record_evidence` with the command and
    exit code (kind `test_result`/`lint_result`..., strength `deterministic`).
-   Record FAILING runs too - fail-then-pass pairs teach conventions.
+   Record FAILING runs too - fail-then-pass pairs teach conventions. Engram's
+   hooks record runs only when the shell exit status is the verification's own:
+   `cmd | tail` reports tail's status, so start with `set -o pipefail;` when
+   you trim output.
 4. On completion, prefer `engram_complete_task`: supply actual test/build or
    operational output, the outcome, touched files and up to five reusable lessons.
    This captures evidence, closes the task and queues one review inbox. Omit
@@ -2306,14 +2385,42 @@ After successful work that surfaced a durable rule:
 
 /// Hook runtime. EVERY failure path prints nothing and returns Ok: a broken
 /// or absent brain must never break the user's coding session.
-#[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
+#[allow(clippy::unnecessary_wraps)]
 fn run_hook_event(
     overrides: &ConfigOverrides,
     socket: Option<&Path>,
     event: &str,
     codex: bool,
+    cursor: bool,
 ) -> Result<bool> {
     use std::io::{Read as _, Write as _};
+    let mut stdin = String::new();
+    let payload = std::io::stdin()
+        .read_to_string(&mut stdin)
+        .ok()
+        .and_then(|_| serde_json::from_str::<serde_json::Value>(&stdin).ok());
+    if cursor {
+        run_cursor_hook(overrides, socket, event, payload.as_ref());
+        return Ok(true);
+    }
+    let Some(payload) = payload else {
+        return Ok(true);
+    };
+    // Cursor also runs the Claude Code hooks it imports, with its own input.
+    // The native `--cursor` entries own capture there; these stay silent.
+    if engram::agenthooks::cursor::is_cursor_payload(&payload) {
+        return Ok(true);
+    }
+    // Codex sub-sessions share the root session id: guardian reviewers stay
+    // silent and spawned workers contribute tool use only.
+    if codex
+        && engram::agenthooks::codex::skips_event(
+            event,
+            &engram::agenthooks::codex::thread_kind(&payload),
+        )
+    {
+        return Ok(true);
+    }
     // One emitter for every context-bearing event: plain stdout for Claude
     // Code (its native contract for SessionStart/UserPromptSubmit), the
     // additionalContext envelope for Codex — and for PreToolUse everywhere,
@@ -2329,13 +2436,132 @@ fn run_hook_event(
             .and_then(|()| stdout.flush())
             .is_ok()
     };
-    let mut stdin = String::new();
-    if std::io::stdin().read_to_string(&mut stdin).is_err() {
-        return Ok(true);
-    }
-    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&stdin) else {
-        return Ok(true);
+    let agent = if codex {
+        engram::agenthooks::HookClient::Codex
+    } else {
+        engram::agenthooks::HookClient::ClaudeCode
     };
+    run_hook_payload(overrides, socket, event, agent, &payload, &emit)
+}
+
+/// Cursor adapter: translate Cursor's hook input, run the shared handlers, and
+/// answer with exactly one JSON object of Cursor's documented output fields.
+/// A file or shell tool result also delivers repository context and relayed
+/// messages, because Cursor reads context only after tool results.
+fn run_cursor_hook(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    event: &str,
+    raw: Option<&serde_json::Value>,
+) {
+    use engram::agenthooks::cursor;
+    use std::io::Write as _;
+    let write = |response: &serde_json::Value| {
+        let mut stdout = std::io::stdout().lock();
+        writeln!(stdout, "{response}")
+            .and_then(|()| stdout.flush())
+            .is_ok()
+    };
+    let Some(payload) = raw.map(cursor::normalize_payload) else {
+        write(&cursor::response(event, None));
+        return;
+    };
+    let steps = match event {
+        "bash" if cursor::delivers_context(&payload) => vec!["bash", "pretool"],
+        "session-start" | "prompt" | "bash" | "stop" | "session-end" => vec![event],
+        _ => Vec::new(),
+    };
+    let relay = if steps.contains(&"pretool") {
+        cursor_relay(overrides, &payload)
+    } else {
+        String::new()
+    };
+    let printed = std::cell::Cell::new(false);
+    let emit = |_event_name: &str, context: &str| {
+        if printed.replace(true) {
+            return false;
+        }
+        write(&cursor::response(event, Some(&format!("{relay}{context}"))))
+    };
+    for step in steps {
+        let _ = run_hook_payload(
+            overrides,
+            socket,
+            step,
+            engram::agenthooks::HookClient::Cursor,
+            &payload,
+            &emit,
+        );
+    }
+    if raw.is_some_and(cursor::failed_verification) {
+        forget_last_verification(overrides, &payload);
+    }
+    if !printed.get() {
+        write(&cursor::response(event, Some(&relay)));
+    }
+}
+
+/// Session id and hook state directory for a normalized Cursor payload.
+fn cursor_session_state(
+    overrides: &ConfigOverrides,
+    payload: &serde_json::Value,
+) -> Option<(String, PathBuf)> {
+    let session_id = payload
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)?;
+    let cwd = payload
+        .get("cwd")
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let config = Config::load_for(discover_project_root(&cwd).ok().as_deref(), overrides).ok()?;
+    let state_dir = config.storage.db_path.parent()?.to_path_buf();
+    Some((session_id.to_owned(), state_dir))
+}
+
+/// Drain the Cursor session's relay inbox into a bounded block.
+fn cursor_relay(overrides: &ConfigOverrides, payload: &serde_json::Value) -> String {
+    cursor_session_state(overrides, payload).map_or_else(String::new, |(session_id, state_dir)| {
+        engram::agenthooks::cursor::relay_block(&engram::agenthooks::relay_drain(
+            &state_dir,
+            &session_id,
+        ))
+    })
+}
+
+/// A verification failed without an observed exit code, so the latest result
+/// is unknown. Forget the session's last recorded result, so its episodes
+/// cannot auto-close as a success on an older pass. Conservatively, every
+/// project episode of the session is reset, without a daemon lookup.
+fn forget_last_verification(overrides: &ConfigOverrides, payload: &serde_json::Value) {
+    let Some((session_id, state_dir)) = cursor_session_state(overrides, payload) else {
+        return;
+    };
+    for (scope, session) in engram::agenthooks::project_sessions(&state_dir, &session_id) {
+        if session.last_verification_exit.is_some() || session.last_evidence_fingerprint.is_some() {
+            let _ = engram::agenthooks::save_session(
+                &state_dir,
+                &scope,
+                &engram::agenthooks::HookSession {
+                    last_verification_exit: None,
+                    last_evidence_fingerprint: None,
+                    ..session
+                },
+            );
+        }
+    }
+}
+
+/// Shared hook handlers for every client. `emit` returns whether the context
+/// reached the agent; only then are delivery receipts recorded.
+#[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
+fn run_hook_payload(
+    overrides: &ConfigOverrides,
+    socket: Option<&Path>,
+    event: &str,
+    agent: engram::agenthooks::HookClient,
+    payload: &serde_json::Value,
+    emit: &dyn Fn(&str, &str) -> bool,
+) -> Result<bool> {
     let session_id = payload
         .get("session_id")
         .and_then(serde_json::Value::as_str)
@@ -2389,6 +2615,10 @@ fn run_hook_event(
                 return Ok(true);
             }
         }
+    }
+    // A client that cannot receive prompt-time context keeps only the intent.
+    if event == "prompt" && !agent.prompt_context() {
+        return Ok(true);
     }
     if require_daemon(&config).is_err() {
         return Ok(true);
@@ -2474,12 +2704,27 @@ fn run_hook_event(
             }
         }
         "session-start" => {
-            initialize_hook_usage_baseline(&state_dir, &session_id, &payload);
+            initialize_hook_usage_baseline(&state_dir, &session_id, payload);
             if !engram::agenthooks::claim_once(&state_dir, &session_id, "brief") {
                 return Ok(true); // a concurrent hook (user + project level) already briefed
             }
-            let Ok(lookup) = block_on(client.lookup_project(&cwd)) else {
-                return Ok(true);
+            let lookup = match block_on(client.lookup_project(&cwd)) {
+                Ok(lookup) => lookup,
+                Err(error) => {
+                    // The one failure worth a line: the daemon cannot read
+                    // this repository, so every other hook stays silent here.
+                    // Like the enrollment hint, a folder this hook can see is
+                    // not in a Git repository stays silent.
+                    let plain_folder = std::fs::read_dir(&cwd).is_ok()
+                        && !cwd.ancestors().any(|dir| dir.join(".git").exists());
+                    if engram::error::is_access_denied(&error) && !plain_folder {
+                        emit(
+                            "SessionStart",
+                            &engram::error::access_denied_hook_notice(&error),
+                        );
+                    }
+                    return Ok(true);
+                }
             };
             let Some(project) = lookup.project else {
                 // Untracked repo: one opt-in line (never auto-enroll). Only
@@ -2525,9 +2770,10 @@ fn run_hook_event(
         "pretool" => {
             let mut pretool_context = String::new();
             let mut deliveries = Vec::new();
-            let byte_limit = if codex {
+            let byte_limit = if agent.bounded_context() {
                 usize::try_from(config.context.max_injected_tokens.saturating_mul(4))
                     .unwrap_or(usize::MAX)
+                    .min(agent.context_byte_cap())
             } else {
                 usize::MAX
             };
@@ -2539,11 +2785,22 @@ fn run_hook_event(
                 else {
                     continue;
                 };
+                // Observe the touch before any context it triggers is compiled.
+                record_hook_tool_observation(
+                    &client,
+                    &state_dir,
+                    &scope,
+                    &session,
+                    payload,
+                    &observed_paths,
+                    engram::effectiveness::ToolPhase::Pre,
+                    agent,
+                );
                 let _ = engram::agenthooks::remember_paths(&state_dir, &scope, &observed_paths);
                 let current_paths = engram::agenthooks::recent_paths(&state_dir, &scope);
                 // Capture each touched repository even if an earlier block used
                 // the output budget. Undelivered context remains retryable.
-                let remaining_tokens = if codex {
+                let remaining_tokens = if agent.bounded_context() {
                     u32::try_from(byte_limit.saturating_sub(pretool_context.len()) / 4)
                         .unwrap_or(u32::MAX)
                 } else {
@@ -2638,10 +2895,10 @@ fn run_hook_event(
             }
         }
         "stop" => {
-            capture_hook_transcript_usage(&client, &state_dir, &session_id, &payload, codex);
+            capture_hook_transcript_usage(&client, &state_dir, &session_id, payload, agent);
         }
         "session-end" => {
-            capture_hook_transcript_usage(&client, &state_dir, &session_id, &payload, codex);
+            capture_hook_transcript_usage(&client, &state_dir, &session_id, payload, agent);
             for (scope, session) in engram::agenthooks::project_sessions(&state_dir, &session_id) {
                 let outcome =
                     match engram::agenthooks::auto_close_outcome(session.last_verification_exit) {
@@ -2680,6 +2937,7 @@ fn run_hook_event(
                     .with_extension("pending"),
             );
             engram::agenthooks::clear_claims(&state_dir, &session_id);
+            engram::agenthooks::clear_task_declarations(&state_dir, &session_id);
         }
         "bash" => {
             let mut primary = None;
@@ -2694,16 +2952,36 @@ fn run_hook_event(
                 };
                 // PostToolUse can be the only observed event for an edit.
                 let _ = engram::agenthooks::remember_paths(&state_dir, &scope, &paths);
+                record_hook_tool_observation(
+                    &client,
+                    &state_dir,
+                    &scope,
+                    &session,
+                    payload,
+                    &paths,
+                    engram::effectiveness::post_tool_phase(payload),
+                    agent,
+                );
                 if primary.is_none() {
-                    primary = Some((scope, session));
+                    primary = Some((scope, session, resolved));
                 }
             }
-            let Some((scope, session)) = primary else {
+            let Some((scope, session, resolved)) = primary else {
                 return Ok(true);
             };
             // A multi-repository patch is still one tool call. Attribute its
             // receipt once to the first tracked target, never once per file.
-            record_hook_tool_usage(&client, &state_dir, &scope, &session, &payload, codex);
+            record_hook_tool_usage(&client, &state_dir, &scope, &session, payload, agent);
+            // Engram MCP task calls name the task later verification belongs to.
+            if let Some(declaration) = engram::agenthooks::task_declaration(payload) {
+                let _ = engram::agenthooks::record_task_declaration(
+                    &state_dir,
+                    &session_id,
+                    &scope,
+                    &declaration,
+                );
+                return Ok(true);
+            }
             // All tools contribute actual call counts. Only shell verification
             // results can become deterministic evidence.
             if payload
@@ -2718,49 +2996,70 @@ fn run_hook_event(
             {
                 return Ok(true);
             }
-            let command = engram::agenthooks::tool_command(&tool_input);
-            let verification = command
-                .trim()
-                .strip_prefix("cd ")
-                .and_then(|s| s.split_once("&&"))
-                .map_or(command, |(_, rest)| rest.trim());
-            let Some(kind) = engram::agenthooks::detect_verification(verification) else {
+            // Only a harness-reported status that belongs to the verification
+            // itself is recorded; pipes and `||` hide it. The record carries
+            // digests of the session's touched and dirty files.
+            let session_paths = engram::agenthooks::recent_paths(&state_dir, &scope);
+            let Some(observed) = engram::agenthooks::observe_verification(
+                payload,
+                agent.evidence_source(),
+                &resolved.resolved.root,
+                resolved.resolved.git.as_ref(),
+                &session_paths,
+            ) else {
+                // A verification whose status went unobserved (hidden by the
+                // shell, interrupted, or failed without an exit code) has an
+                // unknown result: an earlier pass must not close the episode.
+                if session.last_verification_exit.is_some()
+                    && engram::agenthooks::classify_verification(engram::agenthooks::tool_command(
+                        &tool_input,
+                    ))
+                    .is_some()
+                {
+                    let _ = engram::agenthooks::save_session(
+                        &state_dir,
+                        &scope,
+                        &engram::agenthooks::HookSession {
+                            last_verification_exit: None,
+                            ..session
+                        },
+                    );
+                }
                 return Ok(true);
             };
-            let empty = serde_json::Value::Null;
-            let tool_result = payload
-                .get("tool_result")
-                .or_else(|| payload.get("tool_response"))
-                .unwrap_or(&empty);
-            let Some(exit_code) = engram::agenthooks::extract_exit_code(tool_result) else {
-                return Ok(true);
-            };
-            let fingerprint = engram::agenthooks::evidence_fingerprint(command, exit_code);
-            if session.last_evidence_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+            if session.last_evidence_fingerprint.as_deref() == Some(observed.fingerprint.as_str()) {
                 return Ok(true);
             }
-            if block_on(client.record_evidence(&EvidenceCreateRequest {
+            let evidence = |task_id: &engram::ids::TaskId| EvidenceCreateRequest {
                 project_id: session.project_id.clone(),
-                task_id: Some(session.task_id.clone()),
+                task_id: Some(task_id.clone()),
                 attempt_id: None,
-                kind: kind.to_owned(),
+                kind: observed.kind.to_owned(),
                 strength: EvidenceStrength::Deterministic,
                 commit_hash: None,
-                command: Some(command.chars().take(500).collect()),
-                exit_code: Some(exit_code),
-                artifact_text: engram::agenthooks::extract_artifact(tool_result),
-                metadata: serde_json::json!({"source": if codex { "codex-hook" } else { "claude-code-hook" }}),
-            }))
-            .is_err()
-            {
+                command: Some(observed.command.clone()),
+                exit_code: Some(observed.exit_code),
+                artifact_text: observed.artifact.clone(),
+                metadata: observed.metadata.clone(),
+            };
+            // Prefer the task the agent declared in this session. A declaration
+            // from another project fails scope validation and falls back to
+            // this session's own episode.
+            let recorded = engram::agenthooks::declared_task(&state_dir, &scope)
+                .filter(|declared| *declared != session.task_id)
+                .is_some_and(|declared| {
+                    block_on(client.record_evidence(&evidence(&declared))).is_ok()
+                })
+                || block_on(client.record_evidence(&evidence(&session.task_id))).is_ok();
+            if !recorded {
                 return Ok(true);
             }
             let _ = engram::agenthooks::save_session(
                 &state_dir,
                 &scope,
                 &engram::agenthooks::HookSession {
-                    last_verification_exit: Some(exit_code),
-                    last_evidence_fingerprint: Some(fingerprint),
+                    last_verification_exit: Some(observed.exit_code),
+                    last_evidence_fingerprint: Some(observed.fingerprint),
                     ..session
                 },
             );
@@ -2825,7 +3124,7 @@ fn record_hook_tool_usage(
     scope: &str,
     session: &engram::agenthooks::HookSession,
     payload: &serde_json::Value,
-    codex: bool,
+    agent: engram::agenthooks::HookClient,
 ) {
     let Some(tool_id) = payload
         .get("tool_use_id")
@@ -2852,7 +3151,7 @@ fn record_hook_tool_usage(
                 .map(|_| engram::effectiveness::UsageMode::Brain),
             context_run_id,
             session_id: Some(session_id.clone()),
-            source: if codex { "codex" } else { "claude_code" }.to_owned(),
+            source: agent.usage_source().to_owned(),
             provider: None,
             model: None,
             metrics: engram::effectiveness::UsageMetrics {
@@ -2862,6 +3161,32 @@ fn record_hook_tool_usage(
             observed_at_ms: None,
         }),
     );
+}
+
+/// Observe one tool call for context-use attribution: action, repository-relative
+/// paths and Read flags/sizes only, never content, commands or error text.
+#[allow(clippy::too_many_arguments)]
+fn record_hook_tool_observation(
+    client: &engram::daemon::DaemonClient,
+    state_dir: &Path,
+    scope: &str,
+    session: &engram::agenthooks::HookSession,
+    payload: &serde_json::Value,
+    paths: &[String],
+    phase: engram::effectiveness::ToolPhase,
+    agent: engram::agenthooks::HookClient,
+) {
+    let context_run_id = engram::agenthooks::context_run_id(state_dir, scope);
+    if let Some(request) = engram::effectiveness::hook_tool_observation(
+        payload,
+        session,
+        context_run_id,
+        paths,
+        phase,
+        agent,
+    ) {
+        let _ = block_on(client.record_tool_observation(&request));
+    }
 }
 
 /// A resumed session starts with existing transcript samples already consumed.
@@ -2900,7 +3225,7 @@ fn capture_hook_transcript_usage(
     state_dir: &Path,
     session_id: &str,
     payload: &serde_json::Value,
-    codex: bool,
+    agent: engram::agenthooks::HookClient,
 ) {
     if session_id == "unknown-session" {
         return;
@@ -2946,7 +3271,7 @@ fn capture_hook_transcript_usage(
                         mode: None,
                         context_run_id: None,
                         session_id: Some(session_id.to_owned()),
-                        source: if codex { "codex" } else { "claude_code" }.to_owned(),
+                        source: agent.usage_source().to_owned(),
                         provider: sample.provider,
                         model: sample.model,
                         metrics: sample.metrics,
@@ -3393,15 +3718,40 @@ fn run_skills_action(action: &SkillsAction) -> Result<bool> {
     Ok(true)
 }
 
-fn native_hook_command() -> Result<String> {
+fn native_hook_executable() -> Result<PathBuf> {
     let stable = dirs_home().join(".local/bin/engram");
-    let executable = if stable.is_file() {
-        stable
+    if stable.is_file() {
+        Ok(stable)
     } else {
-        std::env::current_exe().map_err(|e| engram::Error::Config(e.to_string()))?
-    };
+        std::env::current_exe().map_err(|e| engram::Error::Config(e.to_string()))
+    }
+}
+
+fn native_hook_command() -> Result<String> {
+    let executable = native_hook_executable()?;
     let binary = format!("'{}'", executable.to_string_lossy().replace('\'', "'\\''"));
     Ok(binary)
+}
+
+/// Refuse to point Cursor at a binary without the Cursor adapter. An older
+/// engram rejects `--cursor` with exit code 2, which Cursor treats as a block.
+/// With empty input the adapter only prints its default prompt response.
+fn verify_cursor_adapter(executable: &Path) -> Result<()> {
+    let output = std::process::Command::new(executable)
+        .args(["hook", "prompt", "--cursor"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|error| engram::Error::Config(format!("run {}: {error}", executable.display())))?;
+    let response = serde_json::from_slice::<serde_json::Value>(&output.stdout).ok();
+    if output.status.success() && response == Some(serde_json::json!({"continue": true})) {
+        return Ok(());
+    }
+    Err(engram::Error::Config(format!(
+        "{} does not support Cursor hooks; install this Engram build first, then rerun \
+         `engram hooks cursor --install`",
+        executable.display()
+    )))
 }
 
 fn install_codex_hooks() -> Result<()> {
@@ -3492,8 +3842,145 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
                  (recall, workspace map, symbol search, episode recording)."
             );
         }
+        HooksAction::Cursor(args) => run_cursor_setup(args)?,
     }
     Ok(true)
+}
+
+const CURSOR_SETUP: &str = "Cursor setup:
+
+1. Hooks: session brief, repository context after file and shell tools,
+   evidence and episode capture in Cursor's agent:
+
+   engram hooks cursor --install
+
+2. Optional MCP tools (recall, workspace map, episode recording):
+
+   engram hooks cursor --mcp
+
+Preview without writing:  engram hooks cursor --print --mcp
+Remove Engram's entries:  engram hooks cursor --uninstall --mcp
+Files live in $ENGRAM_CURSOR_HOME or ~/.cursor; --cursor-home DIR overrides both.";
+
+/// Cursor integration files: Engram's hooks in hooks.json and, as a separate
+/// opt-in, its MCP server in mcp.json. Only Engram's entries are touched.
+fn run_cursor_setup(args: &CursorSetupArgs) -> Result<()> {
+    use engram::agenthooks::cursor;
+    let CursorSetupArgs {
+        install,
+        uninstall,
+        print,
+        mcp,
+        ref cursor_home,
+    } = *args;
+    let home = cursor::cursor_home(
+        cursor_home.as_deref(),
+        std::env::var_os("ENGRAM_CURSOR_HOME").as_deref(),
+        &dirs_home(),
+    );
+    let hooks_path = home.join("hooks.json");
+    let mcp_path = home.join("mcp.json");
+    if print {
+        let mut fragments = serde_json::Map::new();
+        fragments.insert(
+            hooks_path.display().to_string(),
+            cursor::cursor_hooks_json(&native_hook_command()?),
+        );
+        if mcp {
+            fragments.insert(
+                mcp_path.display().to_string(),
+                serde_json::json!({"mcpServers": {
+                    (cursor::MCP_SERVER_NAME): cursor::mcp_server_entry(&native_mcp_command()?)
+                }}),
+            );
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::Value::Object(fragments))?
+        );
+        return Ok(());
+    }
+    if !install && !uninstall && !mcp {
+        println!("{CURSOR_SETUP}");
+        return Ok(());
+    }
+    if install {
+        verify_cursor_adapter(&native_hook_executable()?)?;
+        let document = cursor::read_document(&hooks_path, serde_json::json!({}))?;
+        let document = cursor::merge_cursor_hooks(document, &native_hook_command()?)?;
+        cursor::write_document(&hooks_path, &document)?;
+        println!(
+            "Wrote {}: Engram handles sessionStart, beforeSubmitPrompt, postToolUse, \
+             postToolUseFailure, stop and sessionEnd; other hooks are preserved. Cursor \
+             reloads hooks.json on save; confirm under Customize > Hooks.\n\
+             Cursor also runs Claude Code hooks from ~/.claude/settings.json by default. \
+             Engram's Claude Code entries recognize Cursor input and stay silent, so each \
+             event is captured once.",
+            hooks_path.display()
+        );
+    }
+    if uninstall {
+        let document = cursor::read_document(&hooks_path, serde_json::json!({}))?;
+        let (document, removed) = cursor::remove_cursor_hooks(document)?;
+        if removed > 0 {
+            cursor::write_document(&hooks_path, &document)?;
+        }
+        println!(
+            "Removed {removed} Engram hook entr{} from {}; other hooks are unchanged.",
+            if removed == 1 { "y" } else { "ies" },
+            hooks_path.display()
+        );
+    }
+    if mcp && uninstall {
+        let document = cursor::read_document(&mcp_path, serde_json::json!({}))?;
+        let (document, removed) = cursor::remove_cursor_mcp(document)?;
+        if removed {
+            cursor::write_document(&mcp_path, &document)?;
+            println!(
+                "Removed the `engram` MCP server from {}.",
+                mcp_path.display()
+            );
+        } else {
+            println!("No Engram MCP server in {}.", mcp_path.display());
+        }
+    } else if mcp {
+        let document = cursor::read_document(&mcp_path, serde_json::json!({}))?;
+        let (document, outcome) = cursor::merge_cursor_mcp(document, &native_mcp_command()?)?;
+        if let cursor::McpRegistration::AlreadyRegistered(name) = outcome {
+            println!(
+                "`{name}` in {} already launches Engram's MCP server; left unchanged.",
+                mcp_path.display()
+            );
+        } else {
+            cursor::write_document(&mcp_path, &document)?;
+            println!(
+                "Registered engram-mcp as `{}` in {}; other servers are unchanged. Check it \
+                 under Customize in Cursor.",
+                cursor::MCP_SERVER_NAME,
+                mcp_path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Absolute path of the MCP stdio server for GUI clients without a login PATH.
+fn native_mcp_command() -> Result<String> {
+    let stable = dirs_home().join(".local/bin/engram-mcp");
+    let candidate = if stable.is_file() {
+        stable
+    } else {
+        std::env::current_exe()
+            .map_err(|e| engram::Error::Config(e.to_string()))?
+            .with_file_name("engram-mcp")
+    };
+    if !candidate.is_file() {
+        return Err(engram::Error::Config(format!(
+            "engram-mcp was not found at {}; install Engram first",
+            candidate.display()
+        )));
+    }
+    Ok(candidate.to_string_lossy().into_owned())
 }
 
 fn run_onboard(
@@ -3759,8 +4246,12 @@ fn run_daemon_action(
     // whole point of stopping is that the socket serves an OLD build, and
     // refusing creates a chicken-and-egg lockout (observed). Status and
     // stop talk to whatever answers the socket; auto-start still applies
-    // to status so it can report a freshly started daemon.
-    if !matches!(action, DaemonAction::Stop { .. }) {
+    // to status so it can report a freshly started daemon. Restart replaces
+    // whatever answers, so it must not auto-start one first either.
+    if !matches!(
+        action,
+        DaemonAction::Stop { .. } | DaemonAction::Restart { .. }
+    ) {
         require_daemon(&config)?;
     }
     let client = client(&config);
@@ -3792,8 +4283,43 @@ fn run_daemon_action(
                         health.memory_pressure
                     );
                 }
+                if let Some(pid) = health.pid {
+                    println!("PID:       {pid}");
+                }
+                if let Some(launcher) = &health.launcher {
+                    println!("Started by: {launcher}");
+                }
             }
             Ok(true)
+        }
+        DaemonAction::Restart { wait_secs, json } => {
+            let report = block_on(engram::autostart::restart_daemon(
+                &config,
+                Duration::from_secs(*wait_secs),
+            ))?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                match (report.stopped_previous, report.previous_pid) {
+                    (true, Some(previous)) => println!("Stopped engramd pid {previous}"),
+                    (true, None) => println!("Stopped the previous engramd"),
+                    (false, _) => println!("No daemon was running"),
+                }
+                if let Some(pid) = report.pid {
+                    println!("Started engramd pid {pid}");
+                }
+                if let Some(launcher) = &report.launcher {
+                    println!("Started by: {launcher}");
+                }
+                if !report.started_by_this_process {
+                    println!(
+                        "Warning: another client started the daemon during the restart; it \
+                         runs with that client's folder access. Run `engram daemon restart` \
+                         again if `engram doctor` still reports unreadable checkouts."
+                    );
+                }
+            }
+            Ok(report.started_by_this_process)
         }
         DaemonAction::Stop { json } => {
             block_on(client.shutdown())?;
@@ -3912,6 +4438,9 @@ fn run_effectiveness(
                 project.memories.active_validated,
                 project.memories.pending_reviews
             );
+            for line in project.context_use.summary_lines() {
+                println!("{line}");
+            }
         }
         println!(
             "Coverage is partial. Use --json for per-field reporting coverage and controlled comparisons. Daily totals alone do not establish savings."

@@ -318,6 +318,7 @@ pub struct JobsConfig {
     pub max_attempts: u32,
     /// `context_runs`/`context_items` older than this are deleted by the
     /// daily `consolidation_gc` job in bounded batches (spec section 16).
+    /// Hook tool observations follow the same window.
     pub context_run_retention_days: u32,
 }
 
@@ -372,17 +373,40 @@ pub struct ContextConfig {
     pub related_use_cues: bool,
 }
 
-/// Bounds for the optional deterministic semantic retrieval stage. The stage
-/// itself is toggled by `context.semantic_retrieval` (default `false`); the
-/// embedding dimension is a compile-time constant
-/// ([`crate::semantic::EMBEDDING_DIMENSION`]).
+/// Bounds and embedding provider for the optional semantic retrieval stage.
+/// The stage itself is toggled by `context.semantic_retrieval` (default
+/// `false`). The default hashed embedder has a compile-time dimension
+/// ([`crate::semantic::EMBEDDING_DIMENSION`]); the optional local provider
+/// calls an `OpenAI`-compatible embeddings endpoint on a loopback address.
+/// Only the two bounds may be set by a project's own configuration; provider
+/// settings are machine-level (user or workspace configuration).
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SemanticConfig {
     /// Maximum semantic candidates merged into hybrid retrieval per request.
     pub max_candidates: u32,
-    /// Hard bound on vectors scanned per brute-force cosine search.
+    /// Hard bound on memories scanned per brute-force cosine search.
     pub max_scanned: u32,
+    /// `hashed` (default) or `local`.
+    pub provider: crate::semantic::EmbeddingProviderKind,
+    /// Loopback `OpenAI`-compatible `POST /v1/embeddings` URL.
+    pub endpoint: String,
+    /// Embedding model served by the endpoint; required for `local`.
+    pub model: String,
+    /// Required vector dimension; 0 accepts the model's dimension.
+    pub dimension: u32,
+    /// Texts per embeddings request during a rebuild.
+    pub batch_size: u32,
+    /// Bound on each rebuild embeddings request.
+    pub timeout_ms: u64,
+    /// Bound on the single query embedding in the context hot path.
+    pub query_timeout_ms: u64,
+    /// Cosine similarity at or below this floor adds no semantic score.
+    pub min_similarity: f64,
+    /// Prepended to task text before embedding it as a query.
+    pub query_prefix: String,
+    /// Prepended to memory text before embedding it for storage.
+    pub document_prefix: String,
 }
 
 impl Default for SemanticConfig {
@@ -390,6 +414,16 @@ impl Default for SemanticConfig {
         Self {
             max_candidates: 50,
             max_scanned: 50_000,
+            provider: crate::semantic::EmbeddingProviderKind::Hashed,
+            endpoint: "http://127.0.0.1:11434/v1/embeddings".to_owned(),
+            model: String::new(),
+            dimension: 0,
+            batch_size: 16,
+            timeout_ms: 30_000,
+            query_timeout_ms: 2_000,
+            min_similarity: 0.0,
+            query_prefix: String::new(),
+            document_prefix: String::new(),
         }
     }
 }
@@ -798,6 +832,7 @@ impl Config {
         }
 
         validate_supported_v1_features(self)?;
+        crate::semantic::validate_config(&self.semantic, self.network.local_only)?;
         if self.daemon.max_connections == 0
             || self.daemon.max_request_bytes == 0
             || self.daemon.request_timeout_ms == 0
@@ -1037,6 +1072,9 @@ fn workspace_layers(
 ) -> Result<(toml::Value, Option<PathBuf>)> {
     let user_layer = read_layer(user_config)?;
     let project_layer = read_layer(project_config)?;
+    if let Some(layer) = &project_layer {
+        reject_project_embedding_provider(layer)?;
+    }
     let mut merged = toml::Value::try_from(Config::default())?;
     if let Some(layer) = &user_layer {
         merge_toml(&mut merged, layer.clone());
@@ -1082,6 +1120,26 @@ fn workspace_layers(
     merged["workspace"] = toml::Value::String(workspace);
 
     Ok((merged, workspace_root))
+}
+
+/// Embedding provider settings are machine-level: a repository's own
+/// `.engram/config.toml` must not choose where task and memory text is sent.
+/// Projects may still tune the semantic bounds.
+fn reject_project_embedding_provider(layer: &toml::Value) -> Result<()> {
+    let Some(semantic) = layer.get("semantic").and_then(toml::Value::as_table) else {
+        return Ok(());
+    };
+    match semantic
+        .keys()
+        .find(|key| !matches!(key.as_str(), "max_candidates" | "max_scanned"))
+    {
+        Some(key) => Err(Error::Config(format!(
+            "project configuration cannot set semantic.{key}: embedding provider settings are \
+             machine-level (~/.config/engram/config.toml or a workspace profile); projects may \
+             set only semantic.max_candidates and semantic.max_scanned"
+        ))),
+        None => Ok(()),
+    }
 }
 
 fn read_layer(path: Option<&Path>) -> Result<Option<toml::Value>> {
@@ -1313,6 +1371,79 @@ mod tests {
         )
         .expect_err("scan bound below candidate bound");
         assert!(error.to_string().contains("semantic.max_candidates"));
+    }
+
+    #[test]
+    fn local_embedding_provider_is_machine_level_loopback_and_off_by_default() {
+        assert_eq!(
+            Config::default().semantic.provider,
+            crate::semantic::EmbeddingProviderKind::Hashed,
+            "the hashed embedder stays the default until a model is measured"
+        );
+        let temp = TempDir::new().expect("temp dir");
+        let user = temp.path().join("user.toml");
+        fs::write(
+            &user,
+            "[context]\nsemantic_retrieval = true\n\n[semantic]\nprovider = \"local\"\n\
+             model = \"nomic-embed-text\"\ndimension = 768\nquery_prefix = \"search_query: \"\n\
+             document_prefix = \"search_document: \"\nmin_similarity = 0.5\n",
+        )
+        .expect("user config");
+        let project = temp.path().join("project.toml");
+        fs::write(
+            &project,
+            "[semantic]\nmax_candidates = 10\nmax_scanned = 500\n",
+        )
+        .expect("project config");
+        let config = Config::load_layers(
+            Some(&user),
+            Some(&project),
+            &ConfigOverrides::default(),
+            temp.path(),
+        )
+        .expect("machine-level provider with project-scoped bounds");
+        assert_eq!(
+            config.semantic.provider,
+            crate::semantic::EmbeddingProviderKind::Local
+        );
+        assert_eq!(config.semantic.max_candidates, 10);
+        assert_eq!(
+            config.semantic.endpoint,
+            "http://127.0.0.1:11434/v1/embeddings"
+        );
+
+        for setting in [
+            "provider = \"local\"",
+            "endpoint = \"http://127.0.0.1:9/v1/embeddings\"",
+            "model = \"other\"",
+            "document_prefix = \"x\"",
+        ] {
+            fs::write(&project, format!("[semantic]\n{setting}\n")).expect("project config");
+            let error = Config::load_layers(
+                Some(&user),
+                Some(&project),
+                &ConfigOverrides::default(),
+                temp.path(),
+            )
+            .expect_err("a repository cannot redirect embeddings");
+            assert!(error.to_string().contains("machine-level"), "{error}");
+        }
+
+        let remote = temp.path().join("remote.toml");
+        fs::write(
+            &remote,
+            "[network]\nlocal_only = false\n\n[semantic]\nprovider = \"local\"\nmodel = \"m\"\n\
+             endpoint = \"https://embeddings.example.com/v1/embeddings\"\n",
+        )
+        .expect("remote config");
+        let error = Config::load_layers(
+            Some(&remote),
+            None,
+            &ConfigOverrides::default(),
+            temp.path(),
+        )
+        .expect_err("remote embedding endpoints stay refused");
+        assert!(error.to_string().contains("loopback"), "{error}");
     }
 
     #[test]

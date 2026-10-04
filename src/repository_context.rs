@@ -781,7 +781,9 @@ fn clean_short(value: &str, limit: usize) -> String {
                 output.push('\\');
                 output.push(character);
             }
-            c if c.is_control() => output.push('�'),
+            c if c.is_control() || crate::security::is_invisible_format(c) => {
+                output.push_str(&crate::security::escape_char(c));
+            }
             c => output.push(c),
         }
     }

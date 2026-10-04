@@ -88,9 +88,19 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "source_aliases_delivery",
         include_str!("migrations/0016_source_aliases_delivery.sql"),
     ),
+    (
+        17,
+        "tool_observations",
+        include_str!("migrations/0017_tool_observations.sql"),
+    ),
+    (
+        18,
+        "semantic_model_vectors",
+        include_str!("migrations/0018_semantic_model_vectors.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 16;
+pub const LATEST_MIGRATION_VERSION: i64 = 18;
 
 /// Reopenable handle to the canonical database.
 ///
@@ -787,6 +797,76 @@ mod tests {
             .execute("DELETE FROM nodes WHERE id='owner'", [])
             .unwrap();
         assert_eq!(count("label:Options"), 0);
+    }
+
+    #[test]
+    fn semantic_model_vectors_migration_keeps_rows_and_separates_embedders() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON")
+            .unwrap();
+        let (sidecar_version, sidecar_sql) = MIGRATIONS
+            .iter()
+            .find(|(_, name, _)| *name == "semantic_model_vectors")
+            .map(|(version, _, sql)| (*version, *sql))
+            .expect("semantic sidecar migration");
+        for (_, _, sql) in MIGRATIONS
+            .iter()
+            .filter(|(version, _, _)| *version < sidecar_version)
+        {
+            connection.execute_batch(sql).unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO projects(id,name,created_at_ms) VALUES ('prj_one','one',0);
+                 INSERT INTO memories(id,project_id,scope_type,scope_id,kind,epistemic_state,
+                     status,claim,normalized_claim,rationale,confidence,importance,tags_json,
+                     token_estimate,known_from_ms,trust_source,updated_at_ms)
+                 VALUES ('mem_one','prj_one','project','prj_one','lesson','validated','active',
+                     'claim','claim','why',0.5,0.5,'[]',1,0,'human_instruction',0);
+                 INSERT INTO memory_vectors(memory_id,project_id,embedder,dimension,vector,
+                     updated_at_ms)
+                 VALUES ('mem_one','prj_one','engram-hashed-ngram-v1-d256',1,X'0000803F',5);",
+            )
+            .unwrap();
+        connection.execute_batch(sidecar_sql).unwrap();
+        let kept: (String, i64, Option<String>) = connection
+            .query_row(
+                "SELECT embedder, updated_at_ms, source_digest FROM memory_vectors
+                 WHERE memory_id = 'mem_one'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(kept, ("engram-hashed-ngram-v1-d256".to_owned(), 5, None));
+        let insert = "INSERT INTO memory_vectors(memory_id,project_id,embedder,dimension,vector,
+                          updated_at_ms,source_digest)
+                      VALUES ('mem_one','prj_one',?1,?2,?3,6,'digest')";
+        connection
+            .execute(insert, params!["local:model", 2, vec![0_u8; 8]])
+            .expect("a second embedder keeps its own row for the same memory");
+        assert!(
+            connection
+                .execute(insert, params!["local:model", 2, vec![0_u8; 8]])
+                .is_err(),
+            "one row per (memory, embedder)"
+        );
+        assert!(
+            connection
+                .execute(insert, params!["local:other", 3, vec![0_u8; 8]])
+                .is_err(),
+            "a BLOB must hold exactly `dimension` f32 values"
+        );
+        connection
+            .execute("DELETE FROM memories WHERE id = 'mem_one'", [])
+            .unwrap();
+        let remaining: i64 = connection
+            .query_row("SELECT count(*) FROM memory_vectors", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            remaining, 0,
+            "purging a memory removes every embedder's vector"
+        );
     }
 
     #[test]

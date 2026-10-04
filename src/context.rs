@@ -414,7 +414,7 @@ impl ContextCompiler {
                 }
                 let review_entry = self.review_standards && candidate.memory.kind == "preference";
                 let (block, block_tokens) = if review_entry {
-                    let entry = format!("- MUST: {}\n", candidate.memory.claim);
+                    let entry = format!("- MUST: {}\n", context_safe(&candidate.memory.claim));
                     let tokens = estimate_tokens(&entry);
                     (entry, tokens)
                 } else {
@@ -772,7 +772,13 @@ impl ContextCompiler {
                 memory.id
             )));
         }
-        Ok((projection.text.clone(), projection.token_estimate))
+        let text = context_safe(&projection.text);
+        let tokens = if text == projection.text {
+            projection.token_estimate
+        } else {
+            estimate_tokens(&text)
+        };
+        Ok((text, tokens))
     }
 
     fn stable_prefix(
@@ -1193,17 +1199,11 @@ fn append_if_fits(output: &mut String, candidate: &str, budget: u32) -> bool {
     }
 }
 
+/// Escape (never delete) control characters, hidden or bidirectional
+/// characters and framing markup so stored text cannot break the
+/// reference-data framing. Ordinary text renders unchanged.
 fn context_safe(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_control() && !matches!(character, '\n' | '\t') {
-                '�'
-            } else {
-                character
-            }
-        })
-        .collect()
+    crate::security::neutralize_block(value)
 }
 
 #[must_use]
