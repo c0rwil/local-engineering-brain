@@ -1530,3 +1530,81 @@ fn claude_code_verification_becomes_eligible_evidence_for_the_declared_task() {
         packets[0].blocked_reason
     );
 }
+
+/// A verification whose result the hook cannot observe leaves the session's
+/// outcome unknown, so an earlier pass must not close the episode as success.
+#[test]
+fn unobserved_verification_after_a_pass_never_closes_the_episode_as_success() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::write(repo.join("lib.rs"), "pub fn compute() -> u32 { 1 }\n").unwrap();
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let passed = json!({"stdout":"test result: ok. 1 passed","stderr":"",
+        "interrupted":false,"isImage":false});
+    let later_runs = [
+        // Interrupted by the user.
+        Some(
+            json!({"hook_event_name":"PostToolUseFailure","tool_name":"Bash",
+            "tool_input":{"command":"cargo test"},
+            "error":"Tool execution was interrupted","is_interrupt":true}),
+        ),
+        // A failure reported without an exit code.
+        Some(
+            json!({"hook_event_name":"PostToolUseFailure","tool_name":"Bash",
+            "tool_input":{"command":"cargo test"},"error":"Command timed out","is_interrupt":false}),
+        ),
+        // `| tail` reports tail's status, not the tests'.
+        Some(json!({"hook_event_name":"PostToolUse","tool_name":"Bash",
+            "tool_input":{"command":"cargo test 2>&1 | tail -3"},"tool_response":passed})),
+        // Control: the observed pass is the final result.
+        None,
+    ];
+    for (index, later) in later_runs.into_iter().enumerate() {
+        let session = format!("unknown-result-{index}");
+        cli(
+            root,
+            &["hook", "prompt"],
+            Some(json!({"session_id":session,"cwd":repo,"prompt":"Check compute"})),
+        );
+        cli(
+            root,
+            &["hook", "bash"],
+            Some(
+                json!({"session_id":session,"cwd":repo,"hook_event_name":"PostToolUse",
+                "tool_name":"Bash","tool_input":{"command":"cargo test"},"tool_response":passed}),
+            ),
+        );
+        if let Some(mut later) = later {
+            later["session_id"] = json!(session);
+            later["cwd"] = json!(repo);
+            cli(root, &["hook", "bash"], Some(later));
+        }
+        cli(
+            root,
+            &["hook", "session-end"],
+            Some(json!({"session_id":session,"cwd":repo})),
+        );
+    }
+    let c = Connection::open(root.join("brain.sqlite")).unwrap();
+    let statuses: Vec<String> = c
+        .prepare("SELECT status FROM tasks ORDER BY started_at_ms,rowid")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        statuses,
+        ["abandoned", "abandoned", "abandoned", "success"],
+        "an unknown final result is never success"
+    );
+    let recorded_passes: i64 = c
+        .query_row("SELECT count(*) FROM evidence WHERE exit_code=0", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(recorded_passes, 4, "each observed pass is still recorded");
+    cli(root, &["daemon", "stop"], None);
+}

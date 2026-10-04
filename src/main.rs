@@ -2791,7 +2791,7 @@ fn run_hook_payload(
                     &state_dir,
                     &scope,
                     &session,
-                    &payload,
+                    payload,
                     &observed_paths,
                     engram::effectiveness::ToolPhase::Pre,
                     agent,
@@ -2957,9 +2957,9 @@ fn run_hook_payload(
                     &state_dir,
                     &scope,
                     &session,
-                    &payload,
+                    payload,
                     &paths,
-                    engram::effectiveness::post_tool_phase(&payload),
+                    engram::effectiveness::post_tool_phase(payload),
                     agent,
                 );
                 if primary.is_none() {
@@ -2973,7 +2973,7 @@ fn run_hook_payload(
             // receipt once to the first tracked target, never once per file.
             record_hook_tool_usage(&client, &state_dir, &scope, &session, payload, agent);
             // Engram MCP task calls name the task later verification belongs to.
-            if let Some(declaration) = engram::agenthooks::task_declaration(&payload) {
+            if let Some(declaration) = engram::agenthooks::task_declaration(payload) {
                 let _ = engram::agenthooks::record_task_declaration(
                     &state_dir,
                     &session_id,
@@ -3002,11 +3002,29 @@ fn run_hook_payload(
             let session_paths = engram::agenthooks::recent_paths(&state_dir, &scope);
             let Some(observed) = engram::agenthooks::observe_verification(
                 payload,
-                agent,
+                agent.evidence_source(),
                 &resolved.resolved.root,
                 resolved.resolved.git.as_ref(),
                 &session_paths,
             ) else {
+                // A verification whose status went unobserved (hidden by the
+                // shell, interrupted, or failed without an exit code) has an
+                // unknown result: an earlier pass must not close the episode.
+                if session.last_verification_exit.is_some()
+                    && engram::agenthooks::classify_verification(engram::agenthooks::tool_command(
+                        &tool_input,
+                    ))
+                    .is_some()
+                {
+                    let _ = engram::agenthooks::save_session(
+                        &state_dir,
+                        &scope,
+                        &engram::agenthooks::HookSession {
+                            last_verification_exit: None,
+                            ..session
+                        },
+                    );
+                }
                 return Ok(true);
             };
             if session.last_evidence_fingerprint.as_deref() == Some(observed.fingerprint.as_str()) {
