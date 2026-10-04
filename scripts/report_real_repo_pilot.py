@@ -99,6 +99,28 @@ def suite_definition(data, manifest_raw):
     }
 
 
+INSPECTION_DECISIONS = ("continue_in_matrix", "separate_infrastructure_attempt")
+
+
+def read_inspections(data):
+    """Recorded decisions on stopping attempts (launch_real_repo_collection.py resume); empty when none were made."""
+    path = data / "inspections.jsonl"
+    if not path.is_file():
+        return []
+    result = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        identity, decision = entry.get("attempt_id"), entry.get("decision")
+        if not isinstance(identity, str) or not SAFE_LABEL.fullmatch(identity) or decision not in INSPECTION_DECISIONS:
+            raise ValueError("An inspection ledger entry is invalid")
+        inspected = entry.get("inspected_at")
+        result.append({"attempt_id": identity, "decision": decision, "reason": " ".join(str(entry.get("reason", "")).split())[:500],
+                       "inspected_at": inspected if isinstance(inspected, str) and len(inspected) <= 40 else None})
+    return result
+
+
 def redact_context(context):
     """Only the numeric context measurements and their completeness flag."""
     result = {name: number(context.get(name)) for name in CONTEXT_MEASURES}
@@ -520,6 +542,13 @@ def markdown(summary, manifest, fixtures, artifacts=(), suite=None):
                 cov = block["measurement_coverage"][name]
                 cells.append(format_number(block["totals_observed"][name], decimals=decimals) + (" (partial)" if cov.get("partial", 0) else "") + f" [{cov['available']}/{cov['total']} reported]")
             lines.append(f"| {arm} | {block['attempts']} | " + " | ".join(cells) + " |")
+        if field == "infrastructure_attempts" and summary.get("inspections"):
+            lines += ["", "Recorded inspections of attempts the collector stopped on:", ""]
+            for entry in summary["inspections"]:
+                outcome = ("kept here as a separate infrastructure attempt, outside the paired matrix; its slot ran again"
+                           if entry["decision"] == "separate_infrastructure_attempt"
+                           else "kept in the paired matrix as an unscorable outcome; collection continued with the next planned attempt")
+                lines.append(f"- `{entry['attempt_id']}` ({entry['inspected_at'] or 'time unrecorded'}): {outcome}. Reason: {entry['reason']}")
     if suite:
         tasks = COUNT_WORDS.get(len(suite["task_ids"]), str(len(suite["task_ids"])))
         repetitions = COUNT_WORDS.get(suite["repetitions"], str(suite["repetitions"]))
@@ -684,6 +713,9 @@ def generate_report(data: Path, output: Path):
     if suite:
         summary["suite"] = suite
         summary["context_delivery"] = context_summary(records)
+    inspections = read_inspections(data)
+    if inspections:
+        summary["inspections"] = inspections
     summary["input_warnings"] = warnings
     generated_at = datetime.now(timezone.utc).isoformat()
     result = {"schema_version": 1, "record_classification_revision": RECORD_CLASSIFICATION_REVISION, "generated_at": generated_at, "progress": summary["progress"], "manifest": manifest, "fixtures": fixtures, "records": records, "infrastructure_attempts": infrastructure_records, "preflight_runs": preflight_records}
@@ -691,6 +723,8 @@ def generate_report(data: Path, output: Path):
     if suite:
         result["suite"] = suite
         analysis_scripts += ["real_repo_context.py", "eval_context_quality.py"]
+    if inspections:
+        result["inspections"] = inspections
     result["analysis_provenance"] = {
         name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in analysis_scripts
     }

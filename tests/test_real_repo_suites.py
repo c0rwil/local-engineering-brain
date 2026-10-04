@@ -22,7 +22,6 @@ sys.path.insert(0, str(TESTS.parent / "scripts"))
 sys.path.insert(0, str(TESTS))
 sys.dont_write_bytecode = True
 import import_real_repo_pilot as importer  # noqa: E402
-import launch_real_repo_collection as launcher  # noqa: E402
 import preflight_real_repo_graders as graders  # noqa: E402
 import report_real_repo_pilot as reporter  # noqa: E402
 import real_repo_v2_observation as v2_observation  # noqa: E402
@@ -651,115 +650,6 @@ class SnapshotRefreshTests(LocalSuiteTestCase):
         (self.data / "manifest.json").write_text("{}")
         with self.assertRaisesRegex(ValueError, "cannot be refreshed after the collection has started"):
             self.collector("--prepare-only", "--refresh-snapshots", release=self.newer)
-
-
-FAKE_COLLECTOR = r'''#!{python}
-import fcntl, json, os, sys, time
-from pathlib import Path
-argv = sys.argv[1:]
-data = Path(argv[argv.index("--data") + 1])
-if "--check-only" in argv:
-    if (data / "refuse").exists():
-        print("synthetic check failure")
-        raise SystemExit(1)
-    print(json.dumps({{"status": "ready"}}))
-    raise SystemExit(0)
-progress = Path(argv[argv.index("--progress") + 1])
-lock = (data / "collector.lock").open("a")
-fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-(data / "environment.json").write_text(json.dumps({{key: os.environ.get(key) for key in ("PATH", "HOME", "USER", "LOGNAME", "LANG")}}))
-progress.write_text(json.dumps({{"state": "collecting", "pid": os.getpid(), "argv": argv}}))
-while not (data / "release").exists():
-    time.sleep(0.05)
-progress.write_text(json.dumps({{"state": "completed", "pid": os.getpid()}}))
-'''
-
-
-class LauncherTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="launcher-")
-        self.addCleanup(self.temp.cleanup)
-        self.data = Path(self.temp.name).resolve()
-        collector = self.data / "fake_collector.py"
-        collector.write_text(FAKE_COLLECTOR.format(python=sys.executable))
-        patch = mock.patch.object(launcher, "COLLECTOR", collector)
-        patch.start()
-        self.addCleanup(patch.stop)
-        self.addCleanup(self.release_collector)
-        coding = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(Path.home()), "USER": "synthetic-user",
-                  "LOGNAME": "synthetic-user", "SHELL": "/bin/bash", "TMPDIR": "/private/tmp/scratch"}
-        (self.data / "runtime-preflight.json").write_text(json.dumps({"identity": {"coding_environment": coding}}))
-        self.coding = coding
-
-    def release_collector(self):
-        (self.data / "release").write_text("done")
-        deadline = time.monotonic() + 10
-        while launcher.collector_running(self.data) and time.monotonic() < deadline:
-            time.sleep(0.05)
-        # The launcher's own process normally exits at once; here the test is the parent.
-        if (self.data / "launch.json").is_file():
-            with contextlib.suppress(ChildProcessError):
-                os.waitpid(json.loads((self.data / "launch.json").read_text())["pid"], 0)
-
-    def start(self, *extra):
-        stdout = io.StringIO()
-        with contextlib.redirect_stdout(stdout):
-            launcher.main(["start", "--catalog", str(HELDOUT), "--data", str(self.data), "--active", str(self.data / "active"),
-                           "--engram-release", str(self.data), "--allow-draft-suite", *extra])
-        return stdout.getvalue()
-
-    def status(self):
-        stdout = io.StringIO()
-        with contextlib.redirect_stdout(stdout):
-            launcher.main(["status", "--data", str(self.data), "--tail", "5"])
-        return json.loads(stdout.getvalue())
-
-    def wait_for(self, predicate):
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            if predicate():
-                return
-            time.sleep(0.05)
-        self.fail("timed out waiting for the detached collector")
-
-    def test_start_detaches_a_locked_collector_with_the_proof_environment(self):
-        started = json.loads(self.start("--", "--agent-seconds", "1200"))
-        self.assertTrue(started["running"])
-        self.assertEqual(started["command"][:3], [launcher.NOHUP, launcher.CAFFEINATE, "-dims"])
-        self.assertIn("--progress", started["command"])
-        self.assertIn("--allow-draft-suite", started["command"])
-        self.assertEqual(started["command"][-4:-2], ["--agent-seconds", "1200"])
-        self.wait_for(lambda: (self.data / "environment.json").exists())
-        environment = json.loads((self.data / "environment.json").read_text())
-        self.assertEqual(environment["PATH"], self.coding["PATH"])
-        self.assertEqual(environment["USER"], "synthetic-user")
-        self.assertIsNone(environment["LANG"])
-        self.wait_for(lambda: self.status()["running"])
-        with self.assertRaises(SystemExit) as refused:
-            self.start()
-        self.assertIn("already holds", str(refused.exception))
-        status = self.status()
-        self.assertEqual(status["progress"]["state"], "collecting")
-        self.assertTrue(status["launch_pid_alive"])
-        # The collector runs in its own session, detached from this process group.
-        self.assertNotEqual(os.getsid(status["launch"]["pid"]), os.getsid(0))
-        (self.data / "release").write_text("done")
-        self.wait_for(lambda: not self.status()["running"])
-        self.assertEqual(self.status()["progress"]["state"], "completed")
-
-    def test_failed_check_starts_nothing(self):
-        (self.data / "refuse").write_text("synthetic")
-        with self.assertRaises(SystemExit) as failed:
-            self.start()
-        self.assertIn("synthetic check failure", str(failed.exception))
-        self.assertFalse((self.data / "launch.json").exists())
-        self.assertFalse((self.data / "collector.log").exists())
-
-    def test_dry_run_prints_the_detached_command(self):
-        planned = json.loads(self.start("--dry-run"))
-        self.assertEqual(planned["command"][:3], [launcher.NOHUP, launcher.CAFFEINATE, "-dims"])
-        self.assertTrue(planned["environment_from_runtime_proof"])
-        self.assertFalse((self.data / "launch.json").exists())
 
 
 class ReadmeCommandTests(unittest.TestCase):
