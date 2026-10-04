@@ -502,6 +502,123 @@ replay database must match the daemon's database; for a frozen replay, start an
 isolated daemon serving the snapshot. Reports omit raw prompts, evidence
 artifacts, and repository source, and make no model or cloud calls.
 
+## Optional local embedding model (off by default, unmeasured)
+
+Semantic retrieval is off by default (`[context] semantic_retrieval = false`).
+When it is on, the default embedder is a hashed n-gram projection: a lexical
+approximation, not a learned model. Engram can instead call a local embedding
+model through an `OpenAI`-compatible `POST /v1/embeddings` endpoint, such as
+Ollama's. No benchmark has shown that either embedder improves task outcomes.
+The 2026-09-25 real-repository follow-up attributed Engram's added cost to the
+context agents carried after following source pointers, not to the injected
+text, and it did not measure memory retrieval. Treat the local model as an
+experiment: measure it before you enable it for real work.
+
+To try it, pull an embedding model. Chat models such as `qwen3:8b` are not
+embedding models. Sizes are from ollama.com/library on 2026-10-04:
+
+```sh
+ollama pull nomic-embed-text     # 274 MB, 768 dimensions
+ollama pull embeddinggemma       # 622 MB, 768 dimensions
+```
+
+Configure it in `~/.config/engram/config.toml` (or a workspace profile). A
+repository's `.engram/config.toml` can turn `semantic_retrieval` on or off and
+set the two bounds, but it cannot set provider settings.
+
+```toml
+[context]
+semantic_retrieval = true
+
+[semantic]
+provider = "local"
+model = "nomic-embed-text"
+query_prefix = "search_query: "        # model-specific; see the example config
+document_prefix = "search_document: "
+```
+
+Restart the daemon (`engram daemon stop`; the next CLI call starts it), then
+embed the memories of each repository:
+
+```sh
+engram semantic rebuild <repo>
+```
+
+The rebuild reports how many vectors it embedded, kept unchanged, and removed.
+It embeds outside the canonical writer in pages and skips memories whose text
+has not changed. Each stored vector records its model identity
+(`local:<model>`, plus a digest of the document prefix) and its dimension.
+Retrieval compares only vectors of the configured identity and dimension.
+After a change of model, prefix, or dimension, the previous vectors are not
+searched. That repository gets lexical and structural retrieval only until a
+rebuild has run. Retrieval also requests that rebuild: with background jobs
+enabled, the daemon queues a `semantic_rebuild` job, at most one per repository
+per hour. The rebuild deletes the other model's vectors for that repository.
+The hashed vectors are always kept up to date.
+
+If the endpoint is down, slow (over `query_timeout_ms`, default 2 s) or returns
+an error, that request uses the hashed vectors instead. The endpoint is then
+skipped for 30 seconds. The `why` note of every injected memory names the
+embedder that served it, any fallback and its reason, and any coverage gap. To
+see these notes, use `engram context "…" --path <repo> --json`. By default
+Ollama unloads a model after five idle minutes (`OLLAMA_KEEP_ALIVE`). A query
+that waits for the model to load again can exceed `query_timeout_ms` and fall
+back.
+
+Safety limits:
+
+- The endpoint must be loopback (`localhost`, `127.0.0.0/8` or `[::1]`), also
+  when `network.local_only = false`. `localhost` is pinned to 127.0.0.1.
+- Proxies and redirects are refused.
+- Each text is cut at 8 KiB, and a request holds at most 64 texts.
+- Response sizes are capped in proportion to the vectors requested.
+- Every request has a time limit.
+
+Memory text and task text go to the local endpoint only.
+
+### Measuring hashed against model embeddings
+
+`scripts/eval_semantic_retrieval.py` compares the arms `off` (lexical and
+structural), `hashed`, and `local` on one frozen snapshot with the same cases.
+Each arm runs an isolated daemon on its own copy of the snapshot and rebuilds its
+own vectors. The report contains hit@1/3/5 and MRR for the first relevant
+injected memory and the irrelevant memories injected per case. It also contains
+injections on negative cases, the embedder that served each trial, median
+semantic scores of relevant and other memories, and latency. It never contains
+memory text. A `local` run is invalid (exit 1) when any trial was served by a
+fallback.
+
+Plumbing check with the committed synthetic fixture (it is too small to
+measure quality):
+
+```sh
+python3 scripts/eval_semantic_retrieval.py --daemon ~/.local/bin/engramd \
+  --synthetic fixtures/semantic-retrieval-synthetic.json \
+  --model nomic-embed-text --query-prefix "search_query: " \
+  --document-prefix "search_document: " --output /tmp/esr-synthetic.json
+```
+
+Comparison on your own frozen snapshot. Cases use the replay format
+(`fixtures/capture-replay.json`): a case counts as relevant only when a
+validated memory's claim matches all of its `expected_patterns`. Mark a case
+that should inject nothing with `"negative": true`.
+
+```sh
+caffeinate -dims python3 scripts/eval_semantic_retrieval.py \
+  --daemon ~/.local/bin/engramd \
+  --freeze-from ~/.engram/brain.sqlite --snapshot /tmp/esr-snapshot.sqlite \
+  --cases <cases.json> --project <alias>=<registered-name> \
+  --model nomic-embed-text --query-prefix "search_query: " \
+  --document-prefix "search_document: " --output /tmp/esr-nomic.json
+```
+
+Run it once with `--min-similarity 0` first. Learned models often give
+unrelated text a positive cosine similarity, so too many memories inject. Pick
+a floor from the median semantic scores for relevant and other memories, then
+repeat the run with `--min-similarity`. Good retrieval diagnostics alone do not
+justify turning the stage on. They justify a paired task benchmark
+(`docs/BENCHMARKS.md`) with the brain-off control unchanged.
+
 ## Product knowledge and living documentation
 
 The browser now opens on **Product**. Add the product's purpose, intended behavior,

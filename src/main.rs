@@ -1697,7 +1697,14 @@ fn run_semantic(
             let config = load_daemon_config(overrides, socket, Some(&root))?;
             let client = client(&config);
             let status = block_on(client.resolve_project(path))?;
-            let response = block_on(client.rebuild_semantic_index(&SemanticRebuildRequest {
+            // A local embedding model rebuild may outlive the default
+            // deadline; the daemon allows it at least ten minutes.
+            let patient = DaemonClient::new(
+                &config.daemon.socket_path,
+                Duration::from_millis(config.daemon.request_timeout_ms)
+                    .max(Duration::from_secs(660)),
+            );
+            let response = block_on(patient.rebuild_semantic_index(&SemanticRebuildRequest {
                 project_id: status.resolved.project.id,
             }))?;
             if *json {
@@ -1707,6 +1714,26 @@ fn run_semantic(
                     "Rebuilt {} semantic vectors for {}",
                     response.vectors, response.project_id
                 );
+                if let Some(model) = &response.model {
+                    println!(
+                        "{}: {} embedded, {} unchanged, {} removed, {} changed during the run \
+                         ({} active memories, dimension {}, {} requests, {} ms){}",
+                        model.embedder,
+                        model.embedded,
+                        model.unchanged,
+                        model.removed,
+                        model.skipped_changed,
+                        model.active_memories,
+                        model.dimension,
+                        model.requests,
+                        model.duration_ms,
+                        if model.complete {
+                            ""
+                        } else {
+                            "; stopped at the deadline, rerun to continue"
+                        }
+                    );
+                }
             }
         }
     }

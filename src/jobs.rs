@@ -31,7 +31,7 @@ use crate::memory::{MemoryStatus, MemoryStore};
 use crate::metrics::MetricsRegistry;
 use crate::scheduler::{MutationPriority, MutationScheduler};
 use crate::security::Redactor;
-use crate::semantic::{SqliteVectorIndex, VectorIndex as _};
+use crate::semantic::LocalEmbedderSettings;
 use crate::storage::Database;
 
 /// Base delay before the first retry; each further attempt doubles it.
@@ -569,12 +569,14 @@ pub struct JobExecutor {
     scheduler: MutationScheduler,
     redactor: Redactor,
     config: JobsConfig,
-    semantic_max_scanned: usize,
     /// Job-driven invalidations count toward the daemon's stale-injection
     /// signal; absent only in library/test contexts without a registry.
     metrics: Option<std::sync::Arc<MetricsRegistry>>,
     /// Vault root for `vault_export` jobs; `None` fails those jobs cleanly.
     vault_root: Option<std::path::PathBuf>,
+    /// Local embedding model whose vectors `semantic_rebuild` maintains;
+    /// `None` rebuilds only the default hashed vectors.
+    semantic_provider: Option<LocalEmbedderSettings>,
 }
 
 impl JobExecutor {
@@ -584,7 +586,6 @@ impl JobExecutor {
         scheduler: MutationScheduler,
         redactor: Redactor,
         config: JobsConfig,
-        semantic_max_scanned: usize,
         metrics: Option<std::sync::Arc<MetricsRegistry>>,
     ) -> Self {
         Self {
@@ -592,10 +593,17 @@ impl JobExecutor {
             scheduler,
             redactor,
             config,
-            semantic_max_scanned,
             metrics,
             vault_root: None,
+            semantic_provider: None,
         }
+    }
+
+    /// Maintain a local embedding model's vectors in `semantic_rebuild` jobs.
+    #[must_use]
+    pub fn with_semantic_provider(mut self, provider: Option<LocalEmbedderSettings>) -> Self {
+        self.semantic_provider = provider;
+        self
     }
 
     /// Enable `vault_export` jobs by providing the vault root directory.
@@ -726,17 +734,19 @@ impl JobExecutor {
         Ok(serde_json::to_value(&report)?)
     }
 
-    /// Rebuild the derived semantic vector sidecar for the job's project.
+    /// Rebuild the derived semantic vector sidecar for the job's project:
+    /// hashed vectors in the writer, then any local model's vectors embedded
+    /// outside it.
     fn run_semantic_rebuild(&self, job: &JobRecord) -> Result<serde_json::Value> {
         let project_id = required_project(job)?;
-        let index = SqliteVectorIndex::new(self.database.clone(), self.semantic_max_scanned);
-        let vectors = self
-            .scheduler
-            .submit(MutationPriority::BackgroundLearning, move || {
-                index.rebuild(Some(&project_id))
-            })?
-            .wait()?;
-        Ok(serde_json::json!({ "vectors": vectors }))
+        let report = crate::semantic::rebuild_project(
+            &self.database,
+            &self.scheduler,
+            self.semantic_provider.as_ref(),
+            &project_id,
+            None,
+        )?;
+        Ok(serde_json::to_value(&report)?)
     }
 
     /// Bounded consolidation GC (spec section 16): delete `context_runs`
@@ -1055,6 +1065,21 @@ pub fn remove_orphaned_blobs(store: &BlobStore, grace_ms: u64, limit: usize) -> 
     })
 }
 
+/// A `semantic_rebuild` job requested by retrieval, deduplicated per project
+/// per UTC hour so repeated requests cannot churn the queue.
+fn semantic_rebuild_request(project_id: ProjectId, now_ms: i64, max_attempts: u32) -> EnqueueJob {
+    EnqueueJob {
+        job_type: JobType::SemanticRebuild,
+        dedupe_key: format!(
+            "retrieval-{project_id}-hour-{}",
+            now_ms.div_euclid(3_600_000)
+        ),
+        project_id: Some(project_id),
+        payload: serde_json::json!({ "reason": "retrieval found missing or stale vectors" }),
+        max_attempts,
+    }
+}
+
 /// Daily dedupe key for self-enqueued maintenance jobs: one enqueue per UTC
 /// day, derived arithmetically so no calendar dependency is needed.
 #[must_use]
@@ -1133,6 +1158,7 @@ impl JobRunner {
         if day != *last_daily_day && self.enqueue_daily(now_ms).await {
             *last_daily_day = day;
         }
+        self.enqueue_requested_semantic_rebuilds(now_ms).await;
         loop {
             if !can_start_job((self.rss_probe)(), self.rss_hard_limit_bytes) {
                 break;
@@ -1159,6 +1185,25 @@ impl JobRunner {
                 let _permit = permit;
                 executor.execute_and_record(&job, unix_time_ms());
             });
+        }
+    }
+
+    /// Turn retrieval's requests for a semantic rebuild (missing, stale or
+    /// unreadable vectors; spec section 27.2) into `semantic_rebuild` jobs,
+    /// at most one per project per hour.
+    async fn enqueue_requested_semantic_rebuilds(&self, now_ms: i64) {
+        for project_id in crate::semantic::take_rebuild_requests(&self.executor.database) {
+            let queue = JobQueue::new(self.executor.database.clone());
+            let request = semantic_rebuild_request(project_id, now_ms, self.max_attempts);
+            let Ok(handle) = self
+                .scheduler
+                .submit(MutationPriority::BackgroundLearning, move || {
+                    queue.enqueue(&request, now_ms)
+                })
+            else {
+                return;
+            };
+            let _ = tokio::task::spawn_blocking(move || handle.wait()).await;
         }
     }
 
@@ -1545,7 +1590,6 @@ mod tests {
             MutationScheduler::start(64),
             Redactor::default(),
             JobsConfig::default(),
-            50_000,
             None,
         )
     }
@@ -1694,5 +1738,83 @@ mod tests {
     fn unknown_job_types_are_rejected_by_the_allowlist() {
         let error = JobType::parse("shell_exec").expect_err("not allowlisted");
         assert!(error.to_string().contains("unsupported job type"));
+    }
+
+    #[test]
+    fn requested_semantic_rebuilds_are_hourly_jobs_that_embed_with_the_local_model() {
+        let temp = TempDir::new().expect("temp dir");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("database");
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(&root).expect("project dir");
+        let project = ProjectRegistry::new(database.clone())
+            .resolve_or_register(&root)
+            .expect("project")
+            .project
+            .id;
+        let store = MemoryStore::new(database.clone());
+        let memory = store
+            .create_candidate(
+                &project,
+                &MemoryDraft {
+                    scope_type: "project".to_owned(),
+                    scope_id: project.to_string(),
+                    kind: "lesson".to_owned(),
+                    claim: "Release reservations when abort cleanup runs".to_owned(),
+                    rationale: "Fixture".to_owned(),
+                    confidence: 0.5,
+                    importance: 0.5,
+                    tags: Vec::new(),
+                    valid_from_commit: None,
+                    valid_to_commit: None,
+                    trust_source: "human_instruction".to_owned(),
+                    evidence_ids: Vec::new(),
+                    source_task_ids: Vec::new(),
+                    node_ids: Vec::new(),
+                },
+            )
+            .expect("memory");
+        store
+            .promote(&memory.id, crate::memory::EpistemicState::Validated, true)
+            .expect("validated");
+
+        let queue = JobQueue::new(database.clone());
+        let hour = 3_600_000;
+        let first = queue
+            .enqueue(&semantic_rebuild_request(project.clone(), hour, 5), hour)
+            .expect("enqueue");
+        let same_hour = queue
+            .enqueue(
+                &semantic_rebuild_request(project.clone(), 2 * hour - 1, 5),
+                2 * hour - 1,
+            )
+            .expect("deduplicated enqueue");
+        assert_eq!(first.id, same_hour.id, "one requested rebuild per hour");
+        let next_hour = queue
+            .enqueue(
+                &semantic_rebuild_request(project.clone(), 2 * hour, 5),
+                2 * hour,
+            )
+            .expect("next hour");
+        assert_ne!(first.id, next_hour.id);
+
+        let endpoint = crate::semantic::fake_endpoint::concept_model(4);
+        let local = LocalEmbedderSettings {
+            endpoint: endpoint.url.clone(),
+            model: "embed-a".to_owned(),
+            dimension: None,
+            batch_size: 8,
+            timeout: Duration::from_secs(5),
+            query_timeout: Duration::from_secs(5),
+            query_prefix: String::new(),
+            document_prefix: String::new(),
+        };
+        let result = executor(&database)
+            .with_semantic_provider(Some(local))
+            .execute(&first, hour)
+            .expect("semantic rebuild job");
+        assert_eq!(result["vectors"], 1);
+        assert_eq!(result["model"]["embedder"], "local:embed-a");
+        assert_eq!(result["model"]["embedded"], 1);
+        assert_eq!(result["model"]["dimension"], 4);
     }
 }
