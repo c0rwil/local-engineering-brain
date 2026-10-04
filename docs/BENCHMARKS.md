@@ -31,6 +31,15 @@ the previous and updated binaries on frozen navigation probes and full historica
 task descriptions, including reordered requirements. These are local retrieval
 diagnostics; the original 24 agent attempts remain unchanged.
 
+A [held-out suite draft](../benchmarks/real-repo-heldout-v1/README.md) adds five
+historical replays chosen outside the v1 and v2 task sets. It is meant to test
+the planned line-ranged source pointers and related-use cue on work that did not
+tune Engram; the operator still has to confirm that. Two tasks put the fix inside
+files larger than the Read limit, and three need a fix that reaches several call
+sites or consumers. Its graders were calibrated locally, but the suite awaits
+operator review of prompts and graders. No agent has run against it, and it
+reports no results.
+
 ## Headline results
 
 | Axis | Control | With Engram | Evidence |

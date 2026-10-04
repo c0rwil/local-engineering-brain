@@ -370,6 +370,7 @@ fn completion_review_retry_expiry_and_purge_preserve_evidence_gates() {
             rationale: None,
             contradicts: vec![],
             reviewed_related: false,
+            acknowledge_security_flags: false,
         })
         .unwrap();
     let id = accepted.memory_id.unwrap();
@@ -433,7 +434,8 @@ fn unsupported_proposals_cannot_be_accepted_and_acceptance_remains_unknown() {
                 claim: None,
                 rationale: None,
                 contradicts: vec![],
-                reviewed_related: false
+                reviewed_related: false,
+                acknowledge_security_flags: false,
             })
             .is_err()
     );
@@ -460,6 +462,7 @@ fn purging_shared_memory_evidence_invalidates_product_observations() {
             rationale: None,
             contradicts: vec![],
             reviewed_related: false,
+            acknowledge_security_flags: false,
         })
         .unwrap();
     let item = json!({"type":"entity","value":{"kind":"service","name":"traffic","basis":"observed","anchors":[{"project_id":task.project_id,"evidence_id":result.evidence_ids[0]}]}});
@@ -511,11 +514,61 @@ fn failed_then_passing_verifications_do_not_poison_auto_proposals() {
                 claim: None,
                 rationale: None,
                 contradicts: vec![],
-                reviewed_related: false
+                reviewed_related: false,
+                acknowledge_security_flags: false,
             })
             .unwrap()
             .status,
         "accepted"
+    );
+}
+
+#[test]
+fn completion_attaches_the_latest_hook_run_per_command_beside_the_agents_copy() {
+    let f = Fixture::new();
+    let experience = ExperienceStore::new(f.database.clone());
+    let task = experience
+        .start_task(&f.project.project.id, "make run return 2", None)
+        .unwrap();
+    let hook_run = |artifact: &str| {
+        experience
+            .record_evidence(
+                &f.project.project.id,
+                Some(&task.id),
+                None,
+                "test_result",
+                EvidenceStrength::Deterministic,
+                None,
+                Some("cargo test"),
+                Some(0),
+                artifact.as_bytes(),
+                &json!({"source": crate::agenthooks::CLAUDE_HOOK_SOURCE}),
+            )
+            .unwrap()
+            .id
+    };
+    let older = hook_run("test result: ok. 1 passed");
+    // Distinct observation times keep "latest" deterministic.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let newer = hook_run("test result: ok. 2 passed");
+    // A paste identical to a hook observation reuses that row; this one differs.
+    let completion: Completion =
+        serde_json::from_value(json!({"task_id":task.id,"outcome":"success",
+        "summary":"run returns 2","verifications":[{"kind":"test_result","strength":"deterministic",
+            "command":"cargo test","exit_code":0,"artifact":"2 tests passed"}],
+        "lessons":[{"claim":"run returns 2","rationale":"Observed test run"}]}))
+        .unwrap();
+    let result = f.store.complete(&completion).unwrap();
+    let attached = &result.reviews[0].evidence_ids;
+    assert_eq!(attached.len(), 2, "{attached:?}");
+    assert!(attached.contains(&newer));
+    assert!(
+        attached.contains(&result.evidence_ids[0]),
+        "the agent's own copy is kept beside the hook observation"
+    );
+    assert!(
+        !attached.contains(&older),
+        "an older run of the same command does not crowd the review"
     );
 }
 
@@ -539,6 +592,7 @@ fn rejected_duplicates_stay_rejected_and_reverification_renews_expiry() {
             rationale: None,
             contradicts: vec![],
             reviewed_related: false,
+            acknowledge_security_flags: false,
         })
     };
     let first = complete();

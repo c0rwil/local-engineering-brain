@@ -9,6 +9,7 @@ pub mod architect;
 pub mod autostart;
 pub mod blobs;
 pub mod cache;
+pub mod codex_trust;
 pub mod config;
 pub mod context;
 pub mod daemon;

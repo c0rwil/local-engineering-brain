@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "description": "Synthetic plumbing fixture for scripts/eval_semantic_retrieval.py: authored scheduler-domain lessons and queries, most phrased without the lesson's own words. It checks that every arm runs end to end; it is too small and too artificial to measure retrieval quality.",
+  "project": "semantic-synthetic",
+  "default_token_budget": 1200,
+  "memories": [
+    {"claim": "Job cancellation must set JobState::Cancelled and remove the job from the queue; the legacy Aborted state is non-terminal and abort_job is not a cancellation path", "tags": ["scheduler"]},
+    {"claim": "Scheduler drain() only pops jobs that are already due - it is not a full sweep; evacuate() is the stable-order full sweep for snapshots and shutdown", "tags": ["scheduler"]},
+    {"claim": "Every dedupe-key lookup, removal, and comparison must normalize through DedupeKey::new first; raw string comparison misses case and whitespace variants", "tags": ["scheduler"]},
+    {"claim": "Every new serde config or persistence field must carry serde(default) with the documented default; legacy files without the field must keep parsing byte-identically", "tags": ["persistence"]},
+    {"claim": "The attempts counter already includes the just-failed run; retry backoff and budget checks must use attempts-1 or they are off by one", "tags": ["scheduler"]},
+    {"claim": "All millisecond-to-tick conversions must round up via ticks_for_ms; plain integer division silently schedules work one tick early", "tags": ["scheduler"]},
+    {"claim": "Release worker reservations when abort cleanup runs, or pool capacity leaks until restart", "tags": ["workers"]},
+    {"claim": "Rotate archived log files weekly and keep eight generations", "tags": ["operations"]},
+    {"claim": "Database migrations are append-only: never edit a migration file that has already been applied", "tags": ["storage"]},
+    {"claim": "HTTP clients for local model servers must refuse redirects and ignore proxy environment variables", "tags": ["security"]}
+  ],
+  "cases": [
+    {"id": "retry-direct", "query": "Fix the off-by-one in retry backoff attempts", "expected_patterns": ["attempts-1"]},
+    {"id": "retry-paraphrase", "query": "A job that keeps failing is given one fewer chance than its budget promises", "expected_patterns": ["attempts-1"]},
+    {"id": "ticks-ticket", "query": "Ticket: deadline handling must round up. A job deadline given in milliseconds is converted to scheduler ticks; partial ticks must give the job breathing room rather than cutting it short.", "expected_patterns": ["ticks_for_ms"]},
+    {"id": "ticks-paraphrase", "query": "Timers fire slightly before the requested delay has elapsed", "expected_patterns": ["ticks_for_ms"]},
+    {"id": "sweep-ticket", "query": "Ticket: snapshots must include future jobs. Persisted snapshots currently lose jobs scheduled past the capture instant; the snapshot writer must sweep every queued job, not only the currently due ones.", "expected_patterns": ["evacuate"]},
+    {"id": "sweep-paraphrase", "query": "Saved state is missing work that was planned for later", "expected_patterns": ["evacuate"]},
+    {"id": "cancel-paraphrase", "query": "Stopping a queued job leaves it stuck in a state that never finishes", "expected_patterns": ["JobState::Cancelled"]},
+    {"id": "dedupe-paraphrase", "query": "Looking a job up by its key fails when the caller uses different capitalization", "expected_patterns": ["DedupeKey::new"]},
+    {"id": "serde-paraphrase", "query": "Older saved settings files stopped loading after we added a new option", "expected_patterns": ["serde\\(default\\)"]},
+    {"id": "reservations-paraphrase", "query": "Pool capacity shrinks every time a task is killed halfway", "expected_patterns": ["reservations"]},
+    {"id": "migration-paraphrase", "query": "Can I correct a typo in a schema change script that already shipped?", "expected_patterns": ["append-only"]},
+    {"id": "redirect-paraphrase", "query": "Our embedding client followed a 302 to another host", "expected_patterns": ["redirects"]},
+    {"id": "negative-printer", "query": "Configure the office printer duplex default", "expected_patterns": [], "negative": true}
+  ]
+}

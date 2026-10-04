@@ -1,0 +1,674 @@
+{
+  "suite_id": "real-repo-heldout-v1",
+  "task_id": "h04_play_base_plan_lookup",
+  "base_commit": "ae4dd1d1dee3d449a30b9f91aee713ef3e012a9f",
+  "reference_fix_commit": "123a6ee6ed9c969591d8f21181b404a8458cc7ce",
+  "generated_at": "2026-10-04T11:33:22+00:00",
+  "python": "3.14.7",
+  "fixture_root": "/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317",
+  "grader_sha256": "48c5f989a51833d13f5f2c1d352d1b2fa3ebbb0b17827355ce98c2c4bef97a41",
+  "private_files_sha256": {},
+  "preflight_sha256": "7b93e0beffb753f48b75e858bba416f282ff273edff46f869778c10914e67137",
+  "shared_sha256": {
+    "preflight_common.py": "3430250732b8d6a001547d07e3dd55f981373872aeb3f8a7743549919fddc00a",
+    "py_harness.py": "a31966efeeda823f2fc13e09cfd04a0e0ae2a060164882194d0d56bc48b58e2e",
+    "rust_grader.py": "d8968d85f979c281f4f00298a2543328a792011e558d2645f0ef45c286050842"
+  },
+  "expected_check_count": 9,
+  "controls": [
+    {
+      "name": "base",
+      "kind": "base",
+      "source": "base",
+      "expect": "fail",
+      "description": "Historical base: exact-match lookups at all three sites.",
+      "required_failures": [
+        "initial_purchase_with_base_plan_grants_mapped_plan",
+        "renewal_with_base_plan_grants_mapped_plan",
+        "product_change_with_base_plan_switches_plan",
+        "missing_row_for_mapped_base_plan_keeps_retrying"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "reference",
+      "kind": "reference",
+      "source": "reference",
+      "expect": "pass",
+      "description": "Historical fix.",
+      "required_failures": [],
+      "exact_failures": true
+    },
+    {
+      "name": "lifecycle-only",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Strips the base plan only where purchases and renewals resolve their plan.",
+      "required_failures": [
+        "product_change_with_base_plan_switches_plan",
+        "missing_row_for_mapped_base_plan_keeps_retrying"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "missing-row-check-forgotten",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Fixes grants and plan changes but not the permanent-missing-row decision.",
+      "required_failures": [
+        "missing_row_for_mapped_base_plan_keeps_retrying"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "keeps-base-plan-part",
+      "kind": "mutant",
+      "source": "reference",
+      "expect": "fail",
+      "description": "Splits on the separator but keeps the base-plan part instead of the subscription id.",
+      "required_failures": [
+        "initial_purchase_with_base_plan_grants_mapped_plan",
+        "renewal_with_base_plan_grants_mapped_plan",
+        "product_change_with_base_plan_switches_plan",
+        "missing_row_for_mapped_base_plan_keeps_retrying"
+      ],
+      "exact_failures": true
+    },
+    {
+      "name": "repository-normalizes",
+      "kind": "alternative",
+      "source": "base",
+      "expect": "pass",
+      "description": "Legitimate alternative: the repository lookup drops the base plan for every caller.",
+      "required_failures": [],
+      "exact_failures": true
+    },
+    {
+      "name": "sql-split-part",
+      "kind": "alternative",
+      "source": "base",
+      "expect": "pass",
+      "description": "Legitimate alternative: the repository compares against split_part of the incoming id in SQL.",
+      "required_failures": [],
+      "exact_failures": true
+    },
+    {
+      "name": "normalize-at-entry",
+      "kind": "alternative",
+      "source": "base",
+      "expect": "pass",
+      "description": "Legitimate alternative: the webhook entry point rewrites product ids before dispatch.",
+      "required_failures": [],
+      "exact_failures": true
+    }
+  ],
+  "mutations": {
+    "lifecycle-only": "--- reference/src/agency/api/services/revenuecat_service.py\n+++ lifecycle-only/src/agency/api/services/revenuecat_service.py\n@@ -240,7 +240,7 @@\n             logger.warning(f\"RevenueCat product change missing ids (event: {event_id})\")\n             return\n         repo = self._require_subscription_repository()\n-        plan = repo.get_plan_by_play_product_id(play_subscription_id(new_product_id))\n+        plan = repo.get_plan_by_play_product_id(new_product_id)\n         if plan is None:\n             logger.error(f\"RevenueCat product change to unmapped product {new_product_id} (event: {event_id})\")\n             raise ValueError(f\"Unmapped Play subscription product: {new_product_id}\")\n@@ -431,7 +431,7 @@\n         if (\n             product_id\n             and product_id not in revenuecat_config.PLAY_PRODUCT_CREDITS_CENTS\n-            and repo.get_plan_by_play_product_id(play_subscription_id(product_id)) is None\n+            and repo.get_plan_by_play_product_id(product_id) is None\n         ):\n             return True\n         user_id = self._optional_user_id(event)\n",
+    "missing-row-check-forgotten": "--- reference/src/agency/api/services/revenuecat_service.py\n+++ missing-row-check-forgotten/src/agency/api/services/revenuecat_service.py\n@@ -431,7 +431,7 @@\n         if (\n             product_id\n             and product_id not in revenuecat_config.PLAY_PRODUCT_CREDITS_CENTS\n-            and repo.get_plan_by_play_product_id(play_subscription_id(product_id)) is None\n+            and repo.get_plan_by_play_product_id(product_id) is None\n         ):\n             return True\n         user_id = self._optional_user_id(event)\n",
+    "keeps-base-plan-part": "--- reference/src/agency/api/services/revenuecat_service.py\n+++ keeps-base-plan-part/src/agency/api/services/revenuecat_service.py\n@@ -37,7 +37,7 @@\n     \"\"\"\n     if not product_id:\n         return product_id\n-    return product_id.split(\":\", 1)[0]\n+    return product_id.split(\":\")[-1]\n \n \n class RevenueCatService:\n",
+    "repository-normalizes": "--- base/src/agency/api/repositories/subscription_repository.py\n+++ repository-normalizes/src/agency/api/repositories/subscription_repository.py\n@@ -480,7 +480,8 @@\n \n     def get_plan_by_play_product_id(self, play_product_id: str) -> Plan | None:\n         \"\"\"Resolve a Play subscription product to its plan, or None if unmapped.\"\"\"\n-        return self.db.query(Plan).filter(Plan.play_product_id == play_product_id).one_or_none()\n+        subscription_id = play_product_id.split(\":\", 1)[0] if play_product_id else play_product_id\n+        return self.db.query(Plan).filter(Plan.play_product_id == subscription_id).one_or_none()\n \n     def get_subscription_by_provider_id(self, provider: str, provider_subscription_id: str) -> UserSubscription | None:\n         \"\"\"Get a subscription by its provider-native id.\"\"\"\n",
+    "sql-split-part": "--- base/src/agency/api/repositories/subscription_repository.py\n+++ sql-split-part/src/agency/api/repositories/subscription_repository.py\n@@ -480,7 +480,11 @@\n \n     def get_plan_by_play_product_id(self, play_product_id: str) -> Plan | None:\n         \"\"\"Resolve a Play subscription product to its plan, or None if unmapped.\"\"\"\n-        return self.db.query(Plan).filter(Plan.play_product_id == play_product_id).one_or_none()\n+        return (\n+            self.db.query(Plan)\n+            .filter(Plan.play_product_id == func.split_part(play_product_id, \":\", 1))\n+            .one_or_none()\n+        )\n \n     def get_subscription_by_provider_id(self, provider: str, provider_subscription_id: str) -> UserSubscription | None:\n         \"\"\"Get a subscription by its provider-native id.\"\"\"\n",
+    "normalize-at-entry": "--- base/src/agency/api/services/revenuecat_service.py\n+++ normalize-at-entry/src/agency/api/services/revenuecat_service.py\n@@ -42,6 +42,14 @@\n         \"\"\"Process one webhook event. Raises on failures that should retry (500).\"\"\"\n         event_type = event.get(\"type\", \"unknown\")\n         event_id = event.get(\"id\", \"unknown\")\n+        event = {\n+            **event,\n+            **{\n+                key: event[key].split(\":\", 1)[0]\n+                for key in (\"product_id\", \"new_product_id\")\n+                if isinstance(event.get(key), str)\n+            },\n+        }\n \n         # A SANDBOX event must never touch production state \u2014 enforced in code,\n         # not dashboard convention (the dev/prod webhook trap from the PRD).\n"
+  },
+  "runs": [
+    {
+      "fixture": "base",
+      "kind": "base",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "initial_purchase_with_base_plan_grants_mapped_plan",
+        "renewal_with_base_plan_grants_mapped_plan",
+        "product_change_with_base_plan_switches_plan",
+        "missing_row_for_mapped_base_plan_keeps_retrying"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "initial_purchase_with_base_plan_grants_mapped_plan",
+        "missing_row_for_mapped_base_plan_keeps_retrying",
+        "product_change_with_base_plan_switches_plan",
+        "renewal_with_base_plan_grants_mapped_plan"
+      ],
+      "driver_seconds": 0.089,
+      "result": {
+        "task": "h04_play_base_plan_lookup",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": false,
+            "error": "ValueError: Unmapped Play subscription product: sub_plus:monthly",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 555, in initial_purchase_with_base_plan_grants_mapped_plan\n    service.handle_event(event(\"INITIAL_PURCHASE\", product_id=\"sub_plus:monthly\"))\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/base/src/agency/api/services/revenuecat_service.py\", line 55, in handle_event\n    self._handle_subscription_lifecycle(event)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/base/src/agency/api/services/revenuecat_service.py\", line 137, in _handle_subscription_lifecycle\n    raise ValueError(f\"Unmapped Play subscription product: {product_id}\")\nValueError: Unmapped Play subscription product: sub_plus:monthly\n",
+            "seconds": 0.001
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": false,
+            "error": "ValueError: Unmapped Play subscription product: sub_pro:annual",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 565, in renewal_with_base_plan_grants_mapped_plan\n    service.handle_event(event(\"RENEWAL\", id=\"evt-renewal-2\", product_id=\"sub_pro:annual\"))\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/base/src/agency/api/services/revenuecat_service.py\", line 55, in handle_event\n    self._handle_subscription_lifecycle(event)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/base/src/agency/api/services/revenuecat_service.py\", line 137, in _handle_subscription_lifecycle\n    raise ValueError(f\"Unmapped Play subscription product: {product_id}\")\nValueError: Unmapped Play subscription product: sub_pro:annual\n",
+            "seconds": 0.0
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": false,
+            "error": "ValueError: Unmapped Play subscription product: sub_pro:annual",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 575, in product_change_with_base_plan_switches_plan\n    service.handle_event(event(\"PRODUCT_CHANGE\", product_id=\"sub_plus:monthly\", new_product_id=\"sub_pro:annual\"))\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/base/src/agency/api/services/revenuecat_service.py\", line 61, in handle_event\n    self._handle_product_change(event)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/base/src/agency/api/services/revenuecat_service.py\", line 233, in _handle_product_change\n    raise ValueError(f\"Unmapped Play subscription product: {new_product_id}\")\nValueError: Unmapped Play subscription product: sub_pro:annual\n",
+            "seconds": 0.0
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": false,
+            "error": "AssertionError: EXPIRATION: expected a retryable failure, but the event was acknowledged",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 586, in missing_row_for_mapped_base_plan_keeps_retrying\n    expect_retry(service, event(event_type, product_id=\"sub_plus:monthly\"), event_type)\n    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 544, in expect_retry\n    raise AssertionError(f\"{label}: expected a retryable failure, but the event was acknowledged\")\nAssertionError: EXPIRATION: expected a retryable failure, but the event was acknowledged\n",
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true,
+            "seconds": 0.0
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.008
+      }
+    },
+    {
+      "fixture": "reference",
+      "kind": "reference",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 0.089,
+      "result": {
+        "task": "h04_play_base_plan_lookup",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true,
+            "seconds": 0.0
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.007
+      }
+    },
+    {
+      "fixture": "lifecycle-only",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "product_change_with_base_plan_switches_plan",
+        "missing_row_for_mapped_base_plan_keeps_retrying"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "missing_row_for_mapped_base_plan_keeps_retrying",
+        "product_change_with_base_plan_switches_plan"
+      ],
+      "driver_seconds": 0.124,
+      "result": {
+        "task": "h04_play_base_plan_lookup",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": false,
+            "error": "ValueError: Unmapped Play subscription product: sub_pro:annual",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 575, in product_change_with_base_plan_switches_plan\n    service.handle_event(event(\"PRODUCT_CHANGE\", product_id=\"sub_plus:monthly\", new_product_id=\"sub_pro:annual\"))\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/lifecycle-only/src/agency/api/services/revenuecat_service.py\", line 74, in handle_event\n    self._handle_product_change(event)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/lifecycle-only/src/agency/api/services/revenuecat_service.py\", line 246, in _handle_product_change\n    raise ValueError(f\"Unmapped Play subscription product: {new_product_id}\")\nValueError: Unmapped Play subscription product: sub_pro:annual\n",
+            "seconds": 0.001
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": false,
+            "error": "AssertionError: EXPIRATION: expected a retryable failure, but the event was acknowledged",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 586, in missing_row_for_mapped_base_plan_keeps_retrying\n    expect_retry(service, event(event_type, product_id=\"sub_plus:monthly\"), event_type)\n    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 544, in expect_retry\n    raise AssertionError(f\"{label}: expected a retryable failure, but the event was acknowledged\")\nAssertionError: EXPIRATION: expected a retryable failure, but the event was acknowledged\n",
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true,
+            "seconds": 0.0
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.011
+      }
+    },
+    {
+      "fixture": "missing-row-check-forgotten",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "missing_row_for_mapped_base_plan_keeps_retrying"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "missing_row_for_mapped_base_plan_keeps_retrying"
+      ],
+      "driver_seconds": 0.097,
+      "result": {
+        "task": "h04_play_base_plan_lookup",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": false,
+            "error": "AssertionError: EXPIRATION: expected a retryable failure, but the event was acknowledged",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 586, in missing_row_for_mapped_base_plan_keeps_retrying\n    expect_retry(service, event(event_type, product_id=\"sub_plus:monthly\"), event_type)\n    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 544, in expect_retry\n    raise AssertionError(f\"{label}: expected a retryable failure, but the event was acknowledged\")\nAssertionError: EXPIRATION: expected a retryable failure, but the event was acknowledged\n",
+            "seconds": 0.001
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true,
+            "seconds": 0.0
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.008
+      }
+    },
+    {
+      "fixture": "keeps-base-plan-part",
+      "kind": "mutant",
+      "expect": "fail",
+      "expected_failure_checks": [
+        "initial_purchase_with_base_plan_grants_mapped_plan",
+        "renewal_with_base_plan_grants_mapped_plan",
+        "product_change_with_base_plan_switches_plan",
+        "missing_row_for_mapped_base_plan_keeps_retrying"
+      ],
+      "exit_code": 1,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [
+        "initial_purchase_with_base_plan_grants_mapped_plan",
+        "missing_row_for_mapped_base_plan_keeps_retrying",
+        "product_change_with_base_plan_switches_plan",
+        "renewal_with_base_plan_grants_mapped_plan"
+      ],
+      "driver_seconds": 0.128,
+      "result": {
+        "task": "h04_play_base_plan_lookup",
+        "status": "fail",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": false,
+            "error": "ValueError: Unmapped Play subscription product: sub_plus:monthly",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 555, in initial_purchase_with_base_plan_grants_mapped_plan\n    service.handle_event(event(\"INITIAL_PURCHASE\", product_id=\"sub_plus:monthly\"))\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/keeps-base-plan-part/src/agency/api/services/revenuecat_service.py\", line 68, in handle_event\n    self._handle_subscription_lifecycle(event)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/keeps-base-plan-part/src/agency/api/services/revenuecat_service.py\", line 150, in _handle_subscription_lifecycle\n    raise ValueError(f\"Unmapped Play subscription product: {product_id}\")\nValueError: Unmapped Play subscription product: sub_plus:monthly\n",
+            "seconds": 0.001
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": false,
+            "error": "ValueError: Unmapped Play subscription product: sub_pro:annual",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 565, in renewal_with_base_plan_grants_mapped_plan\n    service.handle_event(event(\"RENEWAL\", id=\"evt-renewal-2\", product_id=\"sub_pro:annual\"))\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/keeps-base-plan-part/src/agency/api/services/revenuecat_service.py\", line 68, in handle_event\n    self._handle_subscription_lifecycle(event)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/keeps-base-plan-part/src/agency/api/services/revenuecat_service.py\", line 150, in _handle_subscription_lifecycle\n    raise ValueError(f\"Unmapped Play subscription product: {product_id}\")\nValueError: Unmapped Play subscription product: sub_pro:annual\n",
+            "seconds": 0.0
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": false,
+            "error": "ValueError: Unmapped Play subscription product: sub_pro:annual",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 575, in product_change_with_base_plan_switches_plan\n    service.handle_event(event(\"PRODUCT_CHANGE\", product_id=\"sub_plus:monthly\", new_product_id=\"sub_pro:annual\"))\n    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/keeps-base-plan-part/src/agency/api/services/revenuecat_service.py\", line 74, in handle_event\n    self._handle_product_change(event)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^\n  File \"/private/tmp/claude-501/-Users-corwil-Documents-brain/76276d3c-6b54-4b83-aa54-5bfb4422c76d/scratchpad/calib/h04_play_base_plan_lookup-20261004-043317/keeps-base-plan-part/src/agency/api/services/revenuecat_service.py\", line 246, in _handle_product_change\n    raise ValueError(f\"Unmapped Play subscription product: {new_product_id}\")\nValueError: Unmapped Play subscription product: sub_pro:annual\n",
+            "seconds": 0.0
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": false,
+            "error": "AssertionError: EXPIRATION: expected a retryable failure, but the event was acknowledged",
+            "traceback": "Traceback (most recent call last):\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 96, in run_check\n    outcome = function()\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/_shared/py_harness.py\", line 144, in <lambda>\n    result[\"checks\"].append(run_check(name, lambda function=function: function(context)))\n                                                                      ~~~~~~~~^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 586, in missing_row_for_mapped_base_plan_keeps_retrying\n    expect_retry(service, event(event_type, product_id=\"sub_plus:monthly\"), event_type)\n    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/corwil/Documents/brain/.claude/worktrees/agent-a8338922f13fc92fc/benchmarks/real-repo-heldout-v1/grading/h04_play_base_plan_lookup/grade.py\", line 544, in expect_retry\n    raise AssertionError(f\"{label}: expected a retryable failure, but the event was acknowledged\")\nAssertionError: EXPIRATION: expected a retryable failure, but the event was acknowledged\n",
+            "seconds": 0.001
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true,
+            "seconds": 0.0
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.012
+      }
+    },
+    {
+      "fixture": "repository-normalizes",
+      "kind": "alternative",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 0.103,
+      "result": {
+        "task": "h04_play_base_plan_lookup",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true,
+            "seconds": 0.0
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.009
+      }
+    },
+    {
+      "fixture": "sql-split-part",
+      "kind": "alternative",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 0.121,
+      "result": {
+        "task": "h04_play_base_plan_lookup",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true,
+            "seconds": 0.0
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.009
+      }
+    },
+    {
+      "fixture": "normalize-at-entry",
+      "kind": "alternative",
+      "expect": "pass",
+      "expected_failure_checks": [],
+      "exit_code": 0,
+      "calibrated": true,
+      "reasons": [],
+      "failed_checks": [],
+      "driver_seconds": 0.11,
+      "result": {
+        "task": "h04_play_base_plan_lookup",
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true,
+            "seconds": 0.0
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true,
+            "seconds": 0.0
+          }
+        ],
+        "python": "3.14.7",
+        "elapsed_seconds": 0.008
+      }
+    }
+  ],
+  "status": "pass"
+}

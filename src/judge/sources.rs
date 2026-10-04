@@ -35,13 +35,15 @@ pub(super) const TOO_MANY_FILES: &str =
     "Source episode exceeds the 64-file live verification limit";
 pub(super) const CHECKOUT_UNAVAILABLE: &str =
     "Source checkout unavailable; cannot establish current file contents";
+pub(super) const CHECKOUT_ACCESS_DENIED: &str = "Source checkout is not readable by the daemon (permission or macOS privacy refusal); run `engram doctor` for the access fix";
 pub(super) const OUTSIDE_CHECKOUTS: &str =
     "Touched path is outside every registered checkout of this project and its linked repositories";
 pub(super) const INVALID_PATH: &str = "Touched path escapes its checkout or is not a file path";
 pub(super) const RESOLVES_OUTSIDE: &str = "Touched source resolves outside the registered checkout";
 pub(super) const TASK_REVISION_DIFFERS: &str =
     "Source task revision differs from the live checkout; verify current behavior again";
-pub(super) const PERMISSION_DENIED: &str = "Touched source file is not readable by the daemon (permission denied); grant read access to the checkout";
+pub(super) const PRIVACY_DENIED: &str = "Touched source file is blocked for the daemon by macOS privacy controls; run `engram doctor` for the access fix";
+pub(super) const PERMISSION_DENIED: &str = "Touched source file is not readable by the daemon (permission denied); make it readable by the daemon's user";
 pub(super) const READ_FAILED: &str =
     "Touched source file could not be read (I/O error); check the checkout and its storage";
 pub(super) const NOT_REGULAR_FILE: &str = "Touched source is not a regular file";
@@ -54,13 +56,15 @@ pub(super) const NOT_INDEXED: &str =
 
 /// Reporting order: containment, checkout state, reads, then index agreement.
 /// A Git HEAD failure has no fixed text and ranks with the revision check.
-const ISSUE_ORDER: [&str; 13] = [
+const ISSUE_ORDER: [&str; 15] = [
     TOO_MANY_FILES,
     OUTSIDE_CHECKOUTS,
     INVALID_PATH,
     RESOLVES_OUTSIDE,
+    CHECKOUT_ACCESS_DENIED,
     CHECKOUT_UNAVAILABLE,
     TASK_REVISION_DIFFERS,
+    PRIVACY_DENIED,
     PERMISSION_DENIED,
     READ_FAILED,
     NOT_REGULAR_FILE,
@@ -69,7 +73,7 @@ const ISSUE_ORDER: [&str; 13] = [
     DIFFERS_FROM_INDEX,
     NOT_INDEXED,
 ];
-const HEAD_ISSUE_RANK: usize = 5;
+const HEAD_ISSUE_RANK: usize = 6;
 
 /// Verified live state for one episode.
 pub(super) struct LiveSources {
@@ -124,7 +128,13 @@ pub(super) fn live_sources(
             issue: Some(TOO_MANY_FILES.to_owned()),
         });
     }
-    let checkouts = checkouts(project_id, &recorded);
+    let (checkouts, access_denied) = checkouts(project_id, &recorded);
+    // An alias the daemon may not read hides files rather than removing them.
+    let (unavailable, outside) = if access_denied {
+        (CHECKOUT_ACCESS_DENIED, CHECKOUT_ACCESS_DENIED)
+    } else {
+        (CHECKOUT_UNAVAILABLE, OUTSIDE_CHECKOUTS)
+    };
     let locations: Vec<Location> = recorded
         .touched
         .iter()
@@ -155,8 +165,8 @@ pub(super) fn live_sources(
             Location::Checkout(index, relative) => Ok((index, relative)),
             Location::Relative(relative) => task_checkout
                 .map(|index| (index, relative))
-                .ok_or(CHECKOUT_UNAVAILABLE),
-            Location::Outside => Err(OUTSIDE_CHECKOUTS),
+                .ok_or(unavailable),
+            Location::Outside => Err(outside),
             Location::Invalid => Err(INVALID_PATH),
         })
         .collect();
@@ -353,7 +363,8 @@ fn load(database: &Database, project_id: &ProjectId, task_id: &TaskId) -> Result
 
 /// Existing checkouts in preference order: this project's most recently
 /// observed aliases, then explicitly linked repositories. Roots are canonical.
-fn checkouts(project_id: &ProjectId, recorded: &Recorded) -> Vec<Checkout> {
+/// Also reports whether one of this project's aliases exists but refused access.
+fn checkouts(project_id: &ProjectId, recorded: &Recorded) -> (Vec<Checkout>, bool) {
     let own = recorded
         .own
         .iter()
@@ -363,9 +374,17 @@ fn checkouts(project_id: &ProjectId, recorded: &Recorded) -> Vec<Checkout> {
         .iter()
         .map(|(project, path)| (ProjectId::parse(project).ok(), path, true));
     let mut checkouts: Vec<Checkout> = Vec::new();
+    let mut access_denied = false;
     for (project, path, linked) in own.chain(linked) {
-        let (Some(project_id), Ok(root)) = (project, Path::new(path).canonicalize()) else {
+        let Some(project_id) = project else {
             continue;
+        };
+        let root = match Path::new(path).canonicalize() {
+            Ok(root) => root,
+            Err(error) => {
+                access_denied |= !linked && error.kind() == ErrorKind::PermissionDenied;
+                continue;
+            }
         };
         if !root.is_dir() || checkouts.iter().any(|checkout| checkout.root == root) {
             continue;
@@ -378,7 +397,7 @@ fn checkouts(project_id: &ProjectId, recorded: &Recorded) -> Vec<Checkout> {
             primary,
         });
     }
-    checkouts
+    (checkouts, access_denied)
 }
 
 fn locate(recorded: &str, checkouts: &[Checkout]) -> Location {
@@ -641,10 +660,17 @@ fn read_live(
 }
 
 /// Deleted or renamed files are legitimately stale; permission and other
-/// I/O failures are environment problems with their own remedies.
+/// I/O failures are environment problems with their own remedies. On macOS a
+/// privacy refusal is EPERM (os error 1), as `crate::error::access_denied_message`
+/// also distinguishes; ordinary file modes give EACCES.
 fn io_reason(error: &std::io::Error) -> &'static str {
     match error.kind() {
         ErrorKind::NotFound | ErrorKind::NotADirectory => MISSING_FILE,
+        ErrorKind::PermissionDenied
+            if cfg!(target_os = "macos") && error.raw_os_error() == Some(1) =>
+        {
+            PRIVACY_DENIED
+        }
         ErrorKind::PermissionDenied => PERMISSION_DENIED,
         _ => READ_FAILED,
     }
@@ -685,6 +711,12 @@ mod tests {
         assert_eq!(reason(ErrorKind::NotADirectory), MISSING_FILE);
         assert_eq!(reason(ErrorKind::PermissionDenied), PERMISSION_DENIED);
         assert_eq!(reason(ErrorKind::Interrupted), READ_FAILED);
+        let eperm = io_reason(&std::io::Error::from_raw_os_error(1));
+        if cfg!(target_os = "macos") {
+            assert_eq!(eperm, PRIVACY_DENIED, "macOS privacy refusal");
+        } else {
+            assert_eq!(eperm, PERMISSION_DENIED);
+        }
         let mut issues = Issues::default();
         for issue in [
             NOT_INDEXED,

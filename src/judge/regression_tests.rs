@@ -786,6 +786,7 @@ fn conflicting_verdict_quarantines_memories_until_a_person_decides() {
             rationale: None,
             contradicts: Vec::new(),
             reviewed_related: true,
+            acknowledge_security_flags: false,
         })
         .expect("person rejects");
     assert_eq!(
@@ -840,6 +841,7 @@ fn a_person_can_confirm_a_quarantined_contradiction() {
             rationale: None,
             contradicts: vec![conflict.clone()],
             reviewed_related: true,
+            acknowledge_security_flags: false,
         })
         .expect("person accepts");
     assert_eq!(accepted.status, "accepted");

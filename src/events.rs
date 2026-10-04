@@ -52,6 +52,14 @@ pub enum DomainEvent {
         project_id: ProjectId,
         key: String,
     },
+    /// Git identity observed for a project registered without it (for
+    /// example while Git was unreadable). Fills only missing fields; never
+    /// changes the project id or overwrites recorded identity.
+    ProjectIdentityObserved {
+        project_id: ProjectId,
+        canonical_remote: Option<String>,
+        root_commit: Option<String>,
+    },
     StructuralScanApplied {
         project_id: ProjectId,
         scan_id: String,
@@ -145,6 +153,7 @@ impl DomainEvent {
             Self::ProjectUnlinked { .. } => "PROJECT_UNLINKED",
             Self::ProjectFactSet { .. } => "PROJECT_FACT_SET",
             Self::ProjectFactUnset { .. } => "PROJECT_FACT_UNSET",
+            Self::ProjectIdentityObserved { .. } => "PROJECT_IDENTITY_OBSERVED",
             Self::StructuralScanApplied { .. } => "STRUCTURAL_SCAN_APPLIED",
             Self::GitHistoryIngested { .. } => "GIT_HISTORY_INGESTED",
             Self::TaskStarted { .. } => "TASK_STARTED",
@@ -170,6 +179,7 @@ impl DomainEvent {
             | Self::ProjectUnlinked { project_id, .. }
             | Self::ProjectFactSet { project_id, .. }
             | Self::ProjectFactUnset { project_id, .. }
+            | Self::ProjectIdentityObserved { project_id, .. }
             | Self::StructuralScanApplied { project_id, .. }
             | Self::GitHistoryIngested { project_id, .. }
             | Self::TaskStarted { project_id, .. }
@@ -203,6 +213,7 @@ impl DomainEvent {
             | "PROJECT_UNLINKED"
             | "PROJECT_FACT_SET"
             | "PROJECT_FACT_UNSET"
+            | "PROJECT_IDENTITY_OBSERVED"
             | "STRUCTURAL_SCAN_APPLIED"
             | "GIT_HISTORY_INGESTED"
             | "TASK_STARTED"
@@ -498,6 +509,20 @@ impl EventStore {
                         project.tombstoned = true;
                     }
                 }
+                DomainEvent::ProjectIdentityObserved {
+                    project_id,
+                    canonical_remote,
+                    root_commit,
+                } => {
+                    if let Some(project) = projection.projects.get_mut(&project_id) {
+                        if project.canonical_remote.is_none() {
+                            project.canonical_remote = canonical_remote;
+                        }
+                        if project.root_commit.is_none() {
+                            project.root_commit = root_commit;
+                        }
+                    }
+                }
                 DomainEvent::ProjectLinked { .. }
                 | DomainEvent::ProjectUnlinked { .. }
                 | DomainEvent::ProjectFactSet { .. }
@@ -606,6 +631,19 @@ fn apply_project_projection(
                 "UPDATE projects SET tombstoned_at_ms = ?2
                  WHERE id = ?1 AND tombstoned_at_ms IS NULL",
                 params![project_id.as_str(), created_at_ms],
+            )?;
+        }
+        DomainEvent::ProjectIdentityObserved {
+            project_id,
+            canonical_remote,
+            root_commit,
+        } => {
+            transaction.execute(
+                "UPDATE projects
+                 SET canonical_remote = COALESCE(canonical_remote, ?2),
+                     root_commit = COALESCE(root_commit, ?3)
+                 WHERE id = ?1",
+                params![project_id.as_str(), canonical_remote, root_commit],
             )?;
         }
         DomainEvent::ProjectLinked {

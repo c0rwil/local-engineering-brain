@@ -1,0 +1,5 @@
+Sessions carry their entry door (`origin`) on Raindrop analytics so that success and failure rates can be segmented by origin. Two kinds of records are missing the tag, which makes origin-segmented rates look better than they are: the step event emitted when a step's model call fails, and the records a reaction emits (the `user_feedback` event, its `user_feedback` signal, and the companion `task_completed` or `task_failed` signal).
+
+Carry origin on these records under the same rule that every other analytics record follows. Once a session exists, its origin is the value frozen when the session was created, including no origin at all; a later request's declaration never changes it. Only a failure on the very first step, before any session exists, takes the origin from that request, normalized exactly as session creation would normalize it, so a value that creation would drop stays absent. Never emit an empty or null origin: omit the key instead.
+
+Keep every existing analytics field and every other record unchanged. Add focused regression coverage.

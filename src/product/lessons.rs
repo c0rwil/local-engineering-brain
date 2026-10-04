@@ -79,6 +79,10 @@ pub struct LessonReview {
     pub updated_at_ms: i64,
     /// Lexical overlap is a review hint, not a claim of logical contradiction.
     pub related_memories: Vec<RelatedMemory>,
+    /// Prompt-injection screening of the claim and rationale, computed on read.
+    /// Flagged proposals are never accepted automatically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub security_flags: Vec<crate::security::InjectionFinding>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RelatedMemory {
@@ -107,6 +111,10 @@ pub struct ReviewRequest {
     pub contradicts: Vec<MemoryId>,
     #[serde(default)]
     pub reviewed_related: bool,
+    /// A human read the security flags and accepts the text as written. The
+    /// judge never sets it and the MCP adapter refuses it.
+    #[serde(default)]
+    pub acknowledge_security_flags: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -241,8 +249,18 @@ impl ProductStore {
         if task.status == "success" && lessons.is_empty() && !request.summary.trim().is_empty() {
             lessons.push(LessonDraft { claim:request.summary.clone(),rationale:"Proposed from the completion summary; edit this into a reusable rule before accepting.".to_owned(),evidence_ids:Vec::new(),expires_at_ms:None });
         }
+        // Hooks record every verification run. Attach the latest passing run
+        // per command and source, newest first, so older runs of the same
+        // command cannot crowd out the observation of the final source, and an
+        // agent's own copy of a run never displaces the hook's observation.
         let eligible_ids:Vec<EvidenceId>=self.database.with_reader(|c| {
-            let mut s=c.prepare("SELECT evidence_id FROM verified_supporting_evidence WHERE task_id=?1 AND project_id=?2 ORDER BY evidence_id LIMIT 32")?;
+            let mut s=c.prepare("SELECT v.evidence_id FROM verified_supporting_evidence v JOIN evidence e ON e.id=v.evidence_id
+                WHERE v.task_id=?1 AND v.project_id=?2 AND (e.command IS NULL OR NOT EXISTS(
+                    SELECT 1 FROM verified_supporting_evidence lv JOIN evidence later ON later.id=lv.evidence_id
+                    WHERE lv.task_id=v.task_id AND lv.project_id=v.project_id AND later.kind=e.kind AND later.command=e.command
+                      AND json_extract(later.metadata_json,'$.source') IS json_extract(e.metadata_json,'$.source')
+                      AND (later.observed_at_ms,later.id)>(e.observed_at_ms,e.id)))
+                ORDER BY e.observed_at_ms DESC,e.id LIMIT 32")?;
             let ids=s.query_map(params![task.id.as_str(),task.project_id.as_str()],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
             ids.iter().map(|id|EvidenceId::parse(id)).collect()
         })?;
@@ -303,7 +321,8 @@ impl ProductStore {
                     if similar(&row.3,&claim) { related.push(RelatedMemory { id:MemoryId::parse(&id)?,exact:normalize(&claim)==normalize(&row.3),claim }); }
                     if related.len()>=8 { break; }
                 }
-                Ok(LessonReview { id:row.0,task_id:TaskId::parse(&row.1)?,project_id:ProjectId::parse(&row.2)?,claim:row.3,rationale:row.4,evidence_ids:serde_json::from_str(&row.5)?,status:row.6,memory_id:row.7.as_deref().map(MemoryId::parse).transpose()?,expires_at_ms:row.8,updated_at_ms:row.9,related_memories:related })
+                let security_flags = screen_proposal(&row.3, &row.4);
+                Ok(LessonReview { id:row.0,task_id:TaskId::parse(&row.1)?,project_id:ProjectId::parse(&row.2)?,claim:row.3,rationale:row.4,evidence_ids:serde_json::from_str(&row.5)?,status:row.6,memory_id:row.7.as_deref().map(MemoryId::parse).transpose()?,expires_at_ms:row.8,updated_at_ms:row.9,related_memories:related,security_flags })
             }).collect()
         })
     }
@@ -330,6 +349,7 @@ impl ProductStore {
         };
         let mut review: LessonReview = serde_json::from_str(&raw)?;
         review.related_memories = self.related_memories(&review.project_id, &review.claim)?;
+        review.security_flags = screen_proposal(&review.claim, &review.rationale);
         Ok(Some(review))
     }
 
@@ -412,6 +432,17 @@ impl ProductStore {
             expires_at_ms: review.expires_at_ms,
         })?;
         let memory = if matches!(request.decision, Decision::Accept) {
+            // Screen the final text. Editing out the flagged text clears the
+            // hold; automatic review can never acknowledge it.
+            let flags = screen_proposal(&review.claim, &review.rationale);
+            if !flags.is_empty()
+                && (cited_evidence.is_some() || !request.acknowledge_security_flags)
+            {
+                return Err(invalid(&format!(
+                    "lesson text matches prompt-injection patterns and needs human review: {}. Edit the flagged text, or accept it in the web Knowledge inbox after reading the flags",
+                    crate::security::summarize(&flags)
+                )));
+            }
             if review
                 .expires_at_ms
                 .is_some_and(|expiry| expiry <= now_ms())
@@ -498,7 +529,8 @@ impl ProductStore {
                 EpistemicState::Validated,
             ] {
                 if memory.epistemic_state < state {
-                    memory = memories.promote(&memory.id, state, false)?;
+                    // Accepting acknowledged flagged text is a recorded human override.
+                    memory = memories.promote(&memory.id, state, !flags.is_empty())?;
                 }
             }
             for id in &request.contradicts {
@@ -568,6 +600,12 @@ impl ProductStore {
             Ok(())
         })
     }
+}
+fn screen_proposal(claim: &str, rationale: &str) -> Vec<crate::security::InjectionFinding> {
+    crate::security::screen_fields([
+        ("claim".to_owned(), claim),
+        ("rationale".to_owned(), rationale),
+    ])
 }
 fn validate_lesson(lesson: &LessonDraft) -> Result<()> {
     if lesson.claim.trim().is_empty()
