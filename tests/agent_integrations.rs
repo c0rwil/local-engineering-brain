@@ -7,6 +7,19 @@ use rusqlite::Connection;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
+/// These tests spawn CLIs that auto-start daemons. On macOS a child spawned
+/// while another thread creates its stdio pipes can inherit them, and a daemon
+/// that child starts then holds them open: the other test's hook never sees
+/// end of input and hangs. Running the tests one at a time keeps every pipe
+/// private to its own test.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn run(root: &Path, args: &[&str], input: Option<&Value>) -> Output {
     let mut command = Command::new(assert_cmd::cargo::cargo_bin!("engram"));
     command
@@ -31,6 +44,15 @@ fn run(root: &Path, args: &[&str], input: Option<&Value>) -> Output {
     }
     drop(stdin);
     child.wait_with_output().expect("output")
+}
+
+/// Stops a test's daemon when the test ends, also after a failed assertion.
+struct DaemonGuard<'a>(&'a Path);
+
+impl Drop for DaemonGuard<'_> {
+    fn drop(&mut self) {
+        let _ = run(self.0, &["daemon", "stop"], None);
+    }
 }
 
 fn cli(root: &Path, args: &[&str], input: Option<&Value>) -> String {
@@ -92,6 +114,7 @@ fn indexed_repo(root: &Path) -> std::path::PathBuf {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn cursor_installer_merges_previews_and_removes_only_engram_entries() {
+    let _serial = serial();
     let temp = TempDir::new().unwrap();
     let root = temp.path();
     let cursor_home = root.join("cursor-home");
@@ -238,8 +261,10 @@ fn cursor_installer_merges_previews_and_removes_only_engram_entries() {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn cursor_hooks_capture_once_and_answer_with_documented_fields() {
+    let _serial = serial();
     let temp = TempDir::new().unwrap();
     let root = temp.path();
+    let _daemon = DaemonGuard(root);
     let repo = indexed_repo(root);
     let connection = Connection::open(root.join("brain.sqlite")).unwrap();
     // Cursor adds `session_id` (its conversation id) to every agent hook input.
@@ -412,7 +437,6 @@ fn cursor_hooks_capture_once_and_answer_with_documented_fields() {
         serde_json::from_slice::<Value>(&output.stdout).unwrap(),
         json!({"continue":true})
     );
-    cli(root, &["daemon", "stop"], None);
 }
 
 fn write_rows(path: &Path, rows: &[Value]) {
@@ -432,8 +456,10 @@ fn token_count(input: i64, output: i64) -> Value {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn codex_guardian_and_worker_hooks_stay_attributed_to_the_parent() {
+    let _serial = serial();
     let temp = TempDir::new().unwrap();
     let root = temp.path();
+    let _daemon = DaemonGuard(root);
     let repo = indexed_repo(root);
     let connection = Connection::open(root.join("brain.sqlite")).unwrap();
     // Synthetic Codex 0.155 rollouts. Every thread shares the root session id.
@@ -577,5 +603,303 @@ fn codex_guardian_and_worker_hooks_stay_attributed_to_the_parent() {
         ),
         0
     );
-    cli(root, &["daemon", "stop"], None);
+}
+
+/// Cursor input for one conversation, as the shipped client sends it.
+fn cursor_event(repo: &Path, event: &str, fields: &Value) -> Value {
+    let mut payload = json!({"conversation_id":"cursor-conv","session_id":"cursor-conv",
+        "generation_id":"gen-1","model":"test-model","hook_event_name":event,
+        "cursor_version":"3.17.19","workspace_roots":[repo],"user_email":null,
+        "transcript_path":null});
+    for (key, value) in fields.as_object().unwrap() {
+        payload[key] = value.clone();
+    }
+    payload
+}
+
+#[test]
+fn cursor_failures_are_observed_as_failed_calls() {
+    let _serial = serial();
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let _daemon = DaemonGuard(root);
+    let repo = indexed_repo(root);
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    cursor_hook(
+        root,
+        "prompt",
+        &cursor_event(
+            &repo,
+            "beforeSubmitPrompt",
+            &json!({"prompt":"Inspect compute"}),
+        ),
+    );
+    let failed_read = cursor_event(
+        &repo,
+        "postToolUseFailure",
+        &json!({"tool_name":"Read","tool_use_id":"cursor-big-read",
+            "tool_input":{"file_path":repo.join("lib.rs")},
+            "error_message":"File content (300KB) exceeds maximum allowed size (256KB)",
+            "failure_type":"error","is_interrupt":false,"duration":12}),
+    );
+    cursor_hook(root, "bash", &failed_read);
+    let (outcome, limit_hit): (String, i64) = connection
+        .query_row(
+            "SELECT outcome, limit_hit FROM tool_observations WHERE tool_name='Read'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((outcome.as_str(), limit_hit), ("failed", 1));
+    // A failed Engram MCP call does not route later evidence to the task it names.
+    let task: String = connection
+        .query_row("SELECT id FROM tasks", [], |row| row.get(0))
+        .unwrap();
+    cursor_hook(
+        root,
+        "bash",
+        &cursor_event(
+            &repo,
+            "postToolUseFailure",
+            &json!({"tool_name":"MCP:engram_record_attempt","tool_use_id":"cursor-mcp-1",
+                "tool_input":{"task_id":task,"summary":"tried the fix"},"cwd":repo,
+                "error_message":"MCP error","failure_type":"error","is_interrupt":false}),
+        ),
+    );
+    let sessions = engram::agenthooks::project_sessions(root, "cursor-conv");
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(
+        engram::agenthooks::declared_task(root, &sessions[0].0),
+        None,
+        "a failed call declares nothing"
+    );
+}
+
+#[test]
+fn cursor_background_shell_launches_never_count_as_passes() {
+    let _serial = serial();
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let _daemon = DaemonGuard(root);
+    let repo = indexed_repo(root);
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    cursor_hook(
+        root,
+        "prompt",
+        &cursor_event(
+            &repo,
+            "beforeSubmitPrompt",
+            &json!({"prompt":"Verify compute"}),
+        ),
+    );
+    let shell = |tool_id: &str, input: Value, output: &str| {
+        cursor_event(
+            &repo,
+            "postToolUse",
+            &json!({"tool_name":"Shell","tool_use_id":tool_id,"cwd":repo,
+                "tool_input":input,"tool_output":output,"duration":20}),
+        )
+    };
+    // A launch that only started the command reports no result of its own.
+    cursor_hook(
+        root,
+        "bash",
+        &shell(
+            "cursor-bg-1",
+            json!({"command":"cargo test","cwd":repo,"run_in_background":true}),
+            "{\"exitCode\":0}",
+        ),
+    );
+    cursor_hook(
+        root,
+        "bash",
+        &shell(
+            "cursor-bg-2",
+            json!({"command":"cargo test","cwd":repo}),
+            "{\"shell_id\":3,\"pid\":4242}",
+        ),
+    );
+    assert_eq!(count(&connection, "SELECT count(*) FROM evidence"), 0);
+    cursor_hook(
+        root,
+        "bash",
+        &shell(
+            "cursor-fg-1",
+            json!({"command":"cargo test","cwd":repo}),
+            "{\"exitCode\":0,\"output\":\"test result: ok\"}",
+        ),
+    );
+    assert_eq!(count(&connection, "SELECT count(*) FROM evidence"), 1);
+}
+
+#[test]
+fn cursor_tool_hooks_wait_for_an_unavailable_daemon_once() {
+    let _serial = serial();
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::write(repo.join("lib.rs"), "pub fn compute() {}\n").unwrap();
+    // A socket below a regular file can never be served.
+    std::fs::write(root.join("blocker"), "").unwrap();
+    let socket = root.join("blocker/engramd.sock");
+    let read = cursor_event(
+        &repo,
+        "postToolUse",
+        &json!({"tool_name":"Read","tool_use_id":"cursor-read-1",
+            "tool_input":{"file_path":repo.join("lib.rs")},"tool_output":"{}"}),
+    );
+    let started = std::time::Instant::now();
+    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", root)
+        .args([
+            "--db",
+            root.join("brain.sqlite").to_str().unwrap(),
+            "--socket",
+            socket.to_str().unwrap(),
+            "hook",
+            "bash",
+            "--cursor",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(read.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let elapsed = started.elapsed();
+    assert!(output.status.success(), "hooks fail open");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        json!({})
+    );
+    // Each auto-start attempt waits 5 s for readiness; two would exceed 10 s.
+    assert!(
+        elapsed < std::time::Duration::from_secs(9),
+        "waited {elapsed:?}"
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn codex_worker_context_keeps_its_own_delivery_state() {
+    let _serial = serial();
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let _daemon = DaemonGuard(root);
+    let repo = indexed_repo(root);
+    let hook = |event: &str, payload: &Value| cli(root, &["hook", event, "--codex"], Some(payload));
+    hook(
+        "prompt",
+        &json!({"session_id":"codex-root","cwd":repo,"prompt":"Inspect compute"}),
+    );
+    let read = |fields: Value| {
+        let mut payload = json!({"session_id":"codex-root","cwd":repo,"tool_name":"Read",
+            "tool_input":{"file_path":repo.join("lib.rs")}});
+        for (key, value) in fields.as_object().unwrap() {
+            payload[key] = value.clone();
+        }
+        payload
+    };
+    let worker_read =
+        read(json!({"tool_use_id":"worker-read","agent_id":"worker-thread","agent_type":"worker"}));
+    let worker = hook("pretool", &worker_read);
+    assert!(
+        worker.contains("Indexed reference data: lib.rs"),
+        "{worker}"
+    );
+    // The root conversation never saw the worker's brief, so it still gets one.
+    let parent = hook("pretool", &read(json!({"tool_use_id":"parent-read"})));
+    assert!(
+        parent.contains("Indexed reference data: lib.rs"),
+        "{parent}"
+    );
+    // Each conversation suppresses only its own repeats.
+    assert!(hook("pretool", &worker_read).is_empty());
+    assert!(hook("pretool", &read(json!({"tool_use_id":"parent-read-2"}))).is_empty());
+    // Tool calls of both threads stay on the one root episode.
+    hook("bash", &worker_read);
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    assert_eq!(count(&connection, "SELECT count(*) FROM tasks"), 1);
+    let sessions = engram::agenthooks::project_sessions(root, "codex-root");
+    assert_eq!(sessions.len(), 1);
+    let scope = sessions[0].0.clone();
+    hook(
+        "session-end",
+        &json!({"session_id":"codex-root","cwd":repo}),
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(root.join("hook-sessions"))
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(&scope))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+#[test]
+fn codex_unreadable_transcripts_cannot_replace_an_active_prompt() {
+    let _serial = serial();
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let _daemon = DaemonGuard(root);
+    let repo = indexed_repo(root);
+    let connection = Connection::open(root.join("brain.sqlite")).unwrap();
+    let hook = |event: &str, payload: &Value| cli(root, &["hook", event, "--codex"], Some(payload));
+    let missing = root.join("rollout-not-yet-written.jsonl");
+    // Nothing is active yet: a first prompt is captured even without metadata.
+    hook(
+        "prompt",
+        &json!({"session_id":"codex-root","cwd":repo,"prompt":"Inspect compute",
+            "transcript_path":missing}),
+    );
+    assert_eq!(
+        engram::agenthooks::pending_prompt(root, "codex-root").as_deref(),
+        Some("Inspect compute")
+    );
+    hook(
+        "bash",
+        &json!({"session_id":"codex-root","cwd":repo,"tool_name":"Read",
+            "tool_use_id":"root-read","tool_input":{"file_path":repo.join("lib.rs")}}),
+    );
+    assert_eq!(count(&connection, "SELECT count(*) FROM tasks"), 1);
+    // An unidentified thread cannot replace the active task prompt.
+    assert!(
+        hook(
+            "prompt",
+            &json!({"session_id":"codex-root","cwd":repo,
+                "prompt":"Review whether this command is safe","transcript_path":missing}),
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        engram::agenthooks::pending_prompt(root, "codex-root").as_deref(),
+        Some("Inspect compute")
+    );
+    assert!(
+        hook(
+            "stop",
+            &json!({"session_id":"codex-root","cwd":repo,"transcript_path":missing})
+        )
+        .is_empty()
+    );
+    // Codex runs SessionEnd only for the root thread, also after the user
+    // deleted its transcript, so the episode still closes.
+    hook(
+        "session-end",
+        &json!({"session_id":"codex-root","cwd":repo,"transcript_path":missing}),
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT count(*) FROM tasks WHERE status='open'"
+        ),
+        0
+    );
 }

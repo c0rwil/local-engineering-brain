@@ -89,6 +89,54 @@ pub fn scoped_session_id(session_id: &str, project_id: &ProjectId) -> String {
     )
 }
 
+/// The scope for one conversation's context-delivery receipt and file-brief
+/// list. A subagent thread (`agent_id`, such as a spawned Codex worker) shares
+/// the session's episode `scope` but not its model context, so it keeps its
+/// own receipt and brief list: neither conversation suppresses the other's.
+#[must_use]
+pub fn thread_scope(scope: &str, payload: &serde_json::Value) -> String {
+    let Some(agent) = payload
+        .get("agent_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|agent| !agent.is_empty())
+    else {
+        return scope.to_owned();
+    };
+    // 65-character episode scopes plus 15 stay within the 80-character
+    // sidecar names `session_state_path` keeps.
+    format!(
+        "{scope}-{}",
+        &crate::experience::sha256(agent.as_bytes())[..14]
+    )
+}
+
+/// Remove the per-thread delivery sidecars derived from an episode `scope`
+/// (session end).
+pub fn clear_thread_scopes(state_dir: &Path, scope: &str) {
+    let Some(prefix) = session_state_path(state_dir, scope)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| format!("{stem}-"))
+    else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(state_dir.join("hook-sessions")) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry.file_name().to_string_lossy().starts_with(&prefix) {
+            continue;
+        }
+        // Delivery locks are directories; never follow a link out of state.
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        } else {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Load all project episodes for this session, including pre-upgrade sidecars.
 #[must_use]
 pub fn project_sessions(state_dir: &Path, session_id: &str) -> Vec<(String, HookSession)> {
@@ -2439,6 +2487,52 @@ mod tests {
             path.to_string_lossy()
                 .contains("hook-sessions/abcetcpasswd.json")
         );
+    }
+
+    #[test]
+    fn subagent_threads_keep_separate_delivery_state_that_session_end_clears() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let scope = scoped_session_id("root-session", &ProjectId::new());
+        let root = thread_scope(&scope, &serde_json::json!({"tool_name":"Read"}));
+        assert_eq!(root, scope);
+        let worker = thread_scope(&scope, &serde_json::json!({"agent_id":"worker-1"}));
+        let other = thread_scope(&scope, &serde_json::json!({"agent_id":"worker-2"}));
+        assert_ne!(worker, scope);
+        assert_ne!(worker, other);
+        // Sidecar names keep 80 characters; a truncated name would merge threads.
+        let stem = |id: &str| {
+            session_state_path(temp.path(), id)
+                .file_stem()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(stem(&worker), worker);
+        assert!(mark_file_briefed(temp.path(), &worker, "src/lib.rs"));
+        assert!(
+            mark_file_briefed(temp.path(), &scope, "src/lib.rs"),
+            "the root conversation was never briefed"
+        );
+        let claim = claim_context_delivery(temp.path(), &worker, "task", &[], 256, None).unwrap();
+        claim
+            .delivered("request", &crate::ids::ContextRunId::new(), "context")
+            .unwrap();
+        drop(claim);
+        let root_claim =
+            claim_context_delivery(temp.path(), &scope, "task", &[], 256, None).unwrap();
+        assert!(root_claim.should_emit("context").unwrap());
+        drop(root_claim);
+        clear_thread_scopes(temp.path(), &scope);
+        let remaining: Vec<String> = std::fs::read_dir(temp.path().join("hook-sessions"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            remaining.iter().all(|name| !name.starts_with(&worker)),
+            "{remaining:?}"
+        );
+        assert!(remaining.iter().any(|name| name.starts_with(&scope)));
     }
 
     #[test]

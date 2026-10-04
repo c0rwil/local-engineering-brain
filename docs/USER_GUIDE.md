@@ -196,12 +196,19 @@ correctness has not been measured in a paired agent run; see
 hooks carry the parent conversation's session id. Engram counts a spawned
 worker's tool calls and verifications toward the parent's episode; the
 worker's prompt, written by the parent agent, does not replace the task
-prompt, drain the parent's relay inbox or receive prompt-time context.
-Internal sub-sessions, such as the guardian that reviews approval requests,
-are recognized from the `session_meta` record of their transcript and stay
-silent: no context, prompt capture, episode, usage or evidence, and they never
-close the parent's episode. Codex 0.155 turns hooks off inside guardian
-sessions unless managed requirements pin `features.hooks = true`.
+prompt, drain the parent's relay inbox or receive prompt-time context. A
+worker's tool-time context and file briefs are tracked separately from the
+parent's, because the worker does not see the parent's conversation; neither
+suppresses the other. Internal sub-sessions, such as the guardian that reviews
+approval requests, are recognized from the `session_meta` record of their
+transcript and stay silent: no context, prompt capture, episode, usage or
+evidence, and they never close the parent's episode. Codex 0.155 turns hooks
+off inside guardian sessions unless managed requirements pin
+`features.hooks = true`. A thread whose named transcript cannot be read is
+treated as unidentified: its prompt does not replace an active task prompt
+and its `Stop` is ignored. Its `SessionEnd` still closes the episode, because
+Codex runs `SessionEnd` only for the parent thread, also after the
+conversation and its transcript were deleted.
 
 **Cursor sessions.** The Cursor entries handle `sessionStart`,
 `beforeSubmitPrompt`, `postToolUse`, `postToolUseFailure`, `stop` and
@@ -219,9 +226,14 @@ Claude Code and Codex:
   output.
 - A shell verification becomes evidence only when its tool result carries an
   exit code. The shipped Cursor 3.17 shell reports a failing command through
-  `postToolUseFailure` without one: it counts as a tool call, not evidence,
-  and it clears the session's last recorded result, so the episode cannot
-  auto-close as a success on an earlier pass.
+  `postToolUseFailure` without one: it counts as a failed tool call, not
+  evidence, and it clears the session's last recorded result, so the episode
+  cannot auto-close as a success on an earlier pass. A shell launched in the
+  background reports no result of its own and never counts as a pass.
+- Any `postToolUseFailure` is recorded as a failed call, with its error text
+  checked for the Read size limit; a failed Engram MCP call names no task.
+- When the daemon cannot start, a tool hook waits for it once (about 5 s)
+  and answers without context.
 - Cursor 3.17 transcripts carry no token counters that Engram's transcript
   reader recognizes, so Cursor sessions report tool calls but no model token
   usage. Usage rows are labeled `cursor` and evidence `cursor-hook`.
