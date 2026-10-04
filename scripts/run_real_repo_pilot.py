@@ -34,6 +34,11 @@ MODEL = "claude-opus-4-8[1m]"
 TOOLS = "Bash,Read,Edit,Write,Glob,Grep"
 PLATFORM_DEPS = Path("/tmp/engram-platform-preflight-20260924/node_modules").resolve()
 SOURCE_ROOT = Path.home() / "PycharmProjects"
+# Claude Code keeps its sandbox temp directory (the Bash cwd file and the
+# sandboxed TMPDIR) under CLAUDE_CODE_TMPDIR/claude-<uid> only while that path
+# fits in 44 bytes; a longer one falls back to the shared /tmp/claude-<uid>.
+CLAUDE_TMP_ALIAS_PREFIX = "/private/tmp/e26t-"
+CLAUDE_SANDBOX_TMP_LIMIT = 44
 
 
 def write_json(path, value):
@@ -53,6 +58,44 @@ def clean_env():
     return env
 
 
+def claude_tmp_target(active):
+    """The trial's private Claude temp directory, inside its writable scratch."""
+    return active / "scratch" / "claude-tmp"
+
+
+def claude_tmp_alias(active):
+    """A short, collection-specific CLAUDE_CODE_TMPDIR for compact trials.
+
+    The active root's own scratch path is too long for Claude's sandbox temp
+    limit, so a short symlink in /private/tmp names the trial's private
+    directory. Claude's session files, Bash cwd files and sandboxed TMPDIR then
+    stay inside the active root and never touch the shared /private/tmp/claude-UID.
+    """
+    alias = Path(CLAUDE_TMP_ALIAS_PREFIX + hashlib.sha256(str(active).encode()).hexdigest()[:12])
+    if len(str(alias / f"claude-{os.getuid()}").encode()) > CLAUDE_SANDBOX_TMP_LIMIT:
+        raise ValueError("Claude temp alias exceeds the sandbox temp-path limit")
+    return alias
+
+
+def prepare_claude_tmp(active):
+    """Create the trial's private Claude temp directory and point the alias at it."""
+    target, alias = claude_tmp_target(active), claude_tmp_alias(active)
+    target.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if alias.is_symlink():
+        alias.unlink()
+    elif alias.exists():
+        raise RuntimeError(f"Refusing to replace {alias}: it is not a runner-owned Claude temp alias")
+    alias.symlink_to(target, target_is_directory=True)
+    return alias
+
+
+def release_claude_tmp(active):
+    """Remove the alias if it still names this trial's directory; the next trial clears the directory."""
+    alias = claude_tmp_alias(active)
+    if alias.is_symlink() and Path(os.readlink(alias)) == claude_tmp_target(active):
+        alias.unlink()
+
+
 def coding_env(work, *, compact=False):
     env = clean_env()
     scratch = work.parent / "scratch"
@@ -61,6 +104,8 @@ def coding_env(work, *, compact=False):
         # Pin the actual Bash tool shell; zsh's private heredoc prefix can point
         # outside the sandbox's writable scratch even when TMPDIR is isolated.
         env.update({"SHELL": "/bin/bash", "CLAUDE_CODE_SHELL": "/bin/bash"})
+        # Keep Claude's per-session temp state private to this trial.
+        env["CLAUDE_CODE_TMPDIR"] = str(claude_tmp_alias(work.parent))
     return env
 
 
@@ -257,7 +302,12 @@ def prepare_private_dependencies(task, data, active):
     write_json(fixture / "ready.json", ready)
 
 
-def settings(work, data, active, state, arm, *, compact=False):
+def settings(work, data, active, state, arm, *, compact=False, sibling_roots=True):
+    """Claude settings for one arm. sibling_roots=False leaves out the compact
+    policy's by-name denial of other collections' active roots; the runtime
+    proof's identity uses that form, so roots that come and go (other
+    collections, harness tests) do not change it. Trials always deny every
+    sibling root that exists when their attempt starts."""
     private = [data.resolve(), ROOT.resolve(), SOURCE_ROOT.resolve(), Path.home() / ".engram", Path.home() / ".codex", Path.home() / ".claude"]
     if compact:
         validate_paths(data, active, compact=True)
@@ -265,16 +315,20 @@ def settings(work, data, active, state, arm, *, compact=False):
             raise ValueError("Compact sandbox glob policy is verified only on macOS")
         # On macOS the sandbox runtime compiles these directly to regex. A
         # trailing '/**' is stripped by that runtime, so use an unbroken '**'.
-        temp_globs = ["/private/tmp/engram-**", "/private/tmp/erp26-**"]
-        patterns = ("claude-*", "erp26work-*")
+        # Compact trials keep Claude's temp state under their own active root
+        # (coding_env), so every shared /private/tmp/claude-* root is denied
+        # statically: other sessions' files neither enter nor change the policy.
+        temp_globs = ["/private/tmp/engram-**", "/private/tmp/erp26-**", "/private/tmp/claude-**"]
+        patterns = ("erp26work-*",) if sibling_roots else ()
     else:
         temp_globs = []
         private += [p.resolve() for p in Path("/private/tmp").glob("engram-*")]
         patterns = ("claude-*", "erp26-*")
     private += [p.resolve() for pattern in patterns for p in Path("/private/tmp").glob(pattern) if p.resolve() != active.resolve() and not active.resolve().is_relative_to(p.resolve())]
     private += [state.resolve()]
-    # Claude's cwd helper remains in /tmp/claude-UID even with a private TMPDIR.
-    # Permit only new cwd-* files there; protect every existing child explicitly.
+    # Legacy (non-compact) trials: Claude's cwd helper remains in /tmp/claude-UID
+    # even with a private TMPDIR. Permit only new cwd-* files there; protect every
+    # existing child explicitly.
     scratch_roots = [p for p in private if p.name.startswith("claude-") and p.is_dir()]
     old_scratch = [child for p in scratch_roots for child in p.iterdir()]
     if any(p.name.startswith("cwd-") for p in old_scratch):
@@ -288,7 +342,7 @@ def settings(work, data, active, state, arm, *, compact=False):
     if compact:
         # Native tool globs need both top-level files and directory descendants.
         denies += [f"{tool}(//private/tmp/{prefix}{suffix})"
-                   for prefix in ("engram-", "erp26-") for suffix in ("*", "*/**")
+                   for prefix in ("engram-", "erp26-", "claude-") for suffix in ("*", "*/**")
                    for tool in ("Read", "Edit", "Write", "Glob", "Grep")]
     denies += [f"{tool}(/{work}/.engram/**)" for tool in ("Edit", "Write")]
     value = {"disableAllHooks": arm == "off", "autoMemoryEnabled": False,
@@ -336,18 +390,24 @@ def execute_agent(work, settings_path, prompt, trace, stderr, wall, cost, *, com
     timed_out = False
     agent_env = coding_env(work, compact=compact)
     (work.parent / "scratch").mkdir(exist_ok=True)
-    with trace.open("w") as out, stderr.open("w") as err:
-        proc = subprocess.Popen(agent_command(settings_path, cost), cwd=work, env=agent_env, stdin=subprocess.PIPE, stdout=out, stderr=err, text=True, start_new_session=True)
-        try:
-            proc.communicate(prompt, timeout=wall)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            os.killpg(proc.pid, signal.SIGTERM)
+    if compact:
+        prepare_claude_tmp(work.parent)
+    try:
+        with trace.open("w") as out, stderr.open("w") as err:
+            proc = subprocess.Popen(agent_command(settings_path, cost), cwd=work, env=agent_env, stdin=subprocess.PIPE, stdout=out, stderr=err, text=True, start_new_session=True)
             try:
-                proc.wait(10)
+                proc.communicate(prompt, timeout=wall)
             except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, signal.SIGKILL)
-                proc.wait()
+                timed_out = True
+                os.killpg(proc.pid, signal.SIGTERM)
+                try:
+                    proc.wait(10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait()
+    finally:
+        if compact:
+            release_claude_tmp(work.parent)
     return {"agent_wall_seconds": round(time.monotonic() - started, 3), "agent_exit_code": proc.returncode, "agent_timed_out": timed_out}
 
 
@@ -455,8 +515,10 @@ def run_trial(task, repetition, arm, args):
         clone(work, grade_copy)
         grade_start = time.monotonic()
         grade_command = [sys.executable, str(SUITE / "grading" / task["id"] / "grade.py"), "--repo", str(grade_copy), "--output", str(trial / "grade.json")]
+        # A suite may pin grader settings (e.g. a Rust grader's target directory);
+        # they are the ones its grader preflight ran with.
         with (trial / "grader.log").open("w") as log:
-            graded = subprocess.run(grade_command, env=clean_env(), stdout=log, stderr=log, timeout=args.grader_seconds)
+            graded = subprocess.run(grade_command, env={**clean_env(), **getattr(args, "grader_env", {})}, stdout=log, stderr=log, timeout=args.grader_seconds)
         record["grading_seconds"] = round(time.monotonic() - grade_start, 3)
         record["grade"] = json.loads((trial / "grade.json").read_text())
         record["grader_exit_code"] = graded.returncode

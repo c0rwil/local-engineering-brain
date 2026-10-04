@@ -6,8 +6,8 @@
   "status": "draft_requires_operator_review",
   "execution_status": "draft_requires_operator_review",
   "executable_runner_config": false,
-  "runner": null,
-  "runner_note": "No collection adapter targets this suite yet. scripts/run_real_repo_followup.py is bound to real-repo-v2; adapt or generalize it, then freeze a manifest, before any collection.",
+  "runner": "scripts/run_real_repo_followup.py",
+  "runner_note": "Select this suite with --catalog benchmarks/real-repo-heldout-v1/catalog.json. While it is a draft the collector requires --allow-draft-suite, which the frozen manifest records. It builds the fixtures from the operator repositories with --prepare-only and requires a passing scripts/preflight_real_repo_graders.py proof against them. README.md, Collection, has the commands.",
   "protocol": "README.md",
   "result_claims": "None. No coding-agent attempt has been run against this suite; grader calibration is not an agent outcome.",
   "selection": {
@@ -283,7 +283,20 @@
       ]
     }
   ],
-  "runtime": null,
-  "runtime_note": "Pin the model route, effort, tools, limits and Engram build in a frozen manifest when the collection adapter exists. Reuse the v2 isolation rules: synthetic one-commit fixtures, fresh source-only snapshots, no Engram access in Off.",
+  "runtime": {
+    "model": "claude-opus-4-8[1m]",
+    "effort": "high",
+    "agent_mode": "single_agent",
+    "tools": ["Bash", "Read", "Edit", "Write", "Glob", "Grep"],
+    "arms": ["off", "brain"],
+    "brain_condition": "isolated_source_only_native_hooks",
+    "mcp_enabled": false,
+    "repetitions": 3,
+    "planned_agent_runs": 30,
+    "agent_seconds": 1200,
+    "grader_seconds": 1800,
+    "max_budget_usd_estimate_per_run": 8
+  },
+  "runtime_note": "Default protocol of scripts/run_real_repo_followup.py for this suite, the same as v2. The frozen manifest records the actual binaries, model route, limits, fixtures and proofs; it is authoritative. v2 isolation rules apply: synthetic one-commit fixtures, fresh source-only snapshots, no Engram access in Off.",
   "attempt_retention": "When collected, retain every attempt, including failures, timeouts and infrastructure errors; never replace an attempt."
 }

@@ -86,6 +86,8 @@ infrastructure:
 
 Rust graders use `ENGRAM_RUST_GRADER_TARGET`, by default
 `/tmp/engram-heldout-rust-target`, and `ENGRAM_RUST_GRADER_JOBS`, by default 2.
+Collection grading and the grader preflight both set them to the collection's
+`grader-target` directory and four jobs.
 
 ## Calibration
 
@@ -141,10 +143,110 @@ that prompts carry no commit, evaluator path or grader vocabulary.
    candidate that imports a third-party package missing from the stubs fails
    to load, and the h04 query emulation rejects SQL functions outside its small
    set.
-5. Build a collection adapter. `scripts/run_real_repo_followup.py` is bound to
-   v2. Freeze the runtime, model route, limits and Engram build in a manifest,
-   then rerun calibration in the collection environment before changing
-   `execution_status`.
+5. Collect only after this review, or record that it is still pending. While
+   `execution_status` is `draft_requires_operator_review`, the collector runs
+   this suite only with `--allow-draft-suite`, and the frozen manifest and its
+   scope limits record that flag.
+
+## Collection
+
+[`run_real_repo_followup.py`](../../scripts/run_real_repo_followup.py) collects
+any suite selected by its catalog path; without `--catalog` it still runs v2,
+whose manifest and output are unchanged. For this suite it builds its own
+fixtures and requires a passing grader preflight against them.
+
+The default protocol matches v2: five tasks, three repetitions and both arms,
+30 attempts in alternating arm order. Both arms use Claude Code with
+`claude-opus-4-8[1m]` at high effort, six core tools, 1,200 seconds of coding,
+1,800 seconds of grading and an $8 usage-estimate cap. Brain adds source-only
+automatic hooks from the pinned installed release, with no MCP tools and no
+learned memories.
+
+1. Prepare the fixtures. Each base commit is exported with `git archive` from
+   the operator's repository, which is only read. The export becomes a
+   one-commit repository with a pinned project identity. Tracked `.env` files
+   are dropped, every file gets a fresh mtime, and the commit must match the
+   base tree exactly. Rust tasks get a registry-only cargo home and an offline,
+   locked build at the trials' own paths; h05 starts from h01's build because
+   they share a base. The pinned release then indexes a source-only snapshot.
+2. Recalibrate the graders against those fixtures with
+   [`preflight_real_repo_graders.py`](../../scripts/preflight_real_repo_graders.py).
+   The base control is the prepared fixture itself. The reference control is
+   the fixture plus the historical fix. Every control must match its recorded
+   `preflight.json` run: the same exit code, the same failed checks and the
+   same check count. The collector refuses to start without this proof, or if
+   a fixture or grading file changed after it.
+3. Run the model-free Claude runtime preflight against a loopback stub.
+4. Launch the detached collection with
+   [`launch_real_repo_collection.py`](../../scripts/launch_real_repo_collection.py).
+   It reruns every check in the foreground with `--check-only`, then starts the
+   collector in a new session under `nohup` and `caffeinate -dims`. The
+   collector holds `collector.lock`, writes `progress.json` around every attempt
+   and appends to `collector.log`. Running `start` again resumes: completed
+   attempts are skipped and frozen controls are checked again. An interrupted
+   attempt blocks the resume until it is inspected. `status` reports progress.
+
+```sh
+RELEASE=~/.local/share/engram/releases/82b5df1dbe45dd72b1d113909ec81a549242f0a846fa00ff4202cb9b2e12aa9a
+caffeinate -dims nice -n 10 python3 scripts/run_real_repo_followup.py \
+  --catalog benchmarks/real-repo-heldout-v1/catalog.json \
+  --data /private/tmp/erp26-heldout-data --active /private/tmp/erp26work-heldout-active \
+  --engram-release "$RELEASE" --prepare-only --build-jobs 4
+caffeinate -dims nice -n 10 python3 scripts/preflight_real_repo_graders.py \
+  --catalog benchmarks/real-repo-heldout-v1/catalog.json --data /private/tmp/erp26-heldout-data
+python3 scripts/preflight_real_repo_runtime.py --data /private/tmp/erp26-heldout-data \
+  --active /private/tmp/erp26work-heldout-active --engram-release "$RELEASE"
+python3 scripts/launch_real_repo_collection.py start \
+  --catalog benchmarks/real-repo-heldout-v1/catalog.json --allow-draft-suite \
+  --data /private/tmp/erp26-heldout-data --active /private/tmp/erp26work-heldout-active \
+  --engram-release ~/.local/share/engram/releases/82b5df1dbe45dd72b1d113909ec81a549242f0a846fa00ff4202cb9b2e12aa9a
+python3 scripts/launch_real_repo_collection.py status --data /private/tmp/erp26-heldout-data --tail 20
+```
+
+The runtime proof's identity includes the coding environment, so the launcher
+gives the collector the `PATH`, `HOME`, `USER`, `LOGNAME` and `LANG` recorded in
+that proof. It also includes the checkout path, the runner scripts and the
+Claude Code binary. To launch from another checkout, or after any of them
+changed, rerun the runtime preflight there with `--supersede`. That keeps the
+earlier evidence as `runtime-preflight.superseded-<time>` and clears the active
+root it left; it is refused once the collection has started. The grader proof
+binds file contents, not paths, and stays valid while the fixtures, grading
+files and grader preflight script are unchanged.
+
+### Claude session isolation
+
+The v2 collection paused at 19/24 because its frozen sandbox policy listed
+every entry of the shared `/private/tmp/claude-501`. Each Claude Code session
+adds and removes files there, so any operator session or subagent changed the
+policy identity. The compact policy no longer enumerates that directory.
+
+Each trial now sets `CLAUDE_CODE_TMPDIR` to a short collection-specific alias,
+`/private/tmp/e26t-<hash of the active root>`. The alias is a symlink to
+`scratch/claude-tmp` inside the trial's own active root. The short path keeps
+Claude Code under its 44-byte limit for the sandbox temp directory. Above that
+limit, Claude Code puts that directory, and with it the Bash cwd files, in the
+shared `/tmp/claude-<uid>`; the v2 scratch path was too long. The trial's
+session files, Bash cwd files and sandboxed `TMPDIR` therefore stay inside its
+own writable scratch, which the next trial clears. Trials also run with
+`--no-session-persistence`, so they write no transcripts.
+
+Isolation is at least as strict as before. Every `/private/tmp/claude-*` root
+is denied to the Read, Edit, Write, Glob and Grep tools and to sandboxed reads
+by static rules, which match roots that appear later as well. Sandboxed
+commands can write only the checkout and the trial scratch, besides the
+sandbox runtime's built-in device and log paths. The earlier
+exceptions for `cwd-*` files in the shared directory, and the refusal to start
+when such a file existed, are gone. The runtime preflight checks the new
+layout through the real CLI: `TMPDIR` lies inside the trial, a temporary file
+can be created there, and a fresh `claude-*` canary root and the shared
+directory can be neither listed nor written. It also checks that nothing named
+after the run's session or checkout appeared in the shared directory.
+
+Other collections' active roots, `/private/tmp/erp26work-*`, are still denied
+by name: each attempt's policy lists every such root that exists when the
+attempt starts. The frozen identity leaves that list out. Before this change,
+creating or removing such a root, as the harness tests and runtime preflights
+do, would have stopped a running collection.
 
 ## Rerun calibration
 
