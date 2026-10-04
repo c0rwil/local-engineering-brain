@@ -327,10 +327,10 @@ impl JudgeStore {
             &review.task_id,
             task.as_ref().and_then(|task| task.final_commit.as_deref()),
         )?;
-        if let Some(reason) = sources.issue {
-            blocked_reason = Some(reason);
+        if let Some(reason) = &sources.issue {
+            blocked_reason = Some(reason.clone());
         }
-        let source_anchors = json!({"files": sources.indexed, "live": sources.live});
+        let mut source_anchors = json!({"files": sources.indexed, "live": sources.live});
         let indexed_sources: Vec<IndexedSource> = source_anchors["files"]
             .as_array()
             .into_iter()
@@ -345,6 +345,8 @@ impl JudgeStore {
             .collect();
         let mut evidence = Vec::new();
         let mut source_records = Vec::new();
+        // Set when otherwise eligible evidence did not observe an unindexed file.
+        let mut unanchored_shortfall: Option<&str> = None;
         // Existing proposals are limited to 32 evidence IDs. Half of the prompt
         // budget is reserved for the rule, task, relationships and JSON framing.
         let excerpt_budget = config.max_input_bytes / 2 / review.evidence_ids.len().max(1);
@@ -352,12 +354,19 @@ impl JudgeStore {
             match experience.get_evidence(id) {
                 Ok(Some(record)) => {
                     let redacted = self.redactor.redact_text(&record.artifact_text);
-                    let is_eligible = eligible.iter().any(|other| other == id.as_str())
+                    let otherwise_eligible = eligible.iter().any(|other| other == id.as_str())
                         && record.project_id == review.project_id
                         && record.task_id.as_ref() == Some(&review.task_id)
                         && record.kind != "user_acceptance"
                         && observed_indexed_sources(&record, &indexed_sources)
                         && !redacted.trim().is_empty();
+                    let unanchored = observed_unanchored_sources(&record, &sources.unanchored);
+                    let is_eligible = otherwise_eligible && unanchored.is_ok();
+                    if let (true, Err(reason)) = (otherwise_eligible, unanchored) {
+                        if unanchored_shortfall != Some(sources::UNANCHORED_CHANGED) {
+                            unanchored_shortfall = Some(reason);
+                        }
+                    }
                     if is_eligible
                         && record
                             .commit_hash
@@ -365,6 +374,7 @@ impl JudgeStore {
                             .zip(source_anchors["live"]["head"].as_str())
                             .is_some_and(|(observed, current)| {
                                 !sources::same_revision(observed, current)
+                                    && !sources.revision_immaterial(observed)
                             })
                     {
                         blocked_reason = Some("Evidence revision differs from the live checkout; verify current behavior again".to_owned());
@@ -396,9 +406,27 @@ impl JudgeStore {
                 }
             }
         }
-        if !evidence.iter().any(|record| record.eligible) {
+        if evidence.iter().any(|record| record.eligible) {
+            // Eligible evidence matched every unindexed file's live digest.
+            for file in source_anchors["live"]["files"]
+                .as_array_mut()
+                .into_iter()
+                .flatten()
+            {
+                if sources
+                    .unanchored
+                    .iter()
+                    .any(|(path, _)| file["path"].as_str() == Some(path))
+                {
+                    file["hook_digest_matches_live"] = json!(true);
+                }
+            }
+        } else {
             blocked_reason = Some(
-                "No readable, independently verified evidence from the successful source task"
+                unanchored_shortfall
+                    .unwrap_or(
+                        "No readable, independently verified evidence from the successful source task",
+                    )
                     .to_owned(),
             );
         }
@@ -710,6 +738,30 @@ fn observed_indexed_sources(
                 .and_then(|digests| digests.get(&source.path))
                 .is_some_and(|digest| digest.eq_ignore_ascii_case(&source.digest))
     })
+}
+
+/// Evidence can certify a touched file without an index anchor only if a
+/// native hook recorded exactly that file's live content beside the
+/// verification. There is no index time to fall back on, so evidence reported
+/// by agents, the CLI or completions (no hook digests) never qualifies.
+/// `unanchored` holds checkout-relative paths with their live SHA-256.
+fn observed_unanchored_sources(
+    record: &crate::experience::EvidenceRecord,
+    unanchored: &[(String, String)],
+) -> std::result::Result<(), &'static str> {
+    if unanchored.is_empty() {
+        return Ok(());
+    }
+    let digests = crate::agenthooks::hook_source_digests(&record.metadata).unwrap_or_default();
+    let mut outcome = Ok(());
+    for (path, live) in unanchored {
+        match digests.get(path) {
+            Some(digest) if digest.eq_ignore_ascii_case(live) => {}
+            Some(_) => return Err(sources::UNANCHORED_CHANGED),
+            None => outcome = Err(sources::UNANCHORED_UNOBSERVED),
+        }
+    }
+    outcome
 }
 
 /// Why a parsed model answer cannot become a decision.
