@@ -2395,6 +2395,13 @@ fn run_link(
                 path: path.clone(),
                 apply: *apply,
             }))?;
+            // Repository paths and notes reach the terminal without its
+            // control sequences.
+            let plain = |text: &str| -> String {
+                text.chars()
+                    .map(|c| if c.is_control() { '?' } else { c })
+                    .collect()
+            };
             if *json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else if report.candidates.is_empty()
@@ -2407,9 +2414,9 @@ fn run_link(
                     let status = if *apply { "RETRACTED" } else { "stale" };
                     println!(
                         "{status}  {}  ({})  — {}",
-                        link.name,
-                        link.relation,
-                        link.note.as_deref().unwrap_or_default()
+                        plain(&link.name),
+                        plain(&link.relation),
+                        plain(link.note.as_deref().unwrap_or_default())
                     );
                 }
                 for link in &report.applied {
@@ -2426,7 +2433,9 @@ fn run_link(
                     };
                     println!(
                         "{status}  {}  ({})  — {}",
-                        candidate.target_name, candidate.relation, candidate.evidence
+                        plain(&candidate.target_name),
+                        plain(&candidate.relation),
+                        plain(&candidate.evidence)
                     );
                 }
                 if !*apply
@@ -2439,9 +2448,12 @@ fn run_link(
                 }
                 if !*apply && !report.stale.is_empty() {
                     println!(
-                        "Stale links were applied under an earlier policy, and no evidence outside documentation supports them now. Run `engram link scan --apply` to retract them."
+                        "Stale links were applied under an earlier policy, and no evidence outside documentation supports them in this checkout. Run `engram link scan --apply` here to retract them."
                     );
                 }
+            }
+            if !*json && report.incomplete {
+                println!("The scan could not read every file, so no link was judged stale.");
             }
         }
         LinkAction::List { json, .. } => {
@@ -3071,7 +3083,7 @@ fn run_hook_payload(
             let restart = engram::agenthooks::conversation_restart(payload);
             let claim = restart.map_or_else(
                 || "brief".to_owned(),
-                |source| format!("brief-{source}-{}", now_ms / 60_000),
+                |source| engram::agenthooks::restart_claim(source, payload, now_ms),
             );
             if restart.is_some() {
                 engram::agenthooks::forget_deliveries(&state_dir, &session_id);

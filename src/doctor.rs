@@ -107,6 +107,9 @@ impl DoctorReport {
             .checks
             .push(crate::security::validated_memory_check(database));
         report.checks.extend(checkout_checks(database));
+        report
+            .checks
+            .push(crate::linkscan::legacy_link_check(database));
         report.finish()
     }
 

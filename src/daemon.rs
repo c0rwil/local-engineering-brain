@@ -3609,29 +3609,26 @@ async fn index_project(
         .unwrap_or(false);
     // Auto-link discovery: definitive manifest signals (path deps,
     // submodules) auto-apply with evidence in the note; name matches are
-    // proposals only, surfaced by `engram link scan`. Links applied under an
-    // earlier policy are retracted once no evidence outside documentation
-    // supports them. Shadow origin-views are documentation snapshots, not
-    // real projects — they never link or export a vault folder of their own.
+    // proposals only, surfaced by `engram link scan`. Indexing never retracts
+    // a link: it sees one checkout, and a branch can lack evidence that the
+    // default branch has. Shadow origin-views are documentation snapshots,
+    // not real projects — they never link or export a vault folder of their
+    // own.
     if state.config.links.auto_scan && !is_view_project {
         let database = state.database.clone();
         let project_id = resolved.project.id.clone();
         let root = resolved.root.clone();
-        if let Ok((candidates, stale_links)) = run_blocking(&state, move || {
-            let candidates = crate::linkscan::scan(&database, &project_id, &root)?;
-            let stale_links =
-                crate::linkscan::stale_auto_links(&database, &project_id, &candidates)?;
-            Ok((candidates, stale_links))
+        if let Ok(candidates) = run_blocking(&state, move || {
+            crate::linkscan::scan(&database, &project_id, &root)
         })
         .await
-            && (!stale_links.is_empty() || candidates.iter().any(|candidate| candidate.definitive))
+            && candidates.iter().any(|candidate| candidate.definitive)
         {
             let database = state.database.clone();
             let project_id = resolved.project.id.clone();
             let _ = state
                 .scheduler
                 .submit(MutationPriority::BackgroundLearning, move || {
-                    crate::linkscan::retract_stale(&database, &project_id, &candidates)?;
                     crate::linkscan::apply_definitive(&database, &project_id, &candidates)
                 });
         }
@@ -4669,21 +4666,31 @@ async fn scan_links(
     let database = state.database.clone();
     let project_id = resolved.project.id.clone();
     let root = resolved.root.clone();
-    let (candidates, stale_links) = run_blocking(&state, move || {
-        let candidates = crate::linkscan::scan(&database, &project_id, &root)?;
-        let stale_links = crate::linkscan::stale_auto_links(&database, &project_id, &candidates)?;
-        Ok((candidates, stale_links))
+    let scan = run_blocking(&state, move || {
+        crate::linkscan::scan_checkout(&database, &project_id, &root)
     })
     .await?;
+    let database = state.database.clone();
+    let project_id = resolved.project.id.clone();
+    let preview = scan.clone();
+    let stale_links = run_blocking(&state, move || {
+        crate::linkscan::stale_auto_links(&database, &project_id, &preview)
+    })
+    .await?;
+    let incomplete = !scan.complete;
     let (applied, stale_links) = if request.apply {
         let database = state.database.clone();
         let project_id = resolved.project.id.clone();
-        let to_apply = candidates.clone();
+        let to_apply = scan.clone();
         let handle = state
             .scheduler
             .submit(MutationPriority::Interactive, move || {
                 let retracted = crate::linkscan::retract_stale(&database, &project_id, &to_apply)?;
-                let applied = crate::linkscan::apply_definitive(&database, &project_id, &to_apply)?;
+                let applied = crate::linkscan::apply_definitive(
+                    &database,
+                    &project_id,
+                    &to_apply.candidates,
+                )?;
                 Ok((applied, retracted))
             })
             .map_err(|error| ApiError::from_core(&error))?;
@@ -4692,9 +4699,10 @@ async fn scan_links(
         (Vec::new(), stale_links)
     };
     Ok(Json(crate::linkscan::LinkScanReport {
-        candidates,
+        candidates: scan.candidates,
         applied,
         stale: stale_links,
+        incomplete,
     }))
 }
 

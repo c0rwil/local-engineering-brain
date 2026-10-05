@@ -222,7 +222,11 @@ fn assignment_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(
-            r#"(?i)\b(api[_-]?key|apikey|key|access[_-]?token|auth[_-]?token|token|password|passwd|secret|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|client[_-]?secret|private[_-]?token)\b(\s*[:=]\s*)(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;&#]+)"#,
+            // `key` alone; the secret words also with a `NAME_` prefix
+            // (`GITHUB_TOKEN`, `DB_PASSWORD`); `pass` and `pwd` only with one,
+            // so `pwd: /path` and `tests pass: 5` stay. A quote may close the
+            // key, as in JSON.
+            r#"(?i)\b(key|(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|token|password|passwd|secret|secret[_-]?key|private[_-]?key|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|client[_-]?secret|private[_-]?token)|(?:[a-z0-9]+[_-])+(?:pass|pwd))\b(["']?\s*[:=]\s*)(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;&#]+)"#,
         )
         .expect("built-in assignment redaction regex is valid")
     })
@@ -294,6 +298,25 @@ mod tests {
         }));
         assert_eq!(object["token"], "[REDACTED]");
         assert!(!object.to_string().contains("hunter2"));
+        for (text, secret) in [
+            ("{\"password\": \"hunter3\"}", "hunter3"),
+            ("DB_PASS: hunter4", "hunter4"),
+            ("GITHUB_TOKEN=ghx_value123", "ghx_value123"),
+            ("SMTP_PASSWORD='p w'", "p w"),
+            ("client-secret = s3cr3t", "s3cr3t"),
+        ] {
+            let redacted = redact_text(text);
+            assert!(!redacted.contains(secret), "{text} -> {redacted}");
+        }
+        for text in [
+            "primary_key: id",
+            "tests pass: 5",
+            "pwd: /Users/dev/project",
+            "max_tokens: 4096",
+            "OLDPWD=/tmp",
+        ] {
+            assert_eq!(redact_text(text), text);
+        }
     }
 
     #[test]

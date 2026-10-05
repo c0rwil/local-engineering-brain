@@ -31,16 +31,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- The injection screen (rules `injection-screen-v2`) catches two evasions of
-  its override rules. Matching folds Cyrillic and Greek letters that render
-  as Latin, so `іgnore previous instructions` with a Cyrillic `і` is flagged.
-  Folding applies only to words that mix them with ASCII letters or consist
-  of them entirely, so Russian and Greek text keeps its letters. A new rule
-  flags "ignore previous instructions" in Spanish, French, German,
-  Portuguese, Italian, Russian, Chinese, Japanese and Korean. On 90,131
-  paragraphs from six local repositories and 989,453 localized macOS UI
-  strings in those languages, the additions flag nothing. Paraphrases still
-  pass. Held proposals with findings are judged again under the new version.
+- The injection screen (rules `injection-screen-v3`) catches two evasions of
+  its override rules. Every rule runs on the text and on a copy in which
+  Cyrillic, Greek and Armenian letters that render as Latin are folded, so
+  `іgnore previous instructions` with a Cyrillic `і` is flagged while Russian
+  text keeps its letters. Combining marks after Latin letters, Mongolian
+  variation selectors and shorthand format controls no longer split words.
+  New rules flag "ignore previous instructions" in Spanish, French, German,
+  Portuguese, Italian, Russian, Chinese, Japanese and Korean. Where an
+  imperative can read like a statement, the verb must open a clause; the
+  other scripts accept command forms only, and settings or hints are never
+  instructions. On 90,173 paragraphs from six local repositories and 989,453
+  localized macOS UI strings in those languages, the additions flag only
+  Engram's own test strings. Paraphrases still pass. Held proposals with
+  findings are judged again under the new version.
+- Redaction covers secret assignments in JSON (`"password": "…"`), YAML and
+  environment form, including prefixed names such as `GITHUB_TOKEN`,
+  `DB_PASSWORD` and `DB_PASS`. `key`, `pass` and `pwd` alone stay, so
+  `primary_key: id` and `pwd: /path` are left as written.
 - `engram review reverify` refuses environment and `make` variables that make
   a command load or run other code (`LD_PRELOAD`, `DYLD_*`, `RUSTC_WRAPPER`,
   `CARGO_TARGET_*_RUNNER`, `BASH_ENV`, `PATH`, `SHELL`, `NODE_OPTIONS` and
@@ -265,36 +273,46 @@ not yet stable, and the schema version is 7.
   session, an unchanged pack stayed suppressed, and files were briefed once
   per task, so a compacted conversation lost Engram's context until something
   changed. Now the next prompt and tool calls deliver the pack and file
-  briefs again, and the session is briefed again, once for both hook levels,
-  without listing its own episodes as earlier ones. Delivery receipts keep
-  their run IDs for usage attribution. Subagent threads are unaffected.
-- Automatic repository links from an earlier policy are retracted when no
-  evidence outside documentation supports them. Until 2026-09-16 a hostname
-  mentioned anywhere in a repository linked it to the service declaring that
-  host, and those links stayed after the rule became a proposal. Engram's own
-  repository was linked to three company services because a handoff note
-  and a deploy README named their hosts. In the seven days before this fix,
-  linked repositories supplied 92% of the context injected into Engram's
-  own sessions: 923K tokens of their lessons and 760K of their source
-  pointers, out of 1.84M. `engram index` now rescans and retracts such a
-  link when its host appears only in Markdown or other prose, or nowhere.
-  Links whose host still appears in source or configuration, such as an app
-  build file, stay. `engram link scan` lists stale links and retracts them
-  with `--apply`, as does the browser's scan. Hostname proposals found only
-  in documentation are marked `(documentation only)`. The scan now walks
-  files in sorted order, so its evidence is stable, and refuses a checkout it
-  cannot list instead of treating it as one without evidence. Links a person
-  added or edited, and links from manifest dependencies, are never retracted.
-- A shell-mode turn in Claude Code (`!command`) or a background task's
-  completion notice no longer replaces the task's request. Claude Code
-  submits both as prompts that hold only the command and its output, or the
-  notice. Engram used that text as the task, so a `claude auth login` turn
-  steered retrieval toward API-key code in other repositories, a finished
-  test run steered it toward unrelated `run_task` functions, and command
-  output that could hold secrets was kept as the prompt. Prompts made only
-  of `<bash-…>`, `<local-command-…>` and `<task-notification>` blocks now
-  keep the previous request and deliver nothing. Records stored by earlier
-  builds are ignored when read.
+  briefs again, including packs a prompt delivered before the first tool
+  call, and the session is briefed again without listing its own episodes as
+  earlier ones. The user- and project-level hooks share one brief per
+  compaction, named by the transcript's length, so two compactions within a
+  minute each get one. Delivery receipts keep their run IDs for usage
+  attribution. Subagent threads are unaffected.
+- Links from the hostname rule used before 2026-09-16 can be found and
+  retracted. That rule linked a repository to any service whose host it
+  mentioned, documentation included, and those links stayed after the rule
+  became a proposal. Engram's own repository was linked to three company
+  services because a handoff note and a deploy README named their hosts. In
+  the seven days before this fix, linked repositories supplied 92% of the
+  context injected into Engram's own sessions: 923K tokens of their lessons
+  and 760K of their source pointers, out of 1.84M. `engram link scan` now
+  lists such a link as stale when a complete scan of the checkout finds the
+  host only in Markdown or other prose, or nowhere, and `--apply` retracts
+  it; the browser's scan does the same. Indexing never retracts a link,
+  because it sees one checkout and a branch can lack evidence that the
+  default branch has. `engram doctor` lists the remaining links from that
+  rule (`legacy_links`) until each is confirmed with `engram link add` or
+  retracted. A scan judges nothing stale when it hit its file cap or could
+  not read a directory or file, or when the target declares no host. It now
+  reads tracked dotfiles such as CI workflows but not version-control stores,
+  searches the first 256 KiB of large files, skips binary files, and treats
+  `.txt` files such as `CMakeLists.txt` as configuration. Proposals found
+  only in documentation are marked `(documentation only)`. Links a person
+  added or edited, and links from manifest dependencies, are never stale.
+- A shell-mode turn in Claude Code (`!command`), a background task's
+  completion notice or a subagent's report no longer replaces the task's
+  request. Claude Code submits each as a prompt made of tagged blocks.
+  Engram used that text as the task, so a `claude auth login` turn steered
+  retrieval toward API-key code in other repositories, a finished test run
+  toward unrelated `run_task` functions, and command output that could hold
+  secrets was kept as the prompt. Prompts made only of `<bash-…>`,
+  `<local-command-…>`, `<task-notification>` and `<agent-message>` blocks now
+  keep the previous request and deliver nothing. A prompt that mixes typed
+  text with a command keeps the text and the command line, never the output.
+  A tag quoted inside command output no longer ends its block early.
+  `engram-proxy` applies the same rule when it picks the task from a
+  conversation. Records stored by earlier builds are ignored when read.
 - In a session that works in several repositories, a verification in one
   repository no longer leaves another repository's earlier pass unknown, which
   kept that episode from closing as success. An episode recorded its checkout

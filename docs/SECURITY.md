@@ -39,7 +39,13 @@ boundary against code that already runs as you.
 - **Data framing in the judge prompt.** The system prompt states that every
   packet field is untrusted data, never instructions.
 - **Redaction.** Recognized secrets are redacted before storage and in every judge
-  packet, local or remote (TypeSafe).
+  packet, local or remote (TypeSafe). Assignments to secret-named keys are
+  redacted in JSON (`"password": "…"`), YAML and environment form, including
+  prefixed names such as `GITHUB_TOKEN`, `DB_PASSWORD` and `DB_PASS`.
+- **Command output is not task text.** Claude Code submits shell-mode turns,
+  task notices and subagent reports as prompts. Hooks and the proxy keep the
+  previous request as the task, and a prompt that mixes typed text with a
+  command keeps the text and the command line but never the output.
 - **Labeled injection.** Injected sections are headed as reference data. Control
   characters were replaced, and source-pointer labels escaped Markdown, angle
   brackets and line breaks.
@@ -65,13 +71,24 @@ bytes.
 | Hidden characters | bidirectional overrides, zero-width characters next to ASCII, Unicode tag characters (decoded and screened as text), control characters |
 | Encoded payload | a base64-like run of 96+ characters with mixed case, digits and 32+ distinct symbols |
 
-Before matching, the screen removes invisible characters, decodes tag characters
-and folds full-width ASCII, so `ig\u{200B}nore` and full-width text still match.
-It also folds Cyrillic and Greek letters that render as Latin (`і`, `о`, `ѕ`,
-`Α`), but only in words that mix them with ASCII letters or consist of them
-entirely, so `іgnore` matches while Russian and Greek text keeps its letters
-for the translated rules. Zero-width joiners and directional marks inside
-non-ASCII text, such as emoji sequences, Persian or Hebrew, are not flagged.
+Before matching, the screen removes invisible characters (including Mongolian
+variation selectors and shorthand format controls), decodes tag characters,
+folds full-width ASCII and drops combining marks that follow a Latin letter, so
+`ig\u{200B}nore`, full-width text and `ı̇gnore` still match. Every rule then runs
+twice: on that text, and on a copy in which Cyrillic, Greek and Armenian
+letters that render as Latin (`і`, `о`, `ѕ`, `ϲ`, `Α`, `օ`) are folded in words
+that mix them with ASCII letters or consist of them entirely. The folded copy
+exposes `іgnore`; the unfolded one keeps Russian `Не` and `ВСЕ` for the
+translated rule. Zero-width joiners and directional marks inside non-ASCII
+text, such as emoji sequences, Persian or Hebrew, are not flagged.
+
+The translated override rules separate commands from descriptions. In Spanish,
+French, German, Portuguese and Italian the imperative can read like a
+statement ("El linter ignora las reglas anteriores"), so the verb must open a
+clause, optionally after "please" or "now". Russian, Japanese and Korean
+accept imperative forms only, and Chinese requires the verb to open a clause,
+so "可以忽略" (may ignore) passes. None of them treat settings or hints as
+instructions.
 
 ### Where it applies
 
@@ -223,11 +240,11 @@ A flag holds a proposal for a human; it never deletes or rejects it.
 ## Limits
 
 - The rules are patterns. Paraphrases, instructions split across fields,
-  languages other than the nine listed above, and lookalike letters from
-  other scripts are not detected. On 90,131 paragraphs from six local
-  repositories and 989,453 localized macOS UI strings, the translated rule
-  and lookalike folding flagged nothing, so their false-positive rate is
-  low; their recall on real attacks is unmeasured.
+  languages other than the nine listed above, and lookalike letters outside
+  the folding table are not detected. On 90,173 paragraphs from six local
+  repositories and 989,453 localized macOS UI strings, the translated rules
+  and lookalike folding flagged only Engram's own test strings, so their
+  false-positive rate is low; their recall on real attacks is unmeasured.
 - Engram does not mediate files the agent reads directly. A malicious README read
   by the agent reaches it without passing through Engram.
 - Anything running as your user can call the CLI with `--human-override` or send

@@ -196,14 +196,29 @@ own code.
 | Workstream | Added | Measured or found |
 |---|---|---|
 | 0. Capture | The operator merged the duplicate `engram` project into `brain` | `engram doctor` passes `project_identity`; only the untrusted Codex hooks warn |
-| 2. Context failure modes | Links applied under the pre-2026-09-16 hostname rule are retracted when no evidence outside documentation supports them; shell-mode turns and background-task notices no longer replace the task's request | In the seven days before, linked repositories supplied 92% of the context injected into Engram's own sessions (1.68M of 1.84M tokens). The three links rested on a handoff note and a deploy README. Links whose host still appears in configuration, such as an app build file, stay. A `claude auth login` turn and a test-run notice each became the task text, steering retrieval to API-key and `run_task` code in other repositories |
-| 4. Safety | Injection screen v2: Latin-lookalike folding and "ignore previous instructions" in nine languages | No new flags on 90,131 paragraphs from six repositories or on 989,453 localized macOS UI strings. Recall on real attacks is unmeasured |
+| 2. Context failure modes | `engram link scan --apply` retracts links from the pre-2026-09-16 hostname rule when a complete scan finds no evidence outside documentation, and doctor lists the rest; shell-mode turns, task notices and subagent reports no longer replace the task's request; context is delivered again after compaction | In the seven days before, linked repositories supplied 92% of the context injected into Engram's own sessions (1.68M of 1.84M tokens). The three links rested on a handoff note and a deploy README. Links whose host still appears in configuration, such as an app build file, stay. A `claude auth login` turn and a test-run notice each became the task text, steering retrieval to API-key and `run_task` code in other repositories |
+| 4. Safety | Injection screen v3: rules run on the text and on a lookalike-folded copy; "ignore previous instructions" in nine languages; wider secret redaction | No new flags on 90,173 paragraphs from six repositories or on 989,453 localized macOS UI strings, apart from Engram's own test strings. Recall on real attacks is unmeasured |
 | 3. Proof | Held-out collection resumed after the operator signed in again | Running; results follow in the held-out findings |
 
-Build f27bb96a is installed. A re-index of Engram's checkout retracted its three
-links, and dry-run scans of the four company repositories find no stale links.
-The next hook delivery in this session carried only the brief of the file being
-read.
+Build f27bb96a was installed first. A re-index of Engram's checkout retracted
+its three links, and dry-run scans of the four company repositories found no
+stale links. The next hook delivery in this session carried only the brief of
+the file being read.
+
+Two read-only reviews of the pass then found defects that were fixed before
+the next install:
+
+- Retraction on every index depended on which checkout was indexed: a worktree
+  on a branch without the evidence could delete a supported link for good.
+  Only an explicit scan retracts now, and only after a complete walk.
+- Lookalike folding turned Russian `Не` and `ВСЕ` into Latin and broke the
+  Russian rule; rules now also run on the unfolded text.
+- The translated rule flagged statements such as "the linter ignores the
+  previous rules" and "ignores the system settings", and missed formal German
+  and Italian commands.
+- Command output that quoted a closing tag, and subagent reports, still became
+  task text.
+- Concurrent hooks could brief twice when a compaction straddled a minute.
 
 Effectiveness now reports which project supplied each project's selected
 context (`selected_by_origin`). Over the seven days before this pass, linked

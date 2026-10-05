@@ -567,8 +567,8 @@ fn extract_task(
             continue;
         };
         if let Some(text) = content.as_str() {
-            if !text.trim().is_empty() {
-                return Ok(Some(text.to_owned()));
+            if let Some(task) = task_intent(text) {
+                return Ok(Some(task));
             }
             continue;
         }
@@ -586,12 +586,21 @@ fn extract_task(
                 .filter_map(|part| part.get("text").and_then(Value::as_str))
                 .filter(|text| !text.trim().is_empty())
                 .collect::<Vec<_>>();
-            if !texts.is_empty() {
-                return Ok(Some(texts.join("\n")));
+            if let Some(task) = task_intent(&texts.join("\n")) {
+                return Ok(Some(task));
             }
         }
     }
     Ok(None)
+}
+
+/// A user message's text as the task: none for a shell-mode turn, notice or
+/// subagent report, and without command output otherwise.
+fn task_intent(text: &str) -> Option<String> {
+    if text.trim().is_empty() || crate::agenthooks::is_host_record(text) {
+        return None;
+    }
+    Some(crate::agenthooks::prompt_intent(text)).filter(|task| !task.trim().is_empty())
 }
 
 fn inject_openai(body: &mut Value, context: &str) -> std::result::Result<(), ProxyError> {
@@ -867,6 +876,22 @@ mod tests {
         assert_eq!(
             extract_task(&body, ApiFlavor::Anthropic).expect("task"),
             Some("first\nsecond".to_owned())
+        );
+    }
+
+    #[test]
+    fn task_extraction_walks_past_host_records() {
+        let body = json!({
+            "messages": [
+                {"role": "user", "content": "fix the scheduler"},
+                {"role": "assistant", "content": "On it."},
+                {"role": "user", "content": "<bash-input>cat .env</bash-input><bash-stdout>TOKEN=abc</bash-stdout>"},
+                {"role": "user", "content": [{"type": "text", "text": "<task-notification>\n<status>completed</status>\n</task-notification>"}]}
+            ]
+        });
+        assert_eq!(
+            extract_task(&body, ApiFlavor::Anthropic).expect("task"),
+            Some("fix the scheduler".to_owned())
         );
     }
 

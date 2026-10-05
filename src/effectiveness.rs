@@ -138,7 +138,8 @@ pub struct SourceDelivery {
 /// Selected items grouped by the project that supplied them.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct OriginDelivery {
-    /// None when the item's lesson, source node or evidence no longer exists.
+    /// None when the item is not a lesson, source node or evidence, or no
+    /// longer exists.
     pub project_id: Option<ProjectId>,
     pub project_name: Option<String>,
     /// The reported project itself rather than a linked repository.

@@ -865,9 +865,15 @@ fn host_records_keep_the_request_and_deliver_nothing() {
     // Text beyond the blocks is a request about the output.
     let question = format!("{shell}\nWhy did create_api_key appear?");
     cli(root, &["hook", "prompt"], Some(prompt(&question)));
+    let pending = engram::agenthooks::pending_prompt(root, "shell-mode").unwrap();
     assert!(
-        engram::agenthooks::pending_prompt(root, "shell-mode")
-            .is_some_and(|pending| pending.contains("Why did create_api_key appear?"))
+        pending.contains("Why did create_api_key appear?"),
+        "{pending}"
+    );
+    assert!(pending.contains("$ claude auth login"), "{pending}");
+    assert!(
+        !pending.contains("Opening browser"),
+        "output is not intent: {pending}"
     );
     cli(root, &["daemon", "stop"], None);
 }
@@ -892,7 +898,12 @@ fn compaction_delivers_context_and_file_briefs_again() {
         json!({"session_id":session, "cwd":repo, "tool_name":"Read",
             "tool_input":{"file_path":"compute.rs"}})
     };
-    let start = |source: &str| json!({"session_id":"compacted", "cwd":repo, "source":source});
+    let transcript = root.join("compacted.jsonl");
+    std::fs::write(&transcript, "{}\n").unwrap();
+    let start = |source: &str| {
+        json!({"session_id":"compacted", "cwd":repo, "source":source,
+            "transcript_path":transcript})
+    };
     // An earlier session leaves an open episode for briefs to name.
     cli(
         root,
@@ -946,6 +957,10 @@ fn compaction_delivers_context_and_file_briefs_again() {
     assert!(brief.contains(earlier.task_id.as_str()), "{brief}");
     assert!(!brief.contains(own.task_id.as_str()), "{brief}");
     assert!(cli(root, &["hook", "session-start"], Some(start("compact"))).is_empty());
+    // A second compaction within the same minute grows the transcript and is
+    // briefed again.
+    std::fs::write(&transcript, "{}\n{\"type\":\"summary\"}\n").unwrap();
+    assert!(!cli(root, &["hook", "session-start"], Some(start("compact"))).is_empty());
     assert!(
         !cli(
             root,

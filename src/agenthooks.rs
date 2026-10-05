@@ -289,12 +289,21 @@ pub fn save_pending_prompt(
     prompt: &str,
     redactor: &crate::security::Redactor,
 ) -> Result<()> {
+    // A host record is not a request: the previous request stays.
+    if is_host_record(prompt) {
+        return Ok(());
+    }
     let path = session_state_path(state_dir, session_id).with_extension("pending");
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| Error::Config(e.to_string()))?;
     }
-    // Redact before truncation so the bound cannot split a credential.
-    let prompt: String = redactor.redact_text(prompt).chars().take(8_000).collect();
+    // Command output never becomes task text. Redact before truncation so
+    // the bound cannot split a credential.
+    let prompt: String = redactor
+        .redact_text(&prompt_intent(prompt))
+        .chars()
+        .take(8_000)
+        .collect();
     write_private_sidecar(&path, prompt.as_bytes())
 }
 
@@ -307,9 +316,9 @@ pub fn pending_prompt(state_dir: &Path, session_id: &str) -> Option<String> {
 }
 
 /// Blocks Claude Code submits as a prompt for a shell-mode turn
-/// (`!command`), for the output of a local slash command, and for a
-/// background task's completion notice.
-const HOST_RECORD_TAGS: [&str; 7] = [
+/// (`!command`), for the output of a local slash command, for a background
+/// task's completion notice, and for a subagent's report.
+const HOST_RECORD_TAGS: [&str; 8] = [
     "bash-input",
     "bash-stdout",
     "bash-stderr",
@@ -317,34 +326,122 @@ const HOST_RECORD_TAGS: [&str; 7] = [
     "local-command-stderr",
     "local-command-caveat",
     "task-notification",
+    "agent-message",
 ];
 
+/// One part of a prompt: text the user typed, or a host record block.
+#[derive(Debug, PartialEq, Eq)]
+enum PromptSegment<'a> {
+    Text(&'a str),
+    Block { tag: &'static str, inner: &'a str },
+}
+
+/// The host record tag whose opening tag (`<tag>` or `<tag attr="…">`)
+/// starts `text`.
+fn host_tag_opening(text: &str) -> Option<&'static str> {
+    let after = text.strip_prefix('<')?;
+    HOST_RECORD_TAGS.iter().copied().find(|tag| {
+        after
+            .strip_prefix(tag)
+            .is_some_and(|rest| rest.starts_with('>') || rest.starts_with([' ', '\t']))
+    })
+}
+
+fn next_host_opening(text: &str) -> Option<usize> {
+    text.match_indices('<')
+        .map(|(index, _)| index)
+        .find(|index| host_tag_opening(&text[*index..]).is_some())
+}
+
+/// The host block starting `text`: its tag, inner text and byte length. It
+/// ends at the first closing tag followed by the end of the prompt or another
+/// block, else at the last closing tag, so tags quoted inside command output
+/// do not end it early.
+fn host_block(text: &str) -> Option<(&'static str, &str, usize)> {
+    let tag = host_tag_opening(text)?;
+    let opening_end = text.find('>')? + 1;
+    if text[..opening_end].contains('\n') {
+        return None;
+    }
+    let close = format!("</{tag}>");
+    let body = &text[opening_end..];
+    let ends = body
+        .match_indices(close.as_str())
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let end = ends
+        .iter()
+        .copied()
+        .find(|index| {
+            let after = body[index + close.len()..].trim_start();
+            after.is_empty() || host_tag_opening(after).is_some()
+        })
+        .or_else(|| ends.last().copied())?;
+    Some((tag, &body[..end], opening_end + end + close.len()))
+}
+
+/// Split a prompt into typed text and host record blocks. An unterminated
+/// block and everything after it count as typed text.
+fn prompt_segments(prompt: &str) -> Vec<PromptSegment<'_>> {
+    let mut segments = Vec::new();
+    let mut rest = prompt;
+    loop {
+        let Some(index) = next_host_opening(rest) else {
+            if !rest.trim().is_empty() {
+                segments.push(PromptSegment::Text(rest));
+            }
+            return segments;
+        };
+        if !rest[..index].trim().is_empty() {
+            segments.push(PromptSegment::Text(&rest[..index]));
+        }
+        let Some((tag, inner, length)) = host_block(&rest[index..]) else {
+            segments.push(PromptSegment::Text(&rest[index..]));
+            return segments;
+        };
+        segments.push(PromptSegment::Block { tag, inner });
+        rest = &rest[index + length..];
+    }
+}
+
 /// A prompt made only of host record blocks reports a command the user ran,
-/// its output, or a finished background task. It is not a task request:
-/// retrieval keyed on it fetches whatever the record happens to mention, and
-/// command output can hold secrets. Any other text makes it an ordinary
-/// prompt.
+/// its output, a finished background task or a subagent's report. It is not
+/// a task request: retrieval keyed on it fetches whatever the record happens
+/// to mention, and command output can hold secrets. Any typed text makes it
+/// an ordinary prompt.
 #[must_use]
 pub fn is_host_record(prompt: &str) -> bool {
-    let mut rest = prompt.trim_start();
-    if rest.is_empty() {
-        return false;
+    let segments = prompt_segments(prompt);
+    !segments.is_empty()
+        && segments
+            .iter()
+            .all(|segment| matches!(segment, PromptSegment::Block { .. }))
+}
+
+/// A prompt as task intent: typed text and the commands the user ran stay;
+/// command output, notices and reports are dropped.
+#[must_use]
+pub fn prompt_intent(prompt: &str) -> String {
+    let segments = prompt_segments(prompt);
+    if !segments
+        .iter()
+        .any(|segment| matches!(segment, PromptSegment::Block { .. }))
+    {
+        return prompt.to_owned();
     }
-    while !rest.is_empty() {
-        let Some(tag) = HOST_RECORD_TAGS.iter().find(|tag| {
-            rest.strip_prefix('<')
-                .and_then(|after| after.strip_prefix(**tag))
-                .is_some_and(|after| after.starts_with('>'))
-        }) else {
-            return false;
-        };
-        let close = format!("</{tag}>");
-        let Some(end) = rest.find(&close) else {
-            return false;
-        };
-        rest = rest[end + close.len()..].trim_start();
-    }
-    true
+    segments
+        .iter()
+        .filter_map(|segment| match segment {
+            PromptSegment::Text(text) => Some(text.trim().to_owned()),
+            PromptSegment::Block {
+                tag: "bash-input",
+                inner,
+            } => Some(format!("$ {}", inner.trim())),
+            PromptSegment::Block { .. } => None,
+        })
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Read shell text from a tool input: `command` (Claude Code, Cursor, and
@@ -537,6 +634,21 @@ pub fn clear_claims(state_dir: &Path, session_id: &str) {
     }
 }
 
+/// The claim for briefing a restarted conversation once. The user- and
+/// project-level hooks handling one compaction see the same transcript, so
+/// its length names the event; without a readable transcript the minute does.
+#[must_use]
+pub fn restart_claim(source: &str, payload: &serde_json::Value, now_ms: i64) -> String {
+    payload
+        .get("transcript_path")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|path| std::fs::metadata(path).ok())
+        .map_or_else(
+            || format!("brief-{source}-m{}", now_ms / 60_000),
+            |metadata| format!("brief-{source}-t{}", metadata.len()),
+        )
+}
+
 /// `compact` or `clear` when a session start follows Claude Code compacting
 /// or clearing the conversation, which drops everything hooks delivered.
 #[must_use]
@@ -553,7 +665,35 @@ pub fn conversation_restart(payload: &serde_json::Value) -> Option<&'static str>
 /// identical pack, and file briefs repeat. Subagent threads keep theirs,
 /// because compaction leaves their conversations alone.
 pub fn forget_deliveries(state_dir: &Path, session_id: &str) {
-    for (scope, _) in project_sessions(state_dir, session_id) {
+    // Every main-conversation scope of the session, with or without an
+    // episode yet: a prompt can deliver context before the first tool call.
+    let prefix = format!(
+        "{}-",
+        &crate::experience::sha256(session_id.as_bytes())[..24]
+    );
+    let mut scopes = project_sessions(state_dir, session_id)
+        .into_iter()
+        .map(|(scope, _)| scope)
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Ok(entries) = std::fs::read_dir(state_dir.join("hook-sessions")) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(stem) = name
+                .strip_suffix(".context-delivery")
+                .or_else(|| name.strip_suffix(".files"))
+            else {
+                continue;
+            };
+            // Thread scopes add a suffix to the project id and are skipped.
+            if stem
+                .strip_prefix(&prefix)
+                .is_some_and(|project| ProjectId::parse(project).is_ok())
+            {
+                scopes.insert(stem.to_owned());
+            }
+        }
+    }
+    for scope in scopes {
         if let Some(mut delivery) = context_delivery(state_dir, &scope) {
             delivery.delivery_digest = None;
             if let Ok(bytes) = serde_json::to_vec(&delivery) {
@@ -4141,6 +4281,9 @@ mod tests {
             "  <bash-input>ls</bash-input>\n<bash-stdout>a\nb</bash-stdout>\n",
             "<local-command-caveat>Caveat</local-command-caveat>\n<local-command-stdout>Total cost: $1</local-command-stdout>",
             "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command \"Run the full test suite\" completed (exit code 0)</summary>\n</task-notification>",
+            "<agent-message from=\"a300a92a\">\n[Subagent hand-back] Review report\n</agent-message>",
+            // Output that quotes a closing tag, such as `!git diff` of tests.
+            "<bash-input>git diff</bash-input><bash-stdout>+ \"<bash-stdout>x</bash-stdout>\"\n</bash-stdout><bash-stderr></bash-stderr>",
         ] {
             assert!(is_host_record(record), "{record}");
         }
@@ -4158,18 +4301,33 @@ mod tests {
 
         let temp = tempfile::TempDir::new().expect("temp");
         let redactor = crate::security::Redactor::new(&[]).expect("redactor");
-        save_pending_prompt(
-            temp.path(),
-            "older-build",
-            "<bash-input>claude auth login</bash-input><bash-stdout>Login successful.</bash-stdout>",
-            &redactor,
+        let record = "<bash-input>claude auth login</bash-input><bash-stdout>Login successful.</bash-stdout>";
+        // Never saved now; a record an earlier build saved is ignored.
+        save_pending_prompt(temp.path(), "older-build", record, &redactor).expect("save");
+        assert_eq!(pending_prompt(temp.path(), "older-build"), None);
+        std::fs::create_dir_all(temp.path().join("hook-sessions")).expect("state");
+        write_private_sidecar(
+            &session_state_path(temp.path(), "older-build").with_extension("pending"),
+            record.as_bytes(),
         )
-        .expect("save");
+        .expect("legacy record");
         assert_eq!(pending_prompt(temp.path(), "older-build"), None);
         save_pending_prompt(temp.path(), "older-build", "Fix the login", &redactor).expect("save");
         assert_eq!(
             pending_prompt(temp.path(), "older-build").as_deref(),
             Some("Fix the login")
+        );
+        // A question about a command keeps the command, not its output.
+        save_pending_prompt(
+            temp.path(),
+            "older-build",
+            "<bash-input>cargo test</bash-input><bash-stdout>db_pass=hunter2 FAILED</bash-stdout>\nwhy did this fail?",
+            &redactor,
+        )
+        .expect("save");
+        assert_eq!(
+            pending_prompt(temp.path(), "older-build").as_deref(),
+            Some("$ cargo test\nwhy did this fail?")
         );
     }
 
