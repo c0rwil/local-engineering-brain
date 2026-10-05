@@ -51,6 +51,100 @@ const POLICY_VERSION: &str = "evidence-judge-v2";
 const MAX_RESPONSE_BYTES: usize = 65_536;
 const CONFLICTS_AWAIT_REVIEW: &str =
     "Conflicting memories are quarantined until a person reviews this proposal";
+/// The gate when no attached evidence is readable and independently verified.
+pub const NO_VERIFIED_EVIDENCE: &str =
+    "No readable, independently verified evidence from the successful source task";
+/// The gate when eligible evidence ran at a revision whose touched files are
+/// not known to be unchanged.
+pub const EVIDENCE_REVISION_DIFFERS: &str =
+    "Evidence revision differs from the live checkout; verify current behavior again";
+
+/// Deterministic gates that only new verification work can clear. Attached
+/// evidence never changes by itself, so these gates hold for as long as the
+/// proposal stays as it is.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateClass {
+    /// No readable, independently verified evidence.
+    NoVerifiedEvidence,
+    /// A touched file without an index anchor has no hook-recorded digest, or
+    /// changed after the verification that recorded one.
+    UnanchoredFiles,
+    /// The task's or the evidence's revision differs from the live checkout,
+    /// and a touched file's content at that revision differs from its live
+    /// content.
+    RevisionChanged,
+}
+
+impl GateClass {
+    pub const ALL: [Self; 3] = [
+        Self::NoVerifiedEvidence,
+        Self::UnanchoredFiles,
+        Self::RevisionChanged,
+    ];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NoVerifiedEvidence => "no_verified_evidence",
+            Self::UnanchoredFiles => "unanchored_files",
+            Self::RevisionChanged => "revision_changed",
+        }
+    }
+
+    /// Parse a class name, with `_` or `-` between words.
+    /// # Errors
+    /// Names the accepted classes for an unknown one.
+    pub fn parse(value: &str) -> Result<Self> {
+        let value = value.trim().replace('-', "_");
+        Self::ALL
+            .into_iter()
+            .find(|class| class.as_str() == value)
+            .ok_or_else(|| {
+                invalid(&format!(
+                    "unknown gate class `{value}`; use no_verified_evidence, unanchored_files or revision_changed"
+                ))
+            })
+    }
+
+    /// The class of a judge gate reason that only new work can clear.
+    /// `revision_changed` says whether a revision gate is backed by a touched
+    /// file whose content differs at that revision; without it a revision
+    /// gate is not classified.
+    #[must_use]
+    pub fn of(reason: &str, revision_changed: bool) -> Option<Self> {
+        match reason {
+            NO_VERIFIED_EVIDENCE => Some(Self::NoVerifiedEvidence),
+            sources::UNANCHORED_UNOBSERVED | sources::UNANCHORED_CHANGED => {
+                Some(Self::UnanchoredFiles)
+            }
+            sources::TASK_REVISION_DIFFERS | EVIDENCE_REVISION_DIFFERS if revision_changed => {
+                Some(Self::RevisionChanged)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for GateClass {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// A gate reason without proposal or evidence text, for aggregate reports:
+/// an injection hold quotes the flagged text and a Git HEAD failure carries
+/// an error message, so both become their fixed start.
+#[must_use]
+pub fn gate_label(reason: &str) -> &str {
+    if reason.starts_with(crate::security::HOLD_LABEL) {
+        return crate::security::HOLD_LABEL;
+    }
+    reason
+        .split_once(": ")
+        .filter(|(start, _)| start.starts_with("Cannot read live Git HEAD"))
+        .map_or(reason, |(start, _)| start)
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -170,6 +264,10 @@ pub struct JudgePacket {
     pub digest: String,
     pub attempt: u32,
     pub blocked_reason: Option<String>,
+    /// The gate is a revision difference, and a touched file's content at
+    /// that revision is known to differ from its live content.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub revision_changed: bool,
 }
 
 /// A hypothetical passing re-verification, for [`JudgeStore::reverification_gate`].
@@ -192,6 +290,12 @@ pub struct ReverificationGate {
     /// With that run attached: why the judge would still defer. `None` with
     /// `previewed` means it would ask the model.
     pub if_passing: Option<String>,
+    /// The class of the current gate when only new work can clear it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_class: Option<GateClass>,
+    /// The class of the gate with the passing run attached, likewise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub if_passing_class: Option<GateClass>,
 }
 
 /// Files a source task touched, relative to the repository root.
@@ -359,6 +463,7 @@ impl JudgeStore {
         let experience =
             ExperienceStore::with_redactor(self.database.clone(), self.redactor.clone());
         let task = experience.get_task(&review.task_id)?;
+        let final_commit = task.as_ref().and_then(|task| task.final_commit.clone());
         let mut blocked_reason = None;
         if !task
             .as_ref()
@@ -399,6 +504,8 @@ impl JudgeStore {
         let mut source_records = Vec::new();
         // Set when otherwise eligible evidence did not observe an unindexed file.
         let mut unanchored_shortfall: Option<&str> = None;
+        // Revisions of eligible evidence that set the revision gate.
+        let mut gating_revisions: Vec<String> = Vec::new();
         // Existing proposals are limited to 32 evidence IDs. Half of the prompt
         // budget is reserved for the rule, task, relationships and JSON framing.
         let excerpt_budget = config.max_input_bytes / 2 / review.evidence_ids.len().max(1);
@@ -429,25 +536,26 @@ impl JudgeStore {
                             unanchored_shortfall = Some(reason);
                         }
                     }
-                    if is_eligible
-                        && record
-                            .commit_hash
-                            .as_deref()
-                            .zip(source_anchors["live"]["head"].as_str())
-                            .is_some_and(|(observed, current)| {
-                                !sources::same_revision(observed, current)
-                                    && !sources.revision_immaterial(observed)
-                            })
-                    {
+                    let gating_revision = record
+                        .commit_hash
+                        .as_deref()
+                        .zip(source_anchors["live"]["head"].as_str())
+                        .filter(|(observed, current)| {
+                            !sources::same_revision(observed, current)
+                                && !sources.revision_immaterial(observed)
+                        })
+                        .map(|(observed, _)| observed.to_owned());
+                    if let (true, Some(observed)) = (is_eligible, gating_revision) {
                         // A timed-out comparison leaves the difference unknown.
                         blocked_reason = Some(
                             if sources.git_timed_out {
                                 sources::GIT_TIMEOUT
                             } else {
-                                "Evidence revision differs from the live checkout; verify current behavior again"
+                                EVIDENCE_REVISION_DIFFERS
                             }
                             .to_owned(),
                         );
+                        gating_revisions.push(observed);
                     }
                     source_records.push(json!({"record": record, "eligible": is_eligible,
                         "redacted_digest": crate::experience::sha256(redacted.as_bytes())}));
@@ -494,9 +602,7 @@ impl JudgeStore {
         } else {
             blocked_reason = Some(
                 unanchored_shortfall
-                    .unwrap_or(
-                        "No readable, independently verified evidence from the successful source task",
-                    )
+                    .unwrap_or(NO_VERIFIED_EVIDENCE)
                     .to_owned(),
             );
         }
@@ -566,6 +672,16 @@ impl JudgeStore {
             digest(&json!({"packet": packet_digest,
                 "screen": crate::security::SCREEN_VERSION, "findings": screened}))?
         };
+        // Whether the revision gate that holds is backed by a real change.
+        let revision_changed = match blocked_reason.as_deref() {
+            Some(sources::TASK_REVISION_DIFFERS) => final_commit
+                .as_deref()
+                .is_some_and(|commit| sources.revision_changed(commit)),
+            Some(EVIDENCE_REVISION_DIFFERS) => gating_revisions
+                .iter()
+                .any(|revision| sources.revision_changed(revision)),
+            _ => false,
+        };
         Ok(JudgePacket {
             review: safe_review,
             task: task_value,
@@ -575,6 +691,7 @@ impl JudgeStore {
             digest: packet_digest,
             attempt: 1,
             blocked_reason,
+            revision_changed,
         })
     }
 
@@ -785,7 +902,15 @@ impl JudgeStore {
         else {
             return Ok(None);
         };
-        let current = self.prepare(config, review.clone())?.blocked_reason;
+        let class = |packet: &JudgePacket| {
+            packet
+                .blocked_reason
+                .as_deref()
+                .and_then(|reason| GateClass::of(reason, packet.revision_changed))
+        };
+        let now = self.prepare(config, review.clone())?;
+        let current_class = class(&now);
+        let current = now.blocked_reason;
         let if_passing = passing
             .map(|run| {
                 let record = crate::experience::EvidenceRecord {
@@ -806,13 +931,14 @@ impl JudgeStore {
                     observed_at_ms: now_ms(),
                 };
                 self.prepare_with(config, review, Some(record))
-                    .map(|packet| packet.blocked_reason)
             })
             .transpose()?;
         Ok(Some(ReverificationGate {
             current,
             previewed: passing.is_some(),
-            if_passing: if_passing.flatten(),
+            if_passing_class: if_passing.as_ref().and_then(class),
+            if_passing: if_passing.and_then(|packet| packet.blocked_reason),
+            current_class,
         }))
     }
 

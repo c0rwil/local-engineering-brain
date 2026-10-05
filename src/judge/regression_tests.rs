@@ -1286,15 +1286,27 @@ fn changed_files_and_unknown_revisions_keep_the_revision_gate() {
     lab.commit("src/auth.rs", changed, "change the touched file");
     lab.index(&lab.project, "src/auth.rs", changed, "scan-a", 0);
     assert!(reason(&changed_review).contains("revision differs"));
+    let packet = lab.packet(&changed_review);
     assert!(
-        lab.packet(&changed_review).source_anchors["live"]
+        packet.source_anchors["live"]
             .get("touched_files_unchanged_since")
             .is_none()
+    );
+    // Only a known content change classifies the gate as one new work clears.
+    assert!(packet.revision_changed, "the touched file's bytes differ");
+    assert_eq!(
+        super::GateClass::of(&reason(&changed_review), packet.revision_changed),
+        Some(super::GateClass::RevisionChanged)
     );
     // A revision the repository does not contain.
     let unknown = "0123456789abcdef0123456789abcdef01234567";
     let missing = lab.complete(vec!["src/auth.rs".to_owned()], Some(unknown), true, CLAIM);
     assert!(reason(&missing).contains("revision differs"));
+    assert!(
+        !lab.packet(&missing).revision_changed,
+        "unknown, not changed"
+    );
+    assert_eq!(super::GateClass::of(&reason(&missing), false), None);
     // Fewer than seven hexadecimal digits is never passed to Git.
     let current = git(&lab.root, &["rev-parse", "HEAD"]);
     lab.commit("README.md", b"notes\n", "unrelated");
@@ -1313,9 +1325,63 @@ fn changed_files_and_unknown_revisions_keep_the_revision_gate() {
         CLAIM,
     );
     assert_eq!(lab.packet(&seven).blocked_reason, None);
-    // Without touched files nothing shows that the difference is immaterial.
+    // Without touched files nothing shows that the difference is immaterial,
+    // and nothing shows a change either.
     let untouched = lab.complete(Vec::new(), Some(&current), true, CLAIM);
     assert!(reason(&untouched).contains("revision differs"));
+    assert!(!lab.packet(&untouched).revision_changed);
+}
+
+/// Expired reviews leave the judge's queue with their audit rows; reopening
+/// returns them to it.
+#[test]
+fn the_judge_skips_expired_reviews_until_they_are_reopened() {
+    let lab = Lab::new(false);
+    let review = lab.complete(Vec::new(), None, false, CLAIM);
+    let products = ProductStore::new(lab.database.clone(), Redactor::default());
+    let queued = |lab: &Lab| {
+        lab.pending()
+            .iter()
+            .any(|packet| packet.review.id == review)
+    };
+    assert!(queued(&lab));
+    let gate = lab.packet(&review);
+    assert_eq!(
+        gate.blocked_reason.as_deref(),
+        Some(super::NO_VERIFIED_EVIDENCE)
+    );
+    let decided = products
+        .expire_reviews(
+            &[crate::product::lessons::PlannedExpiry {
+                review_id: review.clone(),
+                updated_at_ms: products
+                    .review_by_id(&review)
+                    .expect("lookup")
+                    .expect("review")
+                    .updated_at_ms,
+                gate_class: super::GateClass::NoVerifiedEvidence,
+                gate_reason: super::NO_VERIFIED_EVIDENCE.to_owned(),
+            }],
+            0,
+        )
+        .expect("expire");
+    assert_eq!(decided, std::slice::from_ref(&review));
+    assert_eq!(lab.review_status(&review), "expired");
+    assert!(!queued(&lab), "the judge skips an expired review");
+    assert!(
+        lab.store
+            .reverification_gate(&lab.config, &review, None)
+            .expect("gate")
+            .is_none(),
+        "re-verification plans skip it too"
+    );
+    let reopened = products.reopen(&review).expect("reopen");
+    assert_eq!(reopened.status, "pending");
+    assert!(queued(&lab));
+    assert!(
+        products.reopen(&review).is_err(),
+        "only an expired review reopens"
+    );
 }
 
 /// A Git stand-in for `Lab::store`: commands naming `hang` record their
@@ -1354,9 +1420,11 @@ fn prepare_with_slow_git(
     hang: &str,
 ) -> (Option<String>, std::time::Duration, bool) {
     let script = slow_git(lab, hang);
+    // Long enough for the commands before the hang to finish through the
+    // shim on a loaded machine; the hang itself sleeps 30 seconds.
     lab.store.git = sources::GitRunner {
         program: Some(script.clone()),
-        budget: std::time::Duration::from_millis(400),
+        budget: std::time::Duration::from_secs(3),
     };
     let started = std::time::Instant::now();
     let reason = lab.packet(review).blocked_reason;

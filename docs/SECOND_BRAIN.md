@@ -323,12 +323,35 @@ proposal's own source task, at most 32 evidence IDs per proposal, and starts a
 judge pass when the judge is enabled. The scheduled `evidence_reverify` job is
 unrelated: it runs no commands.
 
+### Expired reviews
+
+Three deterministic gates never clear while a proposal stays as it is:
+`no_verified_evidence`, `unanchored_files` (an unindexed touched file without a
+matching hook digest) and `revision_changed` (a recorded revision at which a
+touched file has different content). `engram review expire` (see the
+[user guide](USER_GUIDE.md#expire-reviews-that-only-new-work-can-unblock))
+closes pending reviews that one of them holds, that have not changed for a
+threshold (14 days by default), and that no runnable re-verification could
+clear. It reads the judge's gate and the re-verification plan, and it is never
+automatic. `POST /api/v1/reviews/expire` plans like the re-verification plan
+endpoint and, when the request applies, expires through the scheduler. A
+review that changed after the plan stays pending.
+
+`expired` is a status of its own, not a rejection (schema 23). The judge's
+queue and re-verification plans read only pending reviews, so they skip it.
+Its judgment audit rows stay. `lesson_review_actions` records each expiry with
+its gate class, reason and threshold, and each reopening. Reopening
+(`engram review reopen`, or the inbox's **Expired** view) returns the review
+to pending, and the judge checks it again.
+
 A recorded task or evidence revision older than the live HEAD is immaterial when
 every touched file has the same bytes at that revision, in the live checkout and in
 the index. The judge compares them with one bounded `git cat-file --batch` read and
 passes only hexadecimal revisions of at least seven digits to Git. A missing or
 ambiguous revision, a changed file, an unreadable file or a task without touched
-files keeps the deferral.
+files keeps the deferral. A file with different bytes at the revision marks the
+revision as changed, which the expiry reads; a missing or ambiguous object leaves
+it unknown.
 
 These source checks run Git locally only: `GIT_NO_LAZY_FETCH=1` stops a partial
 clone from fetching missing objects from its remote (Git 2.44 and later),

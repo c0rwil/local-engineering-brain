@@ -406,11 +406,12 @@ pub fn summarize(findings: &[InjectionFinding]) -> String {
 /// Reason recorded when screening holds a lesson proposal for human review.
 #[must_use]
 pub fn hold_reason(findings: &[InjectionFinding]) -> String {
-    format!(
-        "Possible prompt injection: held for human review and not sent to the judge model. {}",
-        summarize(findings)
-    )
+    format!("{HOLD_LABEL} {}", summarize(findings))
 }
+
+/// The fixed start of [`hold_reason`]; the rest quotes the flagged text.
+pub const HOLD_LABEL: &str =
+    "Possible prompt injection: held for human review and not sent to the judge model.";
 
 /// Placeholder for an agent-host notice removed from a task prompt.
 pub const HOST_NOTICE_PLACEHOLDER: &str = "[agent host notice omitted]";

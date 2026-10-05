@@ -209,6 +209,21 @@ not yet stable, and the schema version is 7.
   reviews, and start a judge pass. The judge reads those digests where it
   reads hook digests but never applies the time rule to them. Only plain
   verification commands run; see `docs/SECURITY.md` for the trust model.
+- Operator-run review expiry: `engram review expire [--project P]
+  [--older-than 14d] [--reason-class CLASS] [--dry-run | --yes] [--json]
+  [--verbose]` and `engram review reopen REVIEW_ID`. A pending review expires
+  when it has not changed for the threshold, a gate that only new
+  verification work clears holds it (`no_verified_evidence`,
+  `unanchored_files`, or `revision_changed` with a known content change at
+  the recorded revision), and no runnable re-verification could clear that
+  gate. The decision reads the judge's gate and the re-verification plan.
+  The report counts reviews by gate class and project with sample ids, and
+  shows claim text only with `--verbose`. `expired` is a new terminal status
+  (schema 23), not a rejection: audit rows stay, the judge and the pending
+  inbox skip it, the Knowledge inbox lists it under **Expired** with a Reopen
+  button, and `product show --reviews --status` filters the inbox by status.
+  The migration rebuilds `lesson_reviews` for the new status and rebuilds
+  `lesson_judgments` with it, so no judgment row is lost.
 
 ### Changed
 

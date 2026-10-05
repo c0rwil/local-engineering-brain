@@ -119,6 +119,7 @@ const API_JUDGE_STATUS: &str = "/api/v1/judge";
 const API_JUDGE_RUN: &str = "/api/v1/judge/run";
 const API_REVERIFY_PLAN: &str = "/api/v1/reviews/reverify/plan";
 const API_REVERIFY_ATTACH: &str = "/api/v1/reviews/reverify/attach";
+const API_REVIEW_EXPIRE: &str = "/api/v1/reviews/expire";
 const API_PROJECT_MERGE: &str = "/api/v1/projects/merge";
 const API_PROJECT_MERGE_FINALIZE: &str = "/api/v1/projects/merge/finalize";
 
@@ -1130,6 +1131,18 @@ impl DaemonClient {
         self.request(hyper::Method::POST, API_REVERIFY_ATTACH, Some(request))
             .await
     }
+
+    /// Find, and with `apply` expire, pending reviews that only new
+    /// verification work can unblock.
+    /// # Errors
+    /// Returns an invalid request, storage or transport errors.
+    pub async fn review_expire(
+        &self,
+        request: &crate::expiry::ExpiryRequest,
+    ) -> Result<crate::expiry::ExpiryReport> {
+        self.request(hyper::Method::POST, API_REVIEW_EXPIRE, Some(request))
+            .await
+    }
     #[must_use]
     pub fn new(socket_path: impl Into<PathBuf>, timeout: Duration) -> Self {
         Self {
@@ -2107,6 +2120,7 @@ fn requires_terminal_ack(method: &hyper::Method, path: &str) -> bool {
         || path == API_PROJECT_MERGE_FINALIZE
         || path == API_REVERIFY_PLAN
         || path == API_REVERIFY_ATTACH
+        || path == API_REVIEW_EXPIRE
 }
 
 /// Longest a graceful shutdown waits for in-flight requests, the background
@@ -2263,6 +2277,7 @@ where
         .route(API_JUDGE_RUN, post(judge_run))
         .route(API_REVERIFY_PLAN, post(reverify_plan))
         .route(API_REVERIFY_ATTACH, post(reverify_attach))
+        .route(API_REVIEW_EXPIRE, post(review_expire))
         .route("/api/v1/product/lessons", post(lesson_mutate))
         .route("/api/v1/product/query", post(product_query))
         .route("/api/v1/product/mutate", post(product_mutate))
@@ -5774,6 +5789,38 @@ async fn reverify_plan(
         })
         .await?,
     ))
+}
+
+/// Plan an expiry like a re-verification plan (it reads each review's live
+/// sources), then expire through the scheduler when the request applies.
+async fn review_expire(
+    State(state): State<DaemonState>,
+    Json(request): Json<crate::expiry::ExpiryRequest>,
+) -> std::result::Result<Json<crate::expiry::ExpiryReport>, ApiError> {
+    let database = state.database.clone();
+    let redactor = state.redactor.clone();
+    let judge = state.config.judge.clone();
+    let deadline =
+        Duration::from_millis(state.config.daemon.request_timeout_ms).max(REVERIFY_PLAN_DEADLINE);
+    let planned = request.clone();
+    let (mut report, expiries) = run_blocking_with_timeout(&state, deadline, move || {
+        crate::expiry::plan(&database, &redactor, &judge, &planned)
+    })
+    .await?;
+    if request.apply {
+        let store =
+            crate::product::ProductStore::new(state.database.clone(), state.redactor.clone());
+        let older_than_ms = request.older_than_ms;
+        let handle = state
+            .scheduler
+            .submit(MutationPriority::Interactive, move || {
+                store.expire_reviews(&expiries, older_than_ms)
+            })
+            .map_err(|error| ApiError::from_core(&error))?;
+        report.expired = wait_for_mutation(&state, handle).await?.len();
+        report.applied = true;
+    }
+    Ok(Json(report))
 }
 
 async fn reverify_attach(
