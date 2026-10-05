@@ -1,0 +1,4152 @@
+{
+  "schema_version": 1,
+  "record_classification_revision": "agent-completion-v2",
+  "generated_at": "2026-10-05T04:47:41.704384+00:00",
+  "progress": {
+    "status": "complete",
+    "planned_runs": 30,
+    "started_trials": 30,
+    "coding_runs_started": 30,
+    "completed_records": 30,
+    "in_progress_trials": 0,
+    "infrastructure_outcomes": 0
+  },
+  "manifest": {
+    "schema_version": 1,
+    "condition": "source-only native hooks; no MCP; no learned memories",
+    "model": "claude-opus-4-8[1m]",
+    "effort": "high",
+    "claude_version": "2.1.212 (Claude Code)",
+    "engram_sha256": "127a8f6520da4fb471c0fdf3ec2af98cc67b0514e853544997d936b803c023f9",
+    "daemon_sha256": "cac553904322a1c817e44c1e8c80d4c391dd87776c461410243912010f21632f",
+    "runner_sha256": "f159832c4de90b3684af5d85a192b6368c300a8a7d32702e0a80bbeb5c5f8a83",
+    "metrics_sha256": "5a0599c324e0dfd92c38885b6d3cba089adacc798bbd328ccca261f1ff9520b3",
+    "repetitions": 3,
+    "agent_limit_seconds": 1200,
+    "grading_limit_seconds": 1800,
+    "cost_cap_usd_estimate": 8,
+    "platform_dependencies": "Rust dependencies built offline and locked from each base Cargo.lock before timing, identical in both arms; agents-repository tasks have no installed Python dependencies",
+    "private_dependencies": "Rust registry-only cache; no user Git config; package installation disabled",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25) (Homebrew)",
+    "python": "3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]",
+    "node": "v26.5.1",
+    "pnpm": "11.3.0",
+    "known_scope_limits": [
+      "Held-out historical tasks for the line-ranged pointer and related-use changes. They count as held out only after the operator confirms that none informed Engram development.",
+      "Fixtures are rebuilt from the operator's repositories at the catalog base commits, and the graders are recalibrated against them. Compare Off/Brain within this collection only.",
+      "Collected from a suite still marked draft_requires_operator_review (--allow-draft-suite), before the operator review its README requires.",
+      "Provider prompt caching remains enabled and is not reset. Report all token categories; estimated USD is not subscription cash billing.",
+      "Single agent, six core tools, source-only hooks. Does not measure learned memories, automatic judging, or MCP tools.",
+      "Three repetitions per task are diagnostic, not statistically decisive."
+    ],
+    "suite": "real-repo-heldout-v1",
+    "controls_sha256": "52b50378f20e60546943d2989b7e22733c9652c6171e9617bc34b66b6ab850a3",
+    "runner_library_sha256": "abdb20bec4588c413d81702310ccf6bf13a78736622fc63e913929b7365ea99c",
+    "claude_sha256": "09ecba2ab2df9b6ee5b0695e26f65dea60fb3b6af3d3542ee09f466838d1e574",
+    "runtime_preflight_sha256": "6ecdceb33303ecc1c3ff198da8b040911be4f7e0d319ed6513098714a9ef361a",
+    "allow_draft_suite": true,
+    "suite_status": "draft_requires_operator_review",
+    "fixture_source": "operator repositories at the catalog base commits (read-only git archive)",
+    "grader_preflight_sha256": "a3363f047fa9e8f78e0426628c5b1fba9a9b97fb3e877c6e40c89a392fcf5773"
+  },
+  "fixtures": [
+    {
+      "task_id": "h01_effect_check_enforce_only",
+      "base_commit": "f566a1c24ddfc600fb21c0304680068158d50f35",
+      "fixture_head": "b8444773e75bc1e10e522ce9f7932ff66a802973",
+      "snapshot_sha256": "d120fc797acbeb897653ea5f1c8355b91c6a8aa1f85c9bb79a718acc7eb945e4",
+      "index_seconds": 3.174,
+      "dependency_seconds": 94.853,
+      "setup_seconds": 121.092,
+      "source_counts": {
+        "nodes": 25226,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "Cargo.lock": "fa09995479162dc5de95e8d23cb52f8ec8ed59b54a8b3531412f629d582fd826"
+      },
+      "export_seconds": 0.373,
+      "dependency_reuse": null,
+      "engram_build_id": "71df87f291e8f36637d9c0955ae129ee474948553544e72c5bd25bfce48df7fc",
+      "snapshot_schema_version": 21,
+      "snapshot_refreshes": 3
+    },
+    {
+      "task_id": "h02_failure_feedback_origin",
+      "base_commit": "2b690115d49f9e7cf0610ef601c92baf6323edba",
+      "fixture_head": "ade82126e911003a5056ab23f8500510c1a9f438",
+      "snapshot_sha256": "8cd9be04389adfb55536ce17502ef3a80104b60e1558819da06ce432e1823630",
+      "index_seconds": 2.806,
+      "dependency_seconds": 77.113,
+      "setup_seconds": 106.087,
+      "source_counts": {
+        "nodes": 22250,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "Cargo.lock": "ac5f257dd18bb767045b55aac2447f7dac5da759311887d9f21e7f315a744a3a"
+      },
+      "export_seconds": 0.436,
+      "dependency_reuse": null,
+      "engram_build_id": "71df87f291e8f36637d9c0955ae129ee474948553544e72c5bd25bfce48df7fc",
+      "snapshot_schema_version": 21,
+      "snapshot_refreshes": 3
+    },
+    {
+      "task_id": "h03_schemeless_navigation",
+      "base_commit": "9adccea20038f89381f0c49efa25909dc4d76f57",
+      "fixture_head": "7453e98da746cc42a16559ddce07beecc4ad7d04",
+      "snapshot_sha256": "2a67e0ffeb33fa306a41303ab06be1d369c4ae8242f829cdb2ddbbeace02900c",
+      "index_seconds": 4.663,
+      "dependency_seconds": 0,
+      "setup_seconds": 11.239,
+      "source_counts": {
+        "nodes": 41646,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "uv.lock": "9c3944712eac67da48dd90c41053e533825f411dd9061c2142c146c89f8c0f2d"
+      },
+      "export_seconds": 8.526,
+      "dependency_reuse": null,
+      "engram_build_id": "71df87f291e8f36637d9c0955ae129ee474948553544e72c5bd25bfce48df7fc",
+      "snapshot_schema_version": 21,
+      "snapshot_refreshes": 3
+    },
+    {
+      "task_id": "h04_play_base_plan_lookup",
+      "base_commit": "ae4dd1d1dee3d449a30b9f91aee713ef3e012a9f",
+      "fixture_head": "e3f10c53b309f0a5ad810381f5e70080964e2ecd",
+      "snapshot_sha256": "d370e2d5c1cba85bb59f6cb8e43fb2a2ac56f05d49b2c307f109908af1ff11d7",
+      "index_seconds": 5.253,
+      "dependency_seconds": 0,
+      "setup_seconds": 12.264,
+      "source_counts": {
+        "nodes": 45717,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "uv.lock": "9c3944712eac67da48dd90c41053e533825f411dd9061c2142c146c89f8c0f2d"
+      },
+      "export_seconds": 9.109,
+      "dependency_reuse": null,
+      "engram_build_id": "71df87f291e8f36637d9c0955ae129ee474948553544e72c5bd25bfce48df7fc",
+      "snapshot_schema_version": 21,
+      "snapshot_refreshes": 3
+    },
+    {
+      "task_id": "h05_multibyte_truncation",
+      "base_commit": "f566a1c24ddfc600fb21c0304680068158d50f35",
+      "fixture_head": "96f5185eee42398dc1e5cf17b6d6d125584594bb",
+      "snapshot_sha256": "a588eac7440f55a4feecd8125d57f9a9c0ae3a956f9aa8922c6cb29d5914daaf",
+      "index_seconds": 3.179,
+      "dependency_seconds": 8.938,
+      "setup_seconds": 38.331,
+      "source_counts": {
+        "nodes": 25226,
+        "memories": 0,
+        "tasks": 0,
+        "context_runs": 0
+      },
+      "removed_path_count": 0,
+      "lockfile_sha256": {
+        "Cargo.lock": "fa09995479162dc5de95e8d23cb52f8ec8ed59b54a8b3531412f629d582fd826"
+      },
+      "export_seconds": 0.386,
+      "dependency_reuse": "h01_effect_check_enforce_only",
+      "engram_build_id": "71df87f291e8f36637d9c0955ae129ee474948553544e72c5bd25bfce48df7fc",
+      "snapshot_schema_version": 21,
+      "snapshot_refreshes": 3
+    }
+  ],
+  "records": [
+    {
+      "task_id": "h01_effect_check_enforce_only",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 98,
+        "output_tokens": 21023,
+        "cache_creation_input_tokens": 74611,
+        "cache_read_input_tokens": 2153157,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 2227866,
+        "total_tokens": 2248889,
+        "tool_calls": 48,
+        "cost_usd_estimate": 2.3487534999999995,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 49,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 5,
+          "Edit": 8,
+          "Grep": 12,
+          "Read": 23
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 98,
+            "outputTokens": 21023,
+            "cacheReadInputTokens": 2153157,
+            "cacheCreationInputTokens": 74611,
+            "webSearchRequests": 0,
+            "costUSD": 2.3487534999999995,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 359.082,
+      "setup_seconds": 10.236,
+      "grading_seconds": 14.722,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T02:10:08.759368+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "69753054be40d7e8bd2205d086a6cf6a97b4430399c261d625ec9545651aacdf",
+      "composed_prompt_sha256": "349d3087caeec1e12230f7e1171aaf3fe0483105845ab0dad64bee8c58ca290b",
+      "snapshot_sha256": "d120fc797acbeb897653ea5f1c8355b91c6a8aa1f85c9bb79a718acc7eb945e4",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h01_effect_check_enforce_only/grade.py": "32a2d63e0c90d779bb13247405894205ba462c175effc28bec0b1de5a5c0470c",
+        "grading/h01_effect_check_enforce_only/hidden_tests.rs": "9a5b6ee21d6be626f52e131ebfe4d6958b4b40a8f3a1167920c410c8c19c39ea",
+        "grading/h01_effect_check_enforce_only/preflight.json": "30522d8c9982e4a65b54a00c9953641c51e62d10f935b96966bd618b4465eec0",
+        "grading/h01_effect_check_enforce_only/preflight.py": "3c2d1f64eb1f27417dbd308f38b2914297c52fb0cdd1d3066a2cff7cbbbbfd92"
+      },
+      "context": {
+        "read_calls": 23,
+        "ranged_read_calls": 23,
+        "read_results": 23,
+        "read_error_results": 0,
+        "read_result_bytes": 90274,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h01_effect_check_enforce_only",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 50,
+        "output_tokens": 15462,
+        "cache_creation_input_tokens": 95714,
+        "cache_read_input_tokens": 1960413,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 2056177,
+        "total_tokens": 2071639,
+        "tool_calls": 25,
+        "cost_usd_estimate": 2.3241465,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 26,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 4,
+          "Edit": 4,
+          "Grep": 5,
+          "Read": 12
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 50,
+            "outputTokens": 15462,
+            "cacheReadInputTokens": 1960413,
+            "cacheCreationInputTokens": 95714,
+            "webSearchRequests": 0,
+            "costUSD": 2.3241465,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 3,
+        "compiled_runs": 17,
+        "compiled_estimated_tokens": 5698,
+        "delivered_compiled_estimated_tokens": 1032,
+        "source_items": 204
+      },
+      "agent_wall_seconds": 444.192,
+      "setup_seconds": 10.105,
+      "grading_seconds": 14.4,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T02:16:42.276233+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "69753054be40d7e8bd2205d086a6cf6a97b4430399c261d625ec9545651aacdf",
+      "composed_prompt_sha256": "349d3087caeec1e12230f7e1171aaf3fe0483105845ab0dad64bee8c58ca290b",
+      "snapshot_sha256": "d120fc797acbeb897653ea5f1c8355b91c6a8aa1f85c9bb79a718acc7eb945e4",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h01_effect_check_enforce_only/grade.py": "32a2d63e0c90d779bb13247405894205ba462c175effc28bec0b1de5a5c0470c",
+        "grading/h01_effect_check_enforce_only/hidden_tests.rs": "9a5b6ee21d6be626f52e131ebfe4d6958b4b40a8f3a1167920c410c8c19c39ea",
+        "grading/h01_effect_check_enforce_only/preflight.json": "30522d8c9982e4a65b54a00c9953641c51e62d10f935b96966bd618b4465eec0",
+        "grading/h01_effect_check_enforce_only/preflight.py": "3c2d1f64eb1f27417dbd308f38b2914297c52fb0cdd1d3066a2cff7cbbbbfd92"
+      },
+      "context": {
+        "read_calls": 12,
+        "ranged_read_calls": 10,
+        "read_results": 12,
+        "read_error_results": 0,
+        "read_result_bytes": 166167,
+        "delivered_contexts": 3,
+        "pointer_lines": 36,
+        "ranged_pointer_lines": 22,
+        "direct_pointer_lines": 36,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h02_failure_feedback_origin",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": true
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": true
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 86,
+        "output_tokens": 19139,
+        "cache_creation_input_tokens": 107423,
+        "cache_read_input_tokens": 3260962,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 3368471,
+        "total_tokens": 3387610,
+        "tool_calls": 45,
+        "cost_usd_estimate": 3.183615999999999,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 46,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 9,
+          "Edit": 12,
+          "Grep": 7,
+          "Read": 17
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 86,
+            "outputTokens": 19139,
+            "cacheReadInputTokens": 3260962,
+            "cacheCreationInputTokens": 107423,
+            "webSearchRequests": 0,
+            "costUSD": 3.183615999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 30,
+        "compiled_estimated_tokens": 12950,
+        "delivered_compiled_estimated_tokens": 866,
+        "source_items": 360
+      },
+      "agent_wall_seconds": 310.752,
+      "setup_seconds": 12.757,
+      "grading_seconds": 23.675,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T02:24:39.904607+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "a7a4066ba5bcb83ed703a4d524de4d84cb17a6fc5f8199e682838bcf93c3ae55",
+      "composed_prompt_sha256": "467bea5b16149daa0047acff52b96790032d9740cf7f6e6a1b51fd53f3001db9",
+      "snapshot_sha256": "8cd9be04389adfb55536ce17502ef3a80104b60e1558819da06ce432e1823630",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h02_failure_feedback_origin/grade.py": "aeae49f51a0e76706a6a2f3de0462a78b1b24be829de1943403f15e4af140541",
+        "grading/h02_failure_feedback_origin/hidden_tests.rs": "206f3d2415af04a57a3a9471014b94e763aac0cb8739f3603db21414cd1ee755",
+        "grading/h02_failure_feedback_origin/preflight.json": "d10f00175a62b875e1830762990d631aa8fef862830ddb84fd025e16c4e8f89d",
+        "grading/h02_failure_feedback_origin/preflight.py": "46e1a9a445c69f5814c68d13af4a6162bfaf03940ca7ee249728e277e9adee3a"
+      },
+      "context": {
+        "read_calls": 17,
+        "ranged_read_calls": 14,
+        "read_results": 17,
+        "read_error_results": 0,
+        "read_result_bytes": 188922,
+        "delivered_contexts": 2,
+        "pointer_lines": 24,
+        "ranged_pointer_lines": 24,
+        "direct_pointer_lines": 24,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h02_failure_feedback_origin",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": true
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": true
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 88,
+        "output_tokens": 20904,
+        "cache_creation_input_tokens": 64489,
+        "cache_read_input_tokens": 1987153,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 2051730,
+        "total_tokens": 2072634,
+        "tool_calls": 45,
+        "cost_usd_estimate": 2.1615064999999998,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 46,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 9,
+          "Edit": 12,
+          "Grep": 10,
+          "Read": 14
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 88,
+            "outputTokens": 20904,
+            "cacheReadInputTokens": 1987153,
+            "cacheCreationInputTokens": 64489,
+            "webSearchRequests": 0,
+            "costUSD": 2.1615064999999998,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 398.168,
+      "setup_seconds": 10.005,
+      "grading_seconds": 16.9,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T02:30:36.568499+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "a7a4066ba5bcb83ed703a4d524de4d84cb17a6fc5f8199e682838bcf93c3ae55",
+      "composed_prompt_sha256": "467bea5b16149daa0047acff52b96790032d9740cf7f6e6a1b51fd53f3001db9",
+      "snapshot_sha256": "8cd9be04389adfb55536ce17502ef3a80104b60e1558819da06ce432e1823630",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h02_failure_feedback_origin/grade.py": "aeae49f51a0e76706a6a2f3de0462a78b1b24be829de1943403f15e4af140541",
+        "grading/h02_failure_feedback_origin/hidden_tests.rs": "206f3d2415af04a57a3a9471014b94e763aac0cb8739f3603db21414cd1ee755",
+        "grading/h02_failure_feedback_origin/preflight.json": "d10f00175a62b875e1830762990d631aa8fef862830ddb84fd025e16c4e8f89d",
+        "grading/h02_failure_feedback_origin/preflight.py": "46e1a9a445c69f5814c68d13af4a6162bfaf03940ca7ee249728e277e9adee3a"
+      },
+      "context": {
+        "read_calls": 14,
+        "ranged_read_calls": 13,
+        "read_results": 14,
+        "read_error_results": 0,
+        "read_result_bytes": 59378,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h03_schemeless_navigation",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": true
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": true
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 96,
+        "output_tokens": 16029,
+        "cache_creation_input_tokens": 34230,
+        "cache_read_input_tokens": 1007792,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 1042118,
+        "total_tokens": 1058147,
+        "tool_calls": 48,
+        "cost_usd_estimate": 1.247401,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 49,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 22,
+          "Edit": 13,
+          "Grep": 2,
+          "Read": 8,
+          "Write": 3
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 96,
+            "outputTokens": 16029,
+            "cacheReadInputTokens": 1007792,
+            "cacheCreationInputTokens": 34230,
+            "webSearchRequests": 0,
+            "costUSD": 1.247401,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 480.96,
+      "setup_seconds": 1.489,
+      "grading_seconds": 0.13,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T02:37:51.164217+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6cdd7350dc7ea40567125062f0574863323c592afffc836f291f98a03826e128",
+      "composed_prompt_sha256": "284291fb8f66d0b27f76f40f045170a93cafc07f600b499e75c0772e1184da3e",
+      "snapshot_sha256": "2a67e0ffeb33fa306a41303ab06be1d369c4ae8242f829cdb2ddbbeace02900c",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h03_schemeless_navigation/grade.py": "2d6d04c64b1b867b00888f97558271a054487b705194b97aafc16ee026312153",
+        "grading/h03_schemeless_navigation/preflight.json": "127ab7e1aecd4d44baccec46a8a5a0f63a3b69856cdaa7354b72b4b9f59338b4",
+        "grading/h03_schemeless_navigation/preflight.py": "a250b2ff13cb46e0171371c20f9e9f02d7a9fa0c29549f03d8f0d2ccd4940941"
+      },
+      "context": {
+        "read_calls": 8,
+        "ranged_read_calls": 7,
+        "read_results": 8,
+        "read_error_results": 0,
+        "read_result_bytes": 6046,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h03_schemeless_navigation",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": true
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": true
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 62,
+        "output_tokens": 17784,
+        "cache_creation_input_tokens": 35175,
+        "cache_read_input_tokens": 927501,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 962738,
+        "total_tokens": 980522,
+        "tool_calls": 46,
+        "cost_usd_estimate": 1.2604105000000003,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 47,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 16,
+          "Edit": 13,
+          "Grep": 2,
+          "Read": 13,
+          "Write": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 62,
+            "outputTokens": 17784,
+            "cacheReadInputTokens": 927501,
+            "cacheCreationInputTokens": 35175,
+            "webSearchRequests": 0,
+            "costUSD": 1.2604105000000003,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 29,
+        "compiled_estimated_tokens": 16675,
+        "delivered_compiled_estimated_tokens": 575,
+        "source_items": 493
+      },
+      "agent_wall_seconds": 242.523,
+      "setup_seconds": 3.022,
+      "grading_seconds": 0.13,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T02:46:02.104648+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6cdd7350dc7ea40567125062f0574863323c592afffc836f291f98a03826e128",
+      "composed_prompt_sha256": "284291fb8f66d0b27f76f40f045170a93cafc07f600b499e75c0772e1184da3e",
+      "snapshot_sha256": "2a67e0ffeb33fa306a41303ab06be1d369c4ae8242f829cdb2ddbbeace02900c",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h03_schemeless_navigation/grade.py": "2d6d04c64b1b867b00888f97558271a054487b705194b97aafc16ee026312153",
+        "grading/h03_schemeless_navigation/preflight.json": "127ab7e1aecd4d44baccec46a8a5a0f63a3b69856cdaa7354b72b4b9f59338b4",
+        "grading/h03_schemeless_navigation/preflight.py": "a250b2ff13cb46e0171371c20f9e9f02d7a9fa0c29549f03d8f0d2ccd4940941"
+      },
+      "context": {
+        "read_calls": 13,
+        "ranged_read_calls": 12,
+        "read_results": 13,
+        "read_error_results": 0,
+        "read_result_bytes": 9861,
+        "delivered_contexts": 1,
+        "pointer_lines": 17,
+        "ranged_pointer_lines": 17,
+        "direct_pointer_lines": 12,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 5,
+        "related_use_items": 5,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h04_play_base_plan_lookup",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": true
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": true
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 38,
+        "output_tokens": 19785,
+        "cache_creation_input_tokens": 50226,
+        "cache_read_input_tokens": 737787,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 788051,
+        "total_tokens": 807836,
+        "tool_calls": 21,
+        "cost_usd_estimate": 1.3659685,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 22,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 10,
+          "Edit": 4,
+          "Read": 7
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 38,
+            "outputTokens": 19785,
+            "cacheReadInputTokens": 737787,
+            "cacheCreationInputTokens": 50226,
+            "webSearchRequests": 0,
+            "costUSD": 1.3659685,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 12,
+        "compiled_estimated_tokens": 8620,
+        "delivered_compiled_estimated_tokens": 1441,
+        "source_items": 204
+      },
+      "agent_wall_seconds": 269.233,
+      "setup_seconds": 3.477,
+      "grading_seconds": 0.083,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T02:50:13.189088+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "373e0427a809038548de7ac2336f8bb78d0224b83e9f974270f6e0e75212b0ad",
+      "composed_prompt_sha256": "c98dab7656b45419adaa7057ae0b05f02de4433e3a0ffb0c8da06350ee115b70",
+      "snapshot_sha256": "d370e2d5c1cba85bb59f6cb8e43fb2a2ac56f05d49b2c307f109908af1ff11d7",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h04_play_base_plan_lookup/grade.py": "48c5f989a51833d13f5f2c1d352d1b2fa3ebbb0b17827355ce98c2c4bef97a41",
+        "grading/h04_play_base_plan_lookup/preflight.json": "3c9c418e73edd692a2c692d3289685cdece74d9091b6b1081b13b16b351d9e18",
+        "grading/h04_play_base_plan_lookup/preflight.py": "7b93e0beffb753f48b75e858bba416f282ff273edff46f869778c10914e67137"
+      },
+      "context": {
+        "read_calls": 7,
+        "ranged_read_calls": 1,
+        "read_results": 7,
+        "read_error_results": 0,
+        "read_result_bytes": 55290,
+        "delivered_contexts": 2,
+        "pointer_lines": 34,
+        "ranged_pointer_lines": 24,
+        "direct_pointer_lines": 24,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 10,
+        "related_use_items": 10,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h04_play_base_plan_lookup",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": true
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": true
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 44,
+        "output_tokens": 20732,
+        "cache_creation_input_tokens": 42126,
+        "cache_read_input_tokens": 649313,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 691483,
+        "total_tokens": 712215,
+        "tool_calls": 22,
+        "cost_usd_estimate": 1.2644364999999997,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 23,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 10,
+          "Edit": 4,
+          "Grep": 3,
+          "Read": 4,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 44,
+            "outputTokens": 20732,
+            "cacheReadInputTokens": 649313,
+            "cacheCreationInputTokens": 42126,
+            "webSearchRequests": 0,
+            "costUSD": 1.2644364999999997,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 256.215,
+      "setup_seconds": 1.386,
+      "grading_seconds": 0.126,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T02:54:51.561829+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "373e0427a809038548de7ac2336f8bb78d0224b83e9f974270f6e0e75212b0ad",
+      "composed_prompt_sha256": "c98dab7656b45419adaa7057ae0b05f02de4433e3a0ffb0c8da06350ee115b70",
+      "snapshot_sha256": "d370e2d5c1cba85bb59f6cb8e43fb2a2ac56f05d49b2c307f109908af1ff11d7",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h04_play_base_plan_lookup/grade.py": "48c5f989a51833d13f5f2c1d352d1b2fa3ebbb0b17827355ce98c2c4bef97a41",
+        "grading/h04_play_base_plan_lookup/preflight.json": "3c9c418e73edd692a2c692d3289685cdece74d9091b6b1081b13b16b351d9e18",
+        "grading/h04_play_base_plan_lookup/preflight.py": "7b93e0beffb753f48b75e858bba416f282ff273edff46f869778c10914e67137"
+      },
+      "context": {
+        "read_calls": 4,
+        "ranged_read_calls": 1,
+        "read_results": 4,
+        "read_error_results": 0,
+        "read_result_bytes": 41156,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h05_multibyte_truncation",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": true
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 58,
+        "output_tokens": 15056,
+        "cache_creation_input_tokens": 29373,
+        "cache_read_input_tokens": 633874,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 663305,
+        "total_tokens": 678361,
+        "tool_calls": 29,
+        "cost_usd_estimate": 0.9873570000000002,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 30,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 8,
+          "Edit": 8,
+          "Grep": 3,
+          "Read": 10
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 58,
+            "outputTokens": 15056,
+            "cacheReadInputTokens": 633874,
+            "cacheCreationInputTokens": 29373,
+            "webSearchRequests": 0,
+            "costUSD": 0.9873570000000002,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 300.295,
+      "setup_seconds": 13.95,
+      "grading_seconds": 12.376,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T02:59:15.536413+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "611a8172954fba7d8eac07bd894cb117e1028c3ac28312e027828391dd488266",
+      "composed_prompt_sha256": "826a5a3ffdf9ead231410b88bc2276ba3632c008da07070e5fb3fab531e738d7",
+      "snapshot_sha256": "a588eac7440f55a4feecd8125d57f9a9c0ae3a956f9aa8922c6cb29d5914daaf",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h05_multibyte_truncation/grade.py": "9ff70c8baf1cd0afe61f76e8725d700478e0e08f2bbc96a9fd1e0481bdee03ab",
+        "grading/h05_multibyte_truncation/hidden_tests.rs": "8550e1cc5eea9c8f4d96fced5e1ed73028d9015b3a8d023c891d8761a477f727",
+        "grading/h05_multibyte_truncation/preflight.json": "b66bb9e022e4c74e37c3cd480662a30a1487365224d0e181093d74cde91d9f0a",
+        "grading/h05_multibyte_truncation/preflight.py": "fdd1fcbbfebda2a4865ff25ee74a33b8f6aeb6b9abd60b9c730420741ca8766f"
+      },
+      "context": {
+        "read_calls": 10,
+        "ranged_read_calls": 10,
+        "read_results": 10,
+        "read_error_results": 0,
+        "read_result_bytes": 21437,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h05_multibyte_truncation",
+      "repetition": 1,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": true
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 18,
+        "output_tokens": 11080,
+        "cache_creation_input_tokens": 23894,
+        "cache_read_input_tokens": 192693,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 216605,
+        "total_tokens": 227685,
+        "tool_calls": 8,
+        "cost_usd_estimate": 0.6123765,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 9,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 3,
+          "Edit": 2,
+          "Read": 3
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 18,
+            "outputTokens": 11080,
+            "cacheReadInputTokens": 192693,
+            "cacheCreationInputTokens": 23894,
+            "webSearchRequests": 0,
+            "costUSD": 0.6123765,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 6,
+        "compiled_estimated_tokens": 2668,
+        "delivered_compiled_estimated_tokens": 885,
+        "source_items": 72
+      },
+      "agent_wall_seconds": 167.029,
+      "setup_seconds": 14.933,
+      "grading_seconds": 6.579,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:04:48.566734+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "611a8172954fba7d8eac07bd894cb117e1028c3ac28312e027828391dd488266",
+      "composed_prompt_sha256": "826a5a3ffdf9ead231410b88bc2276ba3632c008da07070e5fb3fab531e738d7",
+      "snapshot_sha256": "a588eac7440f55a4feecd8125d57f9a9c0ae3a956f9aa8922c6cb29d5914daaf",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h05_multibyte_truncation/grade.py": "9ff70c8baf1cd0afe61f76e8725d700478e0e08f2bbc96a9fd1e0481bdee03ab",
+        "grading/h05_multibyte_truncation/hidden_tests.rs": "8550e1cc5eea9c8f4d96fced5e1ed73028d9015b3a8d023c891d8761a477f727",
+        "grading/h05_multibyte_truncation/preflight.json": "b66bb9e022e4c74e37c3cd480662a30a1487365224d0e181093d74cde91d9f0a",
+        "grading/h05_multibyte_truncation/preflight.py": "fdd1fcbbfebda2a4865ff25ee74a33b8f6aeb6b9abd60b9c730420741ca8766f"
+      },
+      "context": {
+        "read_calls": 3,
+        "ranged_read_calls": 2,
+        "read_results": 3,
+        "read_error_results": 0,
+        "read_result_bytes": 21861,
+        "delivered_contexts": 2,
+        "pointer_lines": 24,
+        "ranged_pointer_lines": 24,
+        "direct_pointer_lines": 24,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h01_effect_check_enforce_only",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 64,
+        "output_tokens": 18684,
+        "cache_creation_input_tokens": 98355,
+        "cache_read_input_tokens": 2579973,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 2678392,
+        "total_tokens": 2697076,
+        "tool_calls": 36,
+        "cost_usd_estimate": 2.7409565000000007,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 37,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 7,
+          "Edit": 4,
+          "Grep": 14,
+          "Read": 11
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 64,
+            "outputTokens": 18684,
+            "cacheReadInputTokens": 2579973,
+            "cacheCreationInputTokens": 98355,
+            "webSearchRequests": 0,
+            "costUSD": 2.7409565000000007,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 3,
+        "compiled_runs": 16,
+        "compiled_estimated_tokens": 5431,
+        "delivered_compiled_estimated_tokens": 1047,
+        "source_items": 192
+      },
+      "agent_wall_seconds": 364.585,
+      "setup_seconds": 10.135,
+      "grading_seconds": 22.727,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:08:06.456494+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "69753054be40d7e8bd2205d086a6cf6a97b4430399c261d625ec9545651aacdf",
+      "composed_prompt_sha256": "349d3087caeec1e12230f7e1171aaf3fe0483105845ab0dad64bee8c58ca290b",
+      "snapshot_sha256": "d120fc797acbeb897653ea5f1c8355b91c6a8aa1f85c9bb79a718acc7eb945e4",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h01_effect_check_enforce_only/grade.py": "32a2d63e0c90d779bb13247405894205ba462c175effc28bec0b1de5a5c0470c",
+        "grading/h01_effect_check_enforce_only/hidden_tests.rs": "9a5b6ee21d6be626f52e131ebfe4d6958b4b40a8f3a1167920c410c8c19c39ea",
+        "grading/h01_effect_check_enforce_only/preflight.json": "30522d8c9982e4a65b54a00c9953641c51e62d10f935b96966bd618b4465eec0",
+        "grading/h01_effect_check_enforce_only/preflight.py": "3c2d1f64eb1f27417dbd308f38b2914297c52fb0cdd1d3066a2cff7cbbbbfd92"
+      },
+      "context": {
+        "read_calls": 11,
+        "ranged_read_calls": 9,
+        "read_results": 11,
+        "read_error_results": 0,
+        "read_result_bytes": 146509,
+        "delivered_contexts": 3,
+        "pointer_lines": 36,
+        "ranged_pointer_lines": 23,
+        "direct_pointer_lines": 36,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h01_effect_check_enforce_only",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 66,
+        "output_tokens": 15363,
+        "cache_creation_input_tokens": 43587,
+        "cache_read_input_tokens": 1017377,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 1061030,
+        "total_tokens": 1076393,
+        "tool_calls": 34,
+        "cost_usd_estimate": 1.3289635000000002,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 35,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 5,
+          "Edit": 5,
+          "Grep": 9,
+          "Read": 15
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 66,
+            "outputTokens": 15363,
+            "cacheReadInputTokens": 1017377,
+            "cacheCreationInputTokens": 43587,
+            "webSearchRequests": 0,
+            "costUSD": 1.3289635000000002,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 226.41,
+      "setup_seconds": 13.415,
+      "grading_seconds": 14.191,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:14:55.819833+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "69753054be40d7e8bd2205d086a6cf6a97b4430399c261d625ec9545651aacdf",
+      "composed_prompt_sha256": "349d3087caeec1e12230f7e1171aaf3fe0483105845ab0dad64bee8c58ca290b",
+      "snapshot_sha256": "d120fc797acbeb897653ea5f1c8355b91c6a8aa1f85c9bb79a718acc7eb945e4",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h01_effect_check_enforce_only/grade.py": "32a2d63e0c90d779bb13247405894205ba462c175effc28bec0b1de5a5c0470c",
+        "grading/h01_effect_check_enforce_only/hidden_tests.rs": "9a5b6ee21d6be626f52e131ebfe4d6958b4b40a8f3a1167920c410c8c19c39ea",
+        "grading/h01_effect_check_enforce_only/preflight.json": "30522d8c9982e4a65b54a00c9953641c51e62d10f935b96966bd618b4465eec0",
+        "grading/h01_effect_check_enforce_only/preflight.py": "3c2d1f64eb1f27417dbd308f38b2914297c52fb0cdd1d3066a2cff7cbbbbfd92"
+      },
+      "context": {
+        "read_calls": 15,
+        "ranged_read_calls": 15,
+        "read_results": 15,
+        "read_error_results": 1,
+        "read_result_bytes": 41255,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h02_failure_feedback_origin",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": true
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": true
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 74,
+        "output_tokens": 19554,
+        "cache_creation_input_tokens": 77989,
+        "cache_read_input_tokens": 2126352,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 2204415,
+        "total_tokens": 2223969,
+        "tool_calls": 40,
+        "cost_usd_estimate": 2.332285999999999,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 41,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 7,
+          "Edit": 10,
+          "Grep": 10,
+          "Read": 13
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 74,
+            "outputTokens": 19554,
+            "cacheReadInputTokens": 2126352,
+            "cacheCreationInputTokens": 77989,
+            "webSearchRequests": 0,
+            "costUSD": 2.332285999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 357.939,
+      "setup_seconds": 9.686,
+      "grading_seconds": 15.367,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:19:19.140565+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "a7a4066ba5bcb83ed703a4d524de4d84cb17a6fc5f8199e682838bcf93c3ae55",
+      "composed_prompt_sha256": "467bea5b16149daa0047acff52b96790032d9740cf7f6e6a1b51fd53f3001db9",
+      "snapshot_sha256": "8cd9be04389adfb55536ce17502ef3a80104b60e1558819da06ce432e1823630",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h02_failure_feedback_origin/grade.py": "aeae49f51a0e76706a6a2f3de0462a78b1b24be829de1943403f15e4af140541",
+        "grading/h02_failure_feedback_origin/hidden_tests.rs": "206f3d2415af04a57a3a9471014b94e763aac0cb8739f3603db21414cd1ee755",
+        "grading/h02_failure_feedback_origin/preflight.json": "d10f00175a62b875e1830762990d631aa8fef862830ddb84fd025e16c4e8f89d",
+        "grading/h02_failure_feedback_origin/preflight.py": "46e1a9a445c69f5814c68d13af4a6162bfaf03940ca7ee249728e277e9adee3a"
+      },
+      "context": {
+        "read_calls": 13,
+        "ranged_read_calls": 11,
+        "read_results": 13,
+        "read_error_results": 0,
+        "read_result_bytes": 107110,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h02_failure_feedback_origin",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": true
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": true
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 90,
+        "output_tokens": 22509,
+        "cache_creation_input_tokens": 77387,
+        "cache_read_input_tokens": 2514853,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 2592330,
+        "total_tokens": 2614839,
+        "tool_calls": 46,
+        "cost_usd_estimate": 2.5944715,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 47,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 9,
+          "Edit": 12,
+          "Grep": 9,
+          "Read": 16
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 90,
+            "outputTokens": 22509,
+            "cacheReadInputTokens": 2514853,
+            "cacheCreationInputTokens": 77387,
+            "webSearchRequests": 0,
+            "costUSD": 2.5944715,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 29,
+        "compiled_estimated_tokens": 12460,
+        "delivered_compiled_estimated_tokens": 432,
+        "source_items": 348
+      },
+      "agent_wall_seconds": 417.63,
+      "setup_seconds": 9.503,
+      "grading_seconds": 11.526,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:25:51.200582+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "a7a4066ba5bcb83ed703a4d524de4d84cb17a6fc5f8199e682838bcf93c3ae55",
+      "composed_prompt_sha256": "467bea5b16149daa0047acff52b96790032d9740cf7f6e6a1b51fd53f3001db9",
+      "snapshot_sha256": "8cd9be04389adfb55536ce17502ef3a80104b60e1558819da06ce432e1823630",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h02_failure_feedback_origin/grade.py": "aeae49f51a0e76706a6a2f3de0462a78b1b24be829de1943403f15e4af140541",
+        "grading/h02_failure_feedback_origin/hidden_tests.rs": "206f3d2415af04a57a3a9471014b94e763aac0cb8739f3603db21414cd1ee755",
+        "grading/h02_failure_feedback_origin/preflight.json": "d10f00175a62b875e1830762990d631aa8fef862830ddb84fd025e16c4e8f89d",
+        "grading/h02_failure_feedback_origin/preflight.py": "46e1a9a445c69f5814c68d13af4a6162bfaf03940ca7ee249728e277e9adee3a"
+      },
+      "context": {
+        "read_calls": 16,
+        "ranged_read_calls": 15,
+        "read_results": 16,
+        "read_error_results": 0,
+        "read_result_bytes": 109397,
+        "delivered_contexts": 1,
+        "pointer_lines": 12,
+        "ranged_pointer_lines": 12,
+        "direct_pointer_lines": 12,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h03_schemeless_navigation",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": true
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": true
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 52,
+        "output_tokens": 16071,
+        "cache_creation_input_tokens": 56359,
+        "cache_read_input_tokens": 1250440,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 1306851,
+        "total_tokens": 1322922,
+        "tool_calls": 33,
+        "cost_usd_estimate": 1.590845,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 34,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 9,
+          "Edit": 7,
+          "Grep": 8,
+          "Read": 8,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 52,
+            "outputTokens": 16071,
+            "cacheReadInputTokens": 1250440,
+            "cacheCreationInputTokens": 56359,
+            "webSearchRequests": 0,
+            "costUSD": 1.590845,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 17,
+        "compiled_estimated_tokens": 9775,
+        "delivered_compiled_estimated_tokens": 575,
+        "source_items": 289
+      },
+      "agent_wall_seconds": 217.672,
+      "setup_seconds": 2.952,
+      "grading_seconds": 0.131,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:33:17.965242+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6cdd7350dc7ea40567125062f0574863323c592afffc836f291f98a03826e128",
+      "composed_prompt_sha256": "284291fb8f66d0b27f76f40f045170a93cafc07f600b499e75c0772e1184da3e",
+      "snapshot_sha256": "2a67e0ffeb33fa306a41303ab06be1d369c4ae8242f829cdb2ddbbeace02900c",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h03_schemeless_navigation/grade.py": "2d6d04c64b1b867b00888f97558271a054487b705194b97aafc16ee026312153",
+        "grading/h03_schemeless_navigation/preflight.json": "127ab7e1aecd4d44baccec46a8a5a0f63a3b69856cdaa7354b72b4b9f59338b4",
+        "grading/h03_schemeless_navigation/preflight.py": "a250b2ff13cb46e0171371c20f9e9f02d7a9fa0c29549f03d8f0d2ccd4940941"
+      },
+      "context": {
+        "read_calls": 8,
+        "ranged_read_calls": 5,
+        "read_results": 8,
+        "read_error_results": 0,
+        "read_result_bytes": 78418,
+        "delivered_contexts": 1,
+        "pointer_lines": 17,
+        "ranged_pointer_lines": 17,
+        "direct_pointer_lines": 12,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 5,
+        "related_use_items": 5,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h03_schemeless_navigation",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": true
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": true
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 110,
+        "output_tokens": 23632,
+        "cache_creation_input_tokens": 38513,
+        "cache_read_input_tokens": 1506766,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 1545389,
+        "total_tokens": 1569021,
+        "tool_calls": 59,
+        "cost_usd_estimate": 1.7298630000000006,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 60,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 22,
+          "Edit": 14,
+          "Grep": 13,
+          "Read": 8,
+          "Write": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 110,
+            "outputTokens": 23632,
+            "cacheReadInputTokens": 1506766,
+            "cacheCreationInputTokens": 38513,
+            "webSearchRequests": 0,
+            "costUSD": 1.7298630000000006,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 324.943,
+      "setup_seconds": 1.691,
+      "grading_seconds": 0.085,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:37:06.505723+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6cdd7350dc7ea40567125062f0574863323c592afffc836f291f98a03826e128",
+      "composed_prompt_sha256": "284291fb8f66d0b27f76f40f045170a93cafc07f600b499e75c0772e1184da3e",
+      "snapshot_sha256": "2a67e0ffeb33fa306a41303ab06be1d369c4ae8242f829cdb2ddbbeace02900c",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h03_schemeless_navigation/grade.py": "2d6d04c64b1b867b00888f97558271a054487b705194b97aafc16ee026312153",
+        "grading/h03_schemeless_navigation/preflight.json": "127ab7e1aecd4d44baccec46a8a5a0f63a3b69856cdaa7354b72b4b9f59338b4",
+        "grading/h03_schemeless_navigation/preflight.py": "a250b2ff13cb46e0171371c20f9e9f02d7a9fa0c29549f03d8f0d2ccd4940941"
+      },
+      "context": {
+        "read_calls": 8,
+        "ranged_read_calls": 8,
+        "read_results": 8,
+        "read_error_results": 0,
+        "read_result_bytes": 8289,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h04_play_base_plan_lookup",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": true
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": true
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 34,
+        "output_tokens": 27791,
+        "cache_creation_input_tokens": 58214,
+        "cache_read_input_tokens": 651377,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 709625,
+        "total_tokens": 737416,
+        "tool_calls": 18,
+        "cost_usd_estimate": 1.6027734999999999,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 19,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 7,
+          "Edit": 2,
+          "Grep": 4,
+          "Read": 4,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 34,
+            "outputTokens": 27791,
+            "cacheReadInputTokens": 651377,
+            "cacheCreationInputTokens": 58214,
+            "webSearchRequests": 0,
+            "costUSD": 1.6027734999999999,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 342.091,
+      "setup_seconds": 1.408,
+      "grading_seconds": 0.084,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:42:38.872599+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "373e0427a809038548de7ac2336f8bb78d0224b83e9f974270f6e0e75212b0ad",
+      "composed_prompt_sha256": "c98dab7656b45419adaa7057ae0b05f02de4433e3a0ffb0c8da06350ee115b70",
+      "snapshot_sha256": "d370e2d5c1cba85bb59f6cb8e43fb2a2ac56f05d49b2c307f109908af1ff11d7",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h04_play_base_plan_lookup/grade.py": "48c5f989a51833d13f5f2c1d352d1b2fa3ebbb0b17827355ce98c2c4bef97a41",
+        "grading/h04_play_base_plan_lookup/preflight.json": "3c9c418e73edd692a2c692d3289685cdece74d9091b6b1081b13b16b351d9e18",
+        "grading/h04_play_base_plan_lookup/preflight.py": "7b93e0beffb753f48b75e858bba416f282ff273edff46f869778c10914e67137"
+      },
+      "context": {
+        "read_calls": 4,
+        "ranged_read_calls": 0,
+        "read_results": 4,
+        "read_error_results": 0,
+        "read_result_bytes": 71247,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h04_play_base_plan_lookup",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": true
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": true
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 30,
+        "output_tokens": 14583,
+        "cache_creation_input_tokens": 51324,
+        "cache_read_input_tokens": 668291,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 719645,
+        "total_tokens": 734228,
+        "tool_calls": 18,
+        "cost_usd_estimate": 1.2121104999999996,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 19,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 7,
+          "Edit": 2,
+          "Grep": 1,
+          "Read": 7,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 30,
+            "outputTokens": 14583,
+            "cacheReadInputTokens": 668291,
+            "cacheCreationInputTokens": 51324,
+            "webSearchRequests": 0,
+            "costUSD": 1.2121104999999996,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 11,
+        "compiled_estimated_tokens": 7913,
+        "delivered_compiled_estimated_tokens": 1441,
+        "source_items": 187
+      },
+      "agent_wall_seconds": 192.867,
+      "setup_seconds": 3.197,
+      "grading_seconds": 0.129,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:48:28.756175+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "373e0427a809038548de7ac2336f8bb78d0224b83e9f974270f6e0e75212b0ad",
+      "composed_prompt_sha256": "c98dab7656b45419adaa7057ae0b05f02de4433e3a0ffb0c8da06350ee115b70",
+      "snapshot_sha256": "d370e2d5c1cba85bb59f6cb8e43fb2a2ac56f05d49b2c307f109908af1ff11d7",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h04_play_base_plan_lookup/grade.py": "48c5f989a51833d13f5f2c1d352d1b2fa3ebbb0b17827355ce98c2c4bef97a41",
+        "grading/h04_play_base_plan_lookup/preflight.json": "3c9c418e73edd692a2c692d3289685cdece74d9091b6b1081b13b16b351d9e18",
+        "grading/h04_play_base_plan_lookup/preflight.py": "7b93e0beffb753f48b75e858bba416f282ff273edff46f869778c10914e67137"
+      },
+      "context": {
+        "read_calls": 7,
+        "ranged_read_calls": 1,
+        "read_results": 7,
+        "read_error_results": 0,
+        "read_result_bytes": 79981,
+        "delivered_contexts": 2,
+        "pointer_lines": 34,
+        "ranged_pointer_lines": 24,
+        "direct_pointer_lines": 24,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 10,
+        "related_use_items": 10,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h05_multibyte_truncation",
+      "repetition": 2,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": true
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 30,
+        "output_tokens": 7619,
+        "cache_creation_input_tokens": 19737,
+        "cache_read_input_tokens": 330085,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 349852,
+        "total_tokens": 357471,
+        "tool_calls": 14,
+        "cost_usd_estimate": 0.5530375000000001,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 15,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 9,
+          "Edit": 3,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 30,
+            "outputTokens": 7619,
+            "cacheReadInputTokens": 330085,
+            "cacheCreationInputTokens": 19737,
+            "webSearchRequests": 0,
+            "costUSD": 0.5530375000000001,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 6,
+        "compiled_estimated_tokens": 2600,
+        "delivered_compiled_estimated_tokens": 434,
+        "source_items": 72
+      },
+      "agent_wall_seconds": 190.264,
+      "setup_seconds": 14.008,
+      "grading_seconds": 14.103,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:51:51.128603+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "611a8172954fba7d8eac07bd894cb117e1028c3ac28312e027828391dd488266",
+      "composed_prompt_sha256": "826a5a3ffdf9ead231410b88bc2276ba3632c008da07070e5fb3fab531e738d7",
+      "snapshot_sha256": "a588eac7440f55a4feecd8125d57f9a9c0ae3a956f9aa8922c6cb29d5914daaf",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h05_multibyte_truncation/grade.py": "9ff70c8baf1cd0afe61f76e8725d700478e0e08f2bbc96a9fd1e0481bdee03ab",
+        "grading/h05_multibyte_truncation/hidden_tests.rs": "8550e1cc5eea9c8f4d96fced5e1ed73028d9015b3a8d023c891d8761a477f727",
+        "grading/h05_multibyte_truncation/preflight.json": "b66bb9e022e4c74e37c3cd480662a30a1487365224d0e181093d74cde91d9f0a",
+        "grading/h05_multibyte_truncation/preflight.py": "fdd1fcbbfebda2a4865ff25ee74a33b8f6aeb6b9abd60b9c730420741ca8766f"
+      },
+      "context": {
+        "read_calls": 2,
+        "ranged_read_calls": 1,
+        "read_results": 2,
+        "read_error_results": 0,
+        "read_result_bytes": 21191,
+        "delivered_contexts": 1,
+        "pointer_lines": 12,
+        "ranged_pointer_lines": 12,
+        "direct_pointer_lines": 12,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h05_multibyte_truncation",
+      "repetition": 2,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": true
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 38,
+        "output_tokens": 7099,
+        "cache_creation_input_tokens": 12469,
+        "cache_read_input_tokens": 265449,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 277956,
+        "total_tokens": 285055,
+        "tool_calls": 19,
+        "cost_usd_estimate": 0.43507950000000006,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 20,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 8,
+          "Edit": 3,
+          "Grep": 4,
+          "Read": 4
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 38,
+            "outputTokens": 7099,
+            "cacheReadInputTokens": 265449,
+            "cacheCreationInputTokens": 12469,
+            "webSearchRequests": 0,
+            "costUSD": 0.43507950000000006,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 183.646,
+      "setup_seconds": 12.48,
+      "grading_seconds": 7.336,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:55:37.347725+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "611a8172954fba7d8eac07bd894cb117e1028c3ac28312e027828391dd488266",
+      "composed_prompt_sha256": "826a5a3ffdf9ead231410b88bc2276ba3632c008da07070e5fb3fab531e738d7",
+      "snapshot_sha256": "a588eac7440f55a4feecd8125d57f9a9c0ae3a956f9aa8922c6cb29d5914daaf",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h05_multibyte_truncation/grade.py": "9ff70c8baf1cd0afe61f76e8725d700478e0e08f2bbc96a9fd1e0481bdee03ab",
+        "grading/h05_multibyte_truncation/hidden_tests.rs": "8550e1cc5eea9c8f4d96fced5e1ed73028d9015b3a8d023c891d8761a477f727",
+        "grading/h05_multibyte_truncation/preflight.json": "b66bb9e022e4c74e37c3cd480662a30a1487365224d0e181093d74cde91d9f0a",
+        "grading/h05_multibyte_truncation/preflight.py": "fdd1fcbbfebda2a4865ff25ee74a33b8f6aeb6b9abd60b9c730420741ca8766f"
+      },
+      "context": {
+        "read_calls": 4,
+        "ranged_read_calls": 4,
+        "read_results": 4,
+        "read_error_results": 0,
+        "read_result_bytes": 6252,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h01_effect_check_enforce_only",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 70,
+        "output_tokens": 14050,
+        "cache_creation_input_tokens": 48456,
+        "cache_read_input_tokens": 1242314,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 1290840,
+        "total_tokens": 1304890,
+        "tool_calls": 35,
+        "cost_usd_estimate": 1.457317,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 36,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 8,
+          "Edit": 4,
+          "Grep": 10,
+          "Read": 13
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 70,
+            "outputTokens": 14050,
+            "cacheReadInputTokens": 1242314,
+            "cacheCreationInputTokens": 48456,
+            "webSearchRequests": 0,
+            "costUSD": 1.457317,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 286.097,
+      "setup_seconds": 15.202,
+      "grading_seconds": 13.092,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T03:59:12.940667+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "69753054be40d7e8bd2205d086a6cf6a97b4430399c261d625ec9545651aacdf",
+      "composed_prompt_sha256": "349d3087caeec1e12230f7e1171aaf3fe0483105845ab0dad64bee8c58ca290b",
+      "snapshot_sha256": "d120fc797acbeb897653ea5f1c8355b91c6a8aa1f85c9bb79a718acc7eb945e4",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h01_effect_check_enforce_only/grade.py": "32a2d63e0c90d779bb13247405894205ba462c175effc28bec0b1de5a5c0470c",
+        "grading/h01_effect_check_enforce_only/hidden_tests.rs": "9a5b6ee21d6be626f52e131ebfe4d6958b4b40a8f3a1167920c410c8c19c39ea",
+        "grading/h01_effect_check_enforce_only/preflight.json": "30522d8c9982e4a65b54a00c9953641c51e62d10f935b96966bd618b4465eec0",
+        "grading/h01_effect_check_enforce_only/preflight.py": "3c2d1f64eb1f27417dbd308f38b2914297c52fb0cdd1d3066a2cff7cbbbbfd92"
+      },
+      "context": {
+        "read_calls": 13,
+        "ranged_read_calls": 13,
+        "read_results": 13,
+        "read_error_results": 0,
+        "read_result_bytes": 55760,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h01_effect_check_enforce_only",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": true
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 40,
+        "output_tokens": 13121,
+        "cache_creation_input_tokens": 38712,
+        "cache_read_input_tokens": 618825,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 657577,
+        "total_tokens": 670698,
+        "tool_calls": 25,
+        "cost_usd_estimate": 1.0247575000000002,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 26,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 6,
+          "Edit": 4,
+          "Grep": 4,
+          "Read": 11
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 40,
+            "outputTokens": 13121,
+            "cacheReadInputTokens": 618825,
+            "cacheCreationInputTokens": 38712,
+            "webSearchRequests": 0,
+            "costUSD": 1.0247575000000002,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 4,
+        "compiled_runs": 16,
+        "compiled_estimated_tokens": 5535,
+        "delivered_compiled_estimated_tokens": 1378,
+        "source_items": 192
+      },
+      "agent_wall_seconds": 237.057,
+      "setup_seconds": 10.138,
+      "grading_seconds": 11.935,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T04:04:37.973948+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "69753054be40d7e8bd2205d086a6cf6a97b4430399c261d625ec9545651aacdf",
+      "composed_prompt_sha256": "349d3087caeec1e12230f7e1171aaf3fe0483105845ab0dad64bee8c58ca290b",
+      "snapshot_sha256": "d120fc797acbeb897653ea5f1c8355b91c6a8aa1f85c9bb79a718acc7eb945e4",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h01_effect_check_enforce_only/grade.py": "32a2d63e0c90d779bb13247405894205ba462c175effc28bec0b1de5a5c0470c",
+        "grading/h01_effect_check_enforce_only/hidden_tests.rs": "9a5b6ee21d6be626f52e131ebfe4d6958b4b40a8f3a1167920c410c8c19c39ea",
+        "grading/h01_effect_check_enforce_only/preflight.json": "30522d8c9982e4a65b54a00c9953641c51e62d10f935b96966bd618b4465eec0",
+        "grading/h01_effect_check_enforce_only/preflight.py": "3c2d1f64eb1f27417dbd308f38b2914297c52fb0cdd1d3066a2cff7cbbbbfd92"
+      },
+      "context": {
+        "read_calls": 11,
+        "ranged_read_calls": 10,
+        "read_results": 11,
+        "read_error_results": 0,
+        "read_result_bytes": 36273,
+        "delivered_contexts": 4,
+        "pointer_lines": 48,
+        "ranged_pointer_lines": 30,
+        "direct_pointer_lines": 48,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h02_failure_feedback_origin",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": true
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": true
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 60,
+        "output_tokens": 14539,
+        "cache_creation_input_tokens": 104763,
+        "cache_read_input_tokens": 2397424,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 2502247,
+        "total_tokens": 2516786,
+        "tool_calls": 34,
+        "cost_usd_estimate": 2.6101170000000002,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 35,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 6,
+          "Edit": 7,
+          "Grep": 5,
+          "Read": 16
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 60,
+            "outputTokens": 14539,
+            "cacheReadInputTokens": 2397424,
+            "cacheCreationInputTokens": 104763,
+            "webSearchRequests": 0,
+            "costUSD": 2.6101170000000002,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 24,
+        "compiled_estimated_tokens": 10378,
+        "delivered_compiled_estimated_tokens": 866,
+        "source_items": 288
+      },
+      "agent_wall_seconds": 247.056,
+      "setup_seconds": 9.913,
+      "grading_seconds": 12.077,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T04:09:05.385969+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "a7a4066ba5bcb83ed703a4d524de4d84cb17a6fc5f8199e682838bcf93c3ae55",
+      "composed_prompt_sha256": "467bea5b16149daa0047acff52b96790032d9740cf7f6e6a1b51fd53f3001db9",
+      "snapshot_sha256": "8cd9be04389adfb55536ce17502ef3a80104b60e1558819da06ce432e1823630",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h02_failure_feedback_origin/grade.py": "aeae49f51a0e76706a6a2f3de0462a78b1b24be829de1943403f15e4af140541",
+        "grading/h02_failure_feedback_origin/hidden_tests.rs": "206f3d2415af04a57a3a9471014b94e763aac0cb8739f3603db21414cd1ee755",
+        "grading/h02_failure_feedback_origin/preflight.json": "d10f00175a62b875e1830762990d631aa8fef862830ddb84fd025e16c4e8f89d",
+        "grading/h02_failure_feedback_origin/preflight.py": "46e1a9a445c69f5814c68d13af4a6162bfaf03940ca7ee249728e277e9adee3a"
+      },
+      "context": {
+        "read_calls": 16,
+        "ranged_read_calls": 12,
+        "read_results": 16,
+        "read_error_results": 0,
+        "read_result_bytes": 198569,
+        "delivered_contexts": 2,
+        "pointer_lines": 24,
+        "ranged_pointer_lines": 24,
+        "direct_pointer_lines": 24,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h02_failure_feedback_origin",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_carries_the_declared_origin",
+            "passed": true
+          },
+          {
+            "name": "first_step_failure_normalizes_origin_like_session_creation",
+            "passed": true
+          },
+          {
+            "name": "loaded_session_failure_keeps_the_frozen_origin",
+            "passed": true
+          },
+          {
+            "name": "unstamped_session_failure_stays_untagged",
+            "passed": true
+          },
+          {
+            "name": "reaction_feedback_event_carries_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_outcome_signals_carry_the_session_origin",
+            "passed": true
+          },
+          {
+            "name": "reaction_records_stay_untagged_without_origin",
+            "passed": true
+          },
+          {
+            "name": "successful_steps_keep_their_origin_stamp",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 90,
+        "output_tokens": 26181,
+        "cache_creation_input_tokens": 92766,
+        "cache_read_input_tokens": 2985720,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 3078576,
+        "total_tokens": 3104757,
+        "tool_calls": 46,
+        "cost_usd_estimate": 3.0754949999999996,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 47,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 12,
+          "Edit": 12,
+          "Grep": 9,
+          "Read": 13
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 90,
+            "outputTokens": 26181,
+            "cacheReadInputTokens": 2985720,
+            "cacheCreationInputTokens": 92766,
+            "webSearchRequests": 0,
+            "costUSD": 3.0754949999999996,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 435.873,
+      "setup_seconds": 10.034,
+      "grading_seconds": 11.617,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T04:13:41.917520+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "a7a4066ba5bcb83ed703a4d524de4d84cb17a6fc5f8199e682838bcf93c3ae55",
+      "composed_prompt_sha256": "467bea5b16149daa0047acff52b96790032d9740cf7f6e6a1b51fd53f3001db9",
+      "snapshot_sha256": "8cd9be04389adfb55536ce17502ef3a80104b60e1558819da06ce432e1823630",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h02_failure_feedback_origin/grade.py": "aeae49f51a0e76706a6a2f3de0462a78b1b24be829de1943403f15e4af140541",
+        "grading/h02_failure_feedback_origin/hidden_tests.rs": "206f3d2415af04a57a3a9471014b94e763aac0cb8739f3603db21414cd1ee755",
+        "grading/h02_failure_feedback_origin/preflight.json": "d10f00175a62b875e1830762990d631aa8fef862830ddb84fd025e16c4e8f89d",
+        "grading/h02_failure_feedback_origin/preflight.py": "46e1a9a445c69f5814c68d13af4a6162bfaf03940ca7ee249728e277e9adee3a"
+      },
+      "context": {
+        "read_calls": 13,
+        "ranged_read_calls": 11,
+        "read_results": 13,
+        "read_error_results": 0,
+        "read_result_bytes": 125822,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h03_schemeless_navigation",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": true
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": true
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 94,
+        "output_tokens": 16329,
+        "cache_creation_input_tokens": 26847,
+        "cache_read_input_tokens": 1034946,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 1061887,
+        "total_tokens": 1078216,
+        "tool_calls": 46,
+        "cost_usd_estimate": 1.194638,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 47,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 14,
+          "Edit": 13,
+          "Grep": 6,
+          "Read": 12,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 94,
+            "outputTokens": 16329,
+            "cacheReadInputTokens": 1034946,
+            "cacheCreationInputTokens": 26847,
+            "webSearchRequests": 0,
+            "costUSD": 1.194638,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 318.586,
+      "setup_seconds": 1.397,
+      "grading_seconds": 0.09,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T04:21:27.816824+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6cdd7350dc7ea40567125062f0574863323c592afffc836f291f98a03826e128",
+      "composed_prompt_sha256": "284291fb8f66d0b27f76f40f045170a93cafc07f600b499e75c0772e1184da3e",
+      "snapshot_sha256": "2a67e0ffeb33fa306a41303ab06be1d369c4ae8242f829cdb2ddbbeace02900c",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h03_schemeless_navigation/grade.py": "2d6d04c64b1b867b00888f97558271a054487b705194b97aafc16ee026312153",
+        "grading/h03_schemeless_navigation/preflight.json": "127ab7e1aecd4d44baccec46a8a5a0f63a3b69856cdaa7354b72b4b9f59338b4",
+        "grading/h03_schemeless_navigation/preflight.py": "a250b2ff13cb46e0171371c20f9e9f02d7a9fa0c29549f03d8f0d2ccd4940941"
+      },
+      "context": {
+        "read_calls": 12,
+        "ranged_read_calls": 11,
+        "read_results": 12,
+        "read_error_results": 1,
+        "read_result_bytes": 9428,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h03_schemeless_navigation",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "agent_server_first_navigation",
+            "passed": true
+          },
+          {
+            "name": "cdp_base_goto_action",
+            "passed": true
+          },
+          {
+            "name": "claude_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "qwen1_goto_tool",
+            "passed": true
+          },
+          {
+            "name": "cua_goto_action",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 78,
+        "output_tokens": 22330,
+        "cache_creation_input_tokens": 40120,
+        "cache_read_input_tokens": 1209012,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 1249210,
+        "total_tokens": 1271540,
+        "tool_calls": 52,
+        "cost_usd_estimate": 1.564346,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 53,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 20,
+          "Edit": 16,
+          "Grep": 7,
+          "Read": 7,
+          "Write": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 78,
+            "outputTokens": 22330,
+            "cacheReadInputTokens": 1209012,
+            "cacheCreationInputTokens": 40120,
+            "webSearchRequests": 0,
+            "costUSD": 1.564346,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 26,
+        "compiled_estimated_tokens": 14950,
+        "delivered_compiled_estimated_tokens": 575,
+        "source_items": 442
+      },
+      "agent_wall_seconds": 296.624,
+      "setup_seconds": 2.932,
+      "grading_seconds": 0.09,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T04:26:55.513446+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "6cdd7350dc7ea40567125062f0574863323c592afffc836f291f98a03826e128",
+      "composed_prompt_sha256": "284291fb8f66d0b27f76f40f045170a93cafc07f600b499e75c0772e1184da3e",
+      "snapshot_sha256": "2a67e0ffeb33fa306a41303ab06be1d369c4ae8242f829cdb2ddbbeace02900c",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h03_schemeless_navigation/grade.py": "2d6d04c64b1b867b00888f97558271a054487b705194b97aafc16ee026312153",
+        "grading/h03_schemeless_navigation/preflight.json": "127ab7e1aecd4d44baccec46a8a5a0f63a3b69856cdaa7354b72b4b9f59338b4",
+        "grading/h03_schemeless_navigation/preflight.py": "a250b2ff13cb46e0171371c20f9e9f02d7a9fa0c29549f03d8f0d2ccd4940941"
+      },
+      "context": {
+        "read_calls": 7,
+        "ranged_read_calls": 7,
+        "read_results": 7,
+        "read_error_results": 0,
+        "read_result_bytes": 6045,
+        "delivered_contexts": 1,
+        "pointer_lines": 17,
+        "ranged_pointer_lines": 17,
+        "direct_pointer_lines": 12,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 5,
+        "related_use_items": 5,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h04_play_base_plan_lookup",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": true
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": true
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 22,
+        "output_tokens": 19006,
+        "cache_creation_input_tokens": 40286,
+        "cache_read_input_tokens": 359933,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 400241,
+        "total_tokens": 419247,
+        "tool_calls": 13,
+        "cost_usd_estimate": 1.0580865000000002,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 14,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 5,
+          "Edit": 1,
+          "Grep": 1,
+          "Read": 5,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 22,
+            "outputTokens": 19006,
+            "cacheReadInputTokens": 359933,
+            "cacheCreationInputTokens": 40286,
+            "webSearchRequests": 0,
+            "costUSD": 1.0580865000000002,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 2,
+        "compiled_runs": 8,
+        "compiled_estimated_tokens": 5756,
+        "delivered_compiled_estimated_tokens": 1441,
+        "source_items": 136
+      },
+      "agent_wall_seconds": 247.852,
+      "setup_seconds": 3.153,
+      "grading_seconds": 0.082,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T04:32:01.128635+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "373e0427a809038548de7ac2336f8bb78d0224b83e9f974270f6e0e75212b0ad",
+      "composed_prompt_sha256": "c98dab7656b45419adaa7057ae0b05f02de4433e3a0ffb0c8da06350ee115b70",
+      "snapshot_sha256": "d370e2d5c1cba85bb59f6cb8e43fb2a2ac56f05d49b2c307f109908af1ff11d7",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h04_play_base_plan_lookup/grade.py": "48c5f989a51833d13f5f2c1d352d1b2fa3ebbb0b17827355ce98c2c4bef97a41",
+        "grading/h04_play_base_plan_lookup/preflight.json": "3c9c418e73edd692a2c692d3289685cdece74d9091b6b1081b13b16b351d9e18",
+        "grading/h04_play_base_plan_lookup/preflight.py": "7b93e0beffb753f48b75e858bba416f282ff273edff46f869778c10914e67137"
+      },
+      "context": {
+        "read_calls": 5,
+        "ranged_read_calls": 2,
+        "read_results": 5,
+        "read_error_results": 0,
+        "read_result_bytes": 44387,
+        "delivered_contexts": 2,
+        "pointer_lines": 34,
+        "ranged_pointer_lines": 24,
+        "direct_pointer_lines": 24,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 10,
+        "related_use_items": 10,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h04_play_base_plan_lookup",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "candidate_modules_load",
+            "passed": true
+          },
+          {
+            "name": "initial_purchase_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "renewal_with_base_plan_grants_mapped_plan",
+            "passed": true
+          },
+          {
+            "name": "product_change_with_base_plan_switches_plan",
+            "passed": true
+          },
+          {
+            "name": "missing_row_for_mapped_base_plan_keeps_retrying",
+            "passed": true
+          },
+          {
+            "name": "unmapped_base_plan_still_retries",
+            "passed": true
+          },
+          {
+            "name": "unmapped_product_missing_row_is_still_acknowledged",
+            "passed": true
+          },
+          {
+            "name": "plain_subscription_ids_still_map",
+            "passed": true
+          },
+          {
+            "name": "credit_packs_are_unchanged",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 46,
+        "output_tokens": 21934,
+        "cache_creation_input_tokens": 50990,
+        "cache_read_input_tokens": 917376,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 968412,
+        "total_tokens": 990346,
+        "tool_calls": 23,
+        "cost_usd_estimate": 1.5171679999999996,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 24,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 12,
+          "Edit": 4,
+          "Grep": 1,
+          "Read": 5,
+          "Write": 1
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 46,
+            "outputTokens": 21934,
+            "cacheReadInputTokens": 917376,
+            "cacheCreationInputTokens": 50990,
+            "webSearchRequests": 0,
+            "costUSD": 1.5171679999999996,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 285.944,
+      "setup_seconds": 1.354,
+      "grading_seconds": 0.082,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T04:36:17.158469+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "373e0427a809038548de7ac2336f8bb78d0224b83e9f974270f6e0e75212b0ad",
+      "composed_prompt_sha256": "c98dab7656b45419adaa7057ae0b05f02de4433e3a0ffb0c8da06350ee115b70",
+      "snapshot_sha256": "d370e2d5c1cba85bb59f6cb8e43fb2a2ac56f05d49b2c307f109908af1ff11d7",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h04_play_base_plan_lookup/grade.py": "48c5f989a51833d13f5f2c1d352d1b2fa3ebbb0b17827355ce98c2c4bef97a41",
+        "grading/h04_play_base_plan_lookup/preflight.json": "3c9c418e73edd692a2c692d3289685cdece74d9091b6b1081b13b16b351d9e18",
+        "grading/h04_play_base_plan_lookup/preflight.py": "7b93e0beffb753f48b75e858bba416f282ff273edff46f869778c10914e67137"
+      },
+      "context": {
+        "read_calls": 5,
+        "ranged_read_calls": 0,
+        "read_results": 5,
+        "read_error_results": 0,
+        "read_result_bytes": 72174,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h05_multibyte_truncation",
+      "repetition": 3,
+      "arm": "off",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": true
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 40,
+        "output_tokens": 8638,
+        "cache_creation_input_tokens": 20518,
+        "cache_read_input_tokens": 359697,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 380255,
+        "total_tokens": 388893,
+        "tool_calls": 20,
+        "cost_usd_estimate": 0.6011785000000001,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 21,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 13,
+          "Edit": 4,
+          "Grep": 1,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 40,
+            "outputTokens": 8638,
+            "cacheReadInputTokens": 359697,
+            "cacheCreationInputTokens": 20518,
+            "webSearchRequests": 0,
+            "costUSD": 0.6011785000000001,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 174.713,
+      "setup_seconds": 10.674,
+      "grading_seconds": 11.58,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T04:41:09.851042+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "611a8172954fba7d8eac07bd894cb117e1028c3ac28312e027828391dd488266",
+      "composed_prompt_sha256": "826a5a3ffdf9ead231410b88bc2276ba3632c008da07070e5fb3fab531e738d7",
+      "snapshot_sha256": "a588eac7440f55a4feecd8125d57f9a9c0ae3a956f9aa8922c6cb29d5914daaf",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h05_multibyte_truncation/grade.py": "9ff70c8baf1cd0afe61f76e8725d700478e0e08f2bbc96a9fd1e0481bdee03ab",
+        "grading/h05_multibyte_truncation/hidden_tests.rs": "8550e1cc5eea9c8f4d96fced5e1ed73028d9015b3a8d023c891d8761a477f727",
+        "grading/h05_multibyte_truncation/preflight.json": "b66bb9e022e4c74e37c3cd480662a30a1487365224d0e181093d74cde91d9f0a",
+        "grading/h05_multibyte_truncation/preflight.py": "fdd1fcbbfebda2a4865ff25ee74a33b8f6aeb6b9abd60b9c730420741ca8766f"
+      },
+      "context": {
+        "read_calls": 2,
+        "ranged_read_calls": 2,
+        "read_results": 2,
+        "read_error_results": 0,
+        "read_result_bytes": 6959,
+        "delivered_contexts": 0,
+        "pointer_lines": 0,
+        "ranged_pointer_lines": 0,
+        "direct_pointer_lines": 0,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    },
+    {
+      "task_id": "h05_multibyte_truncation",
+      "repetition": 3,
+      "arm": "brain",
+      "grade": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "multibyte_task_prompt_cut_inside_a_character_does_not_panic",
+            "passed": true
+          },
+          {
+            "name": "multibyte_context_fields_and_question_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "multibyte_transcript_entries_truncate_by_characters",
+            "passed": true
+          },
+          {
+            "name": "ascii_fields_truncate_exactly_as_before",
+            "passed": true
+          },
+          {
+            "name": "multibyte_text_within_the_character_limit_is_kept_whole",
+            "passed": true
+          }
+        ]
+      },
+      "metrics": {
+        "input_tokens": 20,
+        "output_tokens": 9038,
+        "cache_creation_input_tokens": 19554,
+        "cache_read_input_tokens": 204396,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 223970,
+        "total_tokens": 233008,
+        "tool_calls": 9,
+        "cost_usd_estimate": 0.523788,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": false,
+        "num_turns": 10,
+        "result_subtype": "success",
+        "counts_by_tool": {
+          "Bash": 3,
+          "Edit": 2,
+          "Grep": 2,
+          "Read": 2
+        },
+        "model_usage": {
+          "claude-opus-4-8[1m]": {
+            "inputTokens": 20,
+            "outputTokens": 9038,
+            "cacheReadInputTokens": 204396,
+            "cacheCreationInputTokens": 19554,
+            "webSearchRequests": 0,
+            "costUSD": 0.523788,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+          }
+        },
+        "models": [
+          "claude-opus-4-8[1m]"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": false,
+      "delivery": {
+        "emission_receipts": 1,
+        "compiled_runs": 5,
+        "compiled_estimated_tokens": 2166,
+        "delivered_compiled_estimated_tokens": 434,
+        "source_items": 60
+      },
+      "agent_wall_seconds": 132.131,
+      "setup_seconds": 9.986,
+      "grading_seconds": 5.167,
+      "agent_exit_code": 0,
+      "grader_exit_code": 0,
+      "started_at": "2026-10-05T04:44:32.145027+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "611a8172954fba7d8eac07bd894cb117e1028c3ac28312e027828391dd488266",
+      "composed_prompt_sha256": "826a5a3ffdf9ead231410b88bc2276ba3632c008da07070e5fb3fab531e738d7",
+      "snapshot_sha256": "a588eac7440f55a4feecd8125d57f9a9c0ae3a956f9aa8922c6cb29d5914daaf",
+      "validity_issues": [],
+      "grader_manifest": {
+        "grading/h05_multibyte_truncation/grade.py": "9ff70c8baf1cd0afe61f76e8725d700478e0e08f2bbc96a9fd1e0481bdee03ab",
+        "grading/h05_multibyte_truncation/hidden_tests.rs": "8550e1cc5eea9c8f4d96fced5e1ed73028d9015b3a8d023c891d8761a477f727",
+        "grading/h05_multibyte_truncation/preflight.json": "b66bb9e022e4c74e37c3cd480662a30a1487365224d0e181093d74cde91d9f0a",
+        "grading/h05_multibyte_truncation/preflight.py": "fdd1fcbbfebda2a4865ff25ee74a33b8f6aeb6b9abd60b9c730420741ca8766f"
+      },
+      "context": {
+        "read_calls": 2,
+        "ranged_read_calls": 1,
+        "read_results": 2,
+        "read_error_results": 0,
+        "read_result_bytes": 21327,
+        "delivered_contexts": 1,
+        "pointer_lines": 12,
+        "ranged_pointer_lines": 12,
+        "direct_pointer_lines": 12,
+        "neighbor_pointer_lines": 0,
+        "related_use_pointer_lines": 0,
+        "related_use_items": 0,
+        "read_measurement_complete": true
+      }
+    }
+  ],
+  "infrastructure_attempts": [
+    {
+      "task_id": "h01_effect_check_enforce_only",
+      "repetition": 1,
+      "arm": "off",
+      "grade": {
+        "status": "infra",
+        "checks": []
+      },
+      "metrics": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "reasoning_output_tokens": null,
+        "processed_input_tokens": 0,
+        "total_tokens": 0,
+        "tool_calls": 0,
+        "cost_usd_estimate": 0,
+        "trace_complete": true,
+        "usage_complete": true,
+        "tool_calls_complete": true,
+        "is_error": true,
+        "num_turns": 1,
+        "result_subtype": "success",
+        "counts_by_tool": {},
+        "model_usage": {},
+        "models": [
+          "<synthetic>"
+        ],
+        "permission_denial_count": 0,
+        "diagnostics": {
+          "result_count": 1,
+          "malformed_line_count": 0,
+          "tool_blocks_without_ids": 0,
+          "conflicting_tool_id_count": 0
+        }
+      },
+      "record_classification_revision": "agent-completion-v2",
+      "usage_may_be_partial": true,
+      "delivery": {
+        "emission_receipts": 0,
+        "compiled_runs": 0,
+        "compiled_estimated_tokens": null,
+        "delivered_compiled_estimated_tokens": null,
+        "source_items": null
+      },
+      "agent_wall_seconds": 0.327,
+      "setup_seconds": 10.896,
+      "grading_seconds": 26.019,
+      "agent_exit_code": 1,
+      "grader_exit_code": 1,
+      "started_at": "2026-10-04T21:17:16.223017+00:00",
+      "agent_timed_out": false,
+      "prompt_sha256": "69753054be40d7e8bd2205d086a6cf6a97b4430399c261d625ec9545651aacdf",
+      "composed_prompt_sha256": "349d3087caeec1e12230f7e1171aaf3fe0483105845ab0dad64bee8c58ca290b",
+      "snapshot_sha256": "d120fc797acbeb897653ea5f1c8355b91c6a8aa1f85c9bb79a718acc7eb945e4",
+      "validity_issues": [
+        "agent_runtime_error"
+      ],
+      "behavioral_grade": {
+        "status": "fail",
+        "checks": [
+          {
+            "name": "compiles_with_behavioral_tests",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_sends_no_effect_check_note_to_the_model",
+            "passed": false
+          },
+          {
+            "name": "off_mode_sends_no_effect_check_note_to_the_model",
+            "passed": false
+          },
+          {
+            "name": "non_enforcing_modes_record_no_effect_check_note_in_the_step",
+            "passed": false
+          },
+          {
+            "name": "enforce_mode_still_delivers_the_note_for_a_dead_tap",
+            "passed": true
+          },
+          {
+            "name": "enforce_mode_stays_silent_when_the_screen_moved",
+            "passed": true
+          },
+          {
+            "name": "shadow_mode_still_scores_unchanged_screens",
+            "passed": true
+          }
+        ]
+      },
+      "grader_manifest": {
+        "grading/h01_effect_check_enforce_only/grade.py": "32a2d63e0c90d779bb13247405894205ba462c175effc28bec0b1de5a5c0470c",
+        "grading/h01_effect_check_enforce_only/hidden_tests.rs": "9a5b6ee21d6be626f52e131ebfe4d6958b4b40a8f3a1167920c410c8c19c39ea",
+        "grading/h01_effect_check_enforce_only/preflight.json": "30522d8c9982e4a65b54a00c9953641c51e62d10f935b96966bd618b4465eec0",
+        "grading/h01_effect_check_enforce_only/preflight.py": "3c2d1f64eb1f27417dbd308f38b2914297c52fb0cdd1d3066a2cff7cbbbbfd92"
+      }
+    }
+  ],
+  "preflight_runs": [],
+  "suite": {
+    "suite_id": "real-repo-heldout-v1",
+    "held_out": true,
+    "catalog_status": "draft_requires_operator_review",
+    "allow_draft_suite": true,
+    "repetitions": 3,
+    "planned_runs": 30,
+    "task_ids": [
+      "h01_effect_check_enforce_only",
+      "h02_failure_feedback_origin",
+      "h03_schemeless_navigation",
+      "h04_play_base_plan_lookup",
+      "h05_multibyte_truncation"
+    ],
+    "task_titles": {
+      "h01_effect_check_enforce_only": "Deliver the effect-check note only when LoopGuard enforces",
+      "h02_failure_feedback_origin": "Tag model-failure and reaction analytics with the frozen origin",
+      "h03_schemeless_navigation": "Default scheme-less navigation targets to https on every agent path",
+      "h04_play_base_plan_lookup": "Resolve Play subscription base-plan product ids at every plan lookup",
+      "h05_multibyte_truncation": "Truncate human-response prompt fields on character boundaries"
+    },
+    "task_exercises": {
+      "h01_effect_check_enforce_only": [
+        "line_ranged_pointers"
+      ],
+      "h02_failure_feedback_origin": [
+        "related_use_cue",
+        "line_ranged_pointers"
+      ],
+      "h03_schemeless_navigation": [
+        "related_use_cue"
+      ],
+      "h04_play_base_plan_lookup": [
+        "related_use_cue"
+      ],
+      "h05_multibyte_truncation": [
+        "control"
+      ]
+    },
+    "grader_files": {
+      "h01_effect_check_enforce_only": {
+        "grading/h01_effect_check_enforce_only/grade.py": "32a2d63e0c90d779bb13247405894205ba462c175effc28bec0b1de5a5c0470c",
+        "grading/h01_effect_check_enforce_only/hidden_tests.rs": "9a5b6ee21d6be626f52e131ebfe4d6958b4b40a8f3a1167920c410c8c19c39ea",
+        "grading/h01_effect_check_enforce_only/preflight.json": "30522d8c9982e4a65b54a00c9953641c51e62d10f935b96966bd618b4465eec0",
+        "grading/h01_effect_check_enforce_only/preflight.py": "3c2d1f64eb1f27417dbd308f38b2914297c52fb0cdd1d3066a2cff7cbbbbfd92"
+      },
+      "h02_failure_feedback_origin": {
+        "grading/h02_failure_feedback_origin/grade.py": "aeae49f51a0e76706a6a2f3de0462a78b1b24be829de1943403f15e4af140541",
+        "grading/h02_failure_feedback_origin/hidden_tests.rs": "206f3d2415af04a57a3a9471014b94e763aac0cb8739f3603db21414cd1ee755",
+        "grading/h02_failure_feedback_origin/preflight.json": "d10f00175a62b875e1830762990d631aa8fef862830ddb84fd025e16c4e8f89d",
+        "grading/h02_failure_feedback_origin/preflight.py": "46e1a9a445c69f5814c68d13af4a6162bfaf03940ca7ee249728e277e9adee3a"
+      },
+      "h03_schemeless_navigation": {
+        "grading/h03_schemeless_navigation/grade.py": "2d6d04c64b1b867b00888f97558271a054487b705194b97aafc16ee026312153",
+        "grading/h03_schemeless_navigation/preflight.json": "127ab7e1aecd4d44baccec46a8a5a0f63a3b69856cdaa7354b72b4b9f59338b4",
+        "grading/h03_schemeless_navigation/preflight.py": "a250b2ff13cb46e0171371c20f9e9f02d7a9fa0c29549f03d8f0d2ccd4940941"
+      },
+      "h04_play_base_plan_lookup": {
+        "grading/h04_play_base_plan_lookup/grade.py": "48c5f989a51833d13f5f2c1d352d1b2fa3ebbb0b17827355ce98c2c4bef97a41",
+        "grading/h04_play_base_plan_lookup/preflight.json": "3c9c418e73edd692a2c692d3289685cdece74d9091b6b1081b13b16b351d9e18",
+        "grading/h04_play_base_plan_lookup/preflight.py": "7b93e0beffb753f48b75e858bba416f282ff273edff46f869778c10914e67137"
+      },
+      "h05_multibyte_truncation": {
+        "grading/h05_multibyte_truncation/grade.py": "9ff70c8baf1cd0afe61f76e8725d700478e0e08f2bbc96a9fd1e0481bdee03ab",
+        "grading/h05_multibyte_truncation/hidden_tests.rs": "8550e1cc5eea9c8f4d96fced5e1ed73028d9015b3a8d023c891d8761a477f727",
+        "grading/h05_multibyte_truncation/preflight.json": "b66bb9e022e4c74e37c3cd480662a30a1487365224d0e181093d74cde91d9f0a",
+        "grading/h05_multibyte_truncation/preflight.py": "fdd1fcbbfebda2a4865ff25ee74a33b8f6aeb6b9abd60b9c730420741ca8766f"
+      }
+    }
+  },
+  "inspections": [
+    {
+      "attempt_id": "h01_effect_check_enforce_only-r1-off",
+      "decision": "separate_infrastructure_attempt",
+      "reason": "Claude Code OAuth session expired before the agent started (0 tools, 0 tokens, 0.3 s); operator re-logged in with claude auth login",
+      "inspected_at": "2026-10-05T02:10:06+00:00"
+    }
+  ],
+  "analysis_provenance": {
+    "report_real_repo_pilot.py": "6c5cd67f9552c0e9623b18bdc0528fec87a5cce98f043fbbf8e4d885f4cdaa0f",
+    "real_repo_metrics.py": "5a0599c324e0dfd92c38885b6d3cba089adacc798bbd328ccca261f1ff9520b3",
+    "real_repo_diagnostics.py": "b4f51272276c8c50a3a3efe29785ebe7f9ca3742ffc8ceb84975660633c3f4bb",
+    "real_repo_adjudications.py": "88a9cea3ba08315f5f4055ffd6a5d6d48f65bba4edb8994fad3d2d015d221b50",
+    "real_repo_context.py": "475562c68ef8425380e7efa7db423f30cd2e9365de79fcafdd331e9311f2be6a",
+    "eval_context_quality.py": "df3c2293372c57a7ef6df232a40c62eb5067c73c19431a7ee2a5159c86823b20"
+  }
+}

@@ -16,7 +16,7 @@ context and prove the effect. Measured on 2026-10-04:
 | Capture | Claude Code hooks capture continuously. Codex has never reached Engram: its six hooks are installed but were never trusted in Codex, so there are 0 Codex tasks and 0 Codex usage samples. Until a restart on 2026-10-04, the daemon could not read repositories under `~/Documents`, because it inherited the macOS privacy permissions of the process that auto-started it. One repository is registered as two projects (`brain` and `engram`). | live database, `engram_project_status` |
 | Validate | The judge recorded 1,557 decisions for 140 reviews: 11 accepted, 0 rejected, 1,541 deferred. 1,470 deferrals never reached the model; 1,040 cite missing independently verified evidence. Unchanged reviews were re-judged up to 129 times. | `lesson_judgments` |
 | Deliver | Works for Claude Code: agi-backend-rust received 1,814 context runs in seven days, 1,608 of them with lessons. | `engram effectiveness --days 7` |
-| Prove | The v2 real-repository follow-up (24 of 24 runs, none unscorable) found no improvement: Off 9/12 clean passes, Engram 8/12. On both-pass pairs Engram used 15.5% fewer tool calls but 17.2% more provider tokens, because agents followed file-level pointers with whole-file Reads. | [follow-up findings](perf-evidence/2026-09-25-real-repo-followup/FINDINGS.md) |
+| Prove | The v2 real-repository follow-up (24 of 24 runs, none unscorable) found no improvement: Off 9/12 clean passes, Engram 8/12. On both-pass pairs Engram used 15.5% fewer tool calls but 17.2% more provider tokens, because agents followed file-level pointers with whole-file Reads. The held-out collection of 2026-10-04 (30 of 30, provisional) found equal correctness at ceiling (15/15 each), 20.1% fewer calls, 15.9% less time and 4.0% more tokens. Read text rose 63.9% because agents read pointed files whole. | [v2 findings](perf-evidence/2026-09-25-real-repo-followup/FINDINGS.md), [held-out findings](perf-evidence/2026-10-04-real-repo-heldout/FINDINGS.md) |
 
 ## How the roadmap.sh topics map to Engram
 
@@ -198,7 +198,7 @@ own code.
 | 0. Capture | The operator merged the duplicate `engram` project into `brain` | `engram doctor` passes `project_identity`; only the untrusted Codex hooks warn |
 | 2. Context failure modes | `engram link scan --apply` retracts links from the pre-2026-09-16 hostname rule when a complete scan finds no evidence outside documentation, and doctor lists the rest; shell-mode turns, task notices and subagent reports no longer replace the task's request; context is delivered again after compaction | In the seven days before, linked repositories supplied 92% of the context injected into Engram's own sessions (1.68M of 1.84M tokens). The three links rested on a handoff note and a deploy README. Links whose host still appears in configuration, such as an app build file, stay. A `claude auth login` turn and a test-run notice each became the task text, steering retrieval to API-key and `run_task` code in other repositories |
 | 4. Safety | Injection screen v3: rules run on the text and on a lookalike-folded copy; "ignore previous instructions" in nine languages; wider secret redaction | No new flags on 90,173 paragraphs from six repositories or on 989,453 localized macOS UI strings, apart from Engram's own test strings. Recall on real attacks is unmeasured |
-| 3. Proof | Held-out collection resumed after the operator signed in again | Running; results follow in the held-out findings |
+| 3. Proof | Held-out collection completed, reported and imported (`real-repo-heldout-2026-10-04`) | Equal correctness at ceiling, 20.1% fewer calls, 15.9% less time, 4.0% more tokens. The line-range hypothesis did not hold: Read text +63.9%, cache reads +3.6%. 22 whole-file Reads of pointed files returned 559K bytes, more than the whole excess |
 
 Build f27bb96a was installed first. A re-index of Engram's checkout retracted
 its three links, and dry-run scans of the four company repositories found no
@@ -226,6 +226,13 @@ repositories supplied most of it: `platform` 84% (source pointers into the API
 service it calls), `mobile` 62%, `agents` 59%, the backend 40%.
 
 Next for context efficiency, each needing a measurement before it ships:
+
+- **Whole-file Reads of pointed files.** In the held-out collection, Engram's
+  agents read 22 pointed files whole (559K bytes, more than the arm's whole
+  Read excess), and ranged Reads of pointed files asked for four times the
+  pointed span. The measured build predates the file briefs' size line and
+  task ranking. Rerun the suite on the current build first, then make
+  pointers to large files state their size and the span to read.
 
 - **Linked lessons.** A lesson travels to a linked repository's sessions when
   any of its terms appears in the task text (claim coverage above 0). Five of

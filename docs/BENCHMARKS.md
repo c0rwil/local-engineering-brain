@@ -37,8 +37,7 @@ the planned line-ranged source pointers and related-use cue on work that did not
 tune Engram; the operator still has to confirm that. Two tasks put the fix inside
 files larger than the Read limit, and three need a fix that reaches several call
 sites or consumers. Its graders were calibrated locally, but the suite awaits
-operator review of prompts and graders. No agent has run against it, and it
-reports no results. The follow-up collector can now run it: it builds the
+operator review of prompts and graders. The follow-up collector runs it: it builds the
 fixtures from the operator's repositories, recalibrates the graders against
 them, and collects the draft only with `--allow-draft-suite`, which the frozen
 manifest records. A detached launcher keeps progress and resumes; see
@@ -47,6 +46,16 @@ report and native import read the suite from the frozen catalog. They add
 context delivery and Read measurements per arm, so the line-range hypothesis
 can be checked: fewer Read bytes and cache-read tokens at equal or better
 correctness.
+
+The [first held-out collection](perf-evidence/2026-10-04-real-repo-heldout/FINDINGS.md)
+ran 30 of 30 attempts on build `cf474b5`, still as a draft suite. The result:
+
+- **Correctness:** equal and at ceiling, 15/15 passes in each arm.
+- **Effort:** over the 15 pairs, Engram used 20.1% fewer tool calls and 15.9% less agent time.
+- **Tokens:** 4.0% more provider tokens and a 4.0% higher cost estimate.
+- **The hypothesis did not hold:** Read text rose 63.9% and cache reads 3.6%.
+
+The Off arm already read in ranges (87% of its Reads). The excess came from files that Engram's pointers named and the agent then read whole: 22 Reads returned 559K bytes. File briefs with size lines and task ranking, added after this build, target that pattern. The next collection measures the current build.
 
 The launcher checks the Claude Code login with `claude auth status` in the
 trials' own environment before it starts a collection and before every
