@@ -873,6 +873,109 @@ fn host_records_keep_the_request_and_deliver_nothing() {
 }
 
 #[test]
+fn compaction_delivers_context_and_file_briefs_again() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    for name in ["compute", "auxiliary"] {
+        std::fs::write(
+            repo.join(format!("{name}.rs")),
+            format!("pub fn {name}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let prompt =
+        |session: &str, text: &str| json!({"session_id":session, "cwd":repo, "prompt":text});
+    let read = |session: &str| {
+        json!({"session_id":session, "cwd":repo, "tool_name":"Read",
+            "tool_input":{"file_path":"compute.rs"}})
+    };
+    let start = |source: &str| json!({"session_id":"compacted", "cwd":repo, "source":source});
+    // An earlier session leaves an open episode for briefs to name.
+    cli(
+        root,
+        &["hook", "prompt"],
+        Some(prompt("earlier", "Inspect auxiliary")),
+    );
+    cli(root, &["hook", "pretool"], Some(read("earlier")));
+    let earlier = engram::agenthooks::project_sessions(root, "earlier")
+        .pop()
+        .unwrap()
+        .1;
+
+    assert!(!cli(root, &["hook", "session-start"], Some(start("startup"))).is_empty());
+    assert!(
+        !cli(
+            root,
+            &["hook", "prompt"],
+            Some(prompt("compacted", "Inspect compute"))
+        )
+        .is_empty()
+    );
+    assert!(
+        cli(
+            root,
+            &["hook", "prompt"],
+            Some(prompt("compacted", "Inspect compute"))
+        )
+        .is_empty()
+    );
+    assert!(!cli(root, &["hook", "pretool"], Some(read("compacted"))).is_empty());
+    assert!(cli(root, &["hook", "pretool"], Some(read("compacted"))).is_empty());
+    let own = engram::agenthooks::project_sessions(root, "compacted")
+        .pop()
+        .unwrap()
+        .1;
+
+    // A resumed conversation still holds what was delivered.
+    assert!(cli(root, &["hook", "session-start"], Some(start("resume"))).is_empty());
+    assert!(
+        cli(
+            root,
+            &["hook", "prompt"],
+            Some(prompt("compacted", "Inspect compute"))
+        )
+        .is_empty()
+    );
+
+    // Compaction drops it: brief once across both hook levels, without this
+    // session's own episode, then deliver the pack and the file brief again.
+    let brief = cli(root, &["hook", "session-start"], Some(start("compact")));
+    assert!(brief.contains(earlier.task_id.as_str()), "{brief}");
+    assert!(!brief.contains(own.task_id.as_str()), "{brief}");
+    assert!(cli(root, &["hook", "session-start"], Some(start("compact"))).is_empty());
+    assert!(
+        !cli(
+            root,
+            &["hook", "prompt"],
+            Some(prompt("compacted", "Inspect compute"))
+        )
+        .is_empty()
+    );
+    let again = cli(root, &["hook", "pretool"], Some(read("compacted")));
+    assert!(again.contains("compute.rs"), "{again}");
+    assert!(cli(root, &["hook", "pretool"], Some(read("compacted"))).is_empty());
+    cli(
+        root,
+        &["hook", "session-end"],
+        Some(json!({"session_id":"compacted", "cwd":repo})),
+    );
+    let leftover = std::fs::read_dir(root.join("hook-sessions"))
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(".brief-"))
+        .collect::<Vec<_>>();
+    assert!(
+        leftover.is_empty(),
+        "compaction claims outlive the session: {leftover:?}"
+    );
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
 fn failed_and_empty_context_attempts_retry_and_keep_the_last_delivered_run() {
     let temp = TempDir::new().unwrap();
     let root = temp.path();

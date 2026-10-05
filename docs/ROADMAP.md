@@ -228,7 +228,6 @@ Next for context efficiency, each needing a measurement before it ships:
 - **Repeated delivery.** Hooks resend the whole pack whenever it changes, so
   items the session already holds are delivered again. In the one session with
   full attribution, 82% of delivered tokens repeated earlier deliveries, 96%
-  for linked lessons. Delivering each item once per session needs a reset on
-  compaction, which hooks do not handle yet (`SessionStart` with source
-  `compact` is treated as a resume), and a paired run, because repetition may
-  also act as a reminder.
+  for linked lessons. Hooks now reset delivery after compaction (`SessionStart`
+  with source `compact` or `clear`), which a once-per-session rule needs.
+  It still needs a paired run, because repetition may also act as a reminder.

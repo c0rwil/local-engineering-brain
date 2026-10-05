@@ -259,6 +259,15 @@ not yet stable, and the schema version is 7.
 
 ### Fixed
 
+- After Claude Code compacts or clears a conversation, Engram delivers its
+  context again. Hooks treated the `SessionStart` that follows (source
+  `compact` or `clear`) like a resume: the session brief was claimed once per
+  session, an unchanged pack stayed suppressed, and files were briefed once
+  per task, so a compacted conversation lost Engram's context until something
+  changed. Now the next prompt and tool calls deliver the pack and file
+  briefs again, and the session is briefed again, once for both hook levels,
+  without listing its own episodes as earlier ones. Delivery receipts keep
+  their run IDs for usage attribution. Subagent threads are unaffected.
 - Automatic repository links from an earlier policy are retracted when no
   evidence outside documentation supports them. Until 2026-09-16 a hostname
   mentioned anywhere in a repository linked it to the service declaring that

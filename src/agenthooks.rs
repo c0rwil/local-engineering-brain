@@ -517,6 +517,54 @@ pub fn clear_claims(state_dir: &Path, session_id: &str) {
     for tag in ["brief", "prompt", "episode", "context"] {
         release_claim(state_dir, session_id, tag);
     }
+    // Briefs after compaction or `/clear` carry claims of their own.
+    let Some(prefix) = session_state_path(state_dir, session_id)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| format!("{stem}.brief-"))
+    else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(state_dir.join("hook-sessions")) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(&prefix) && name.ends_with(".claim") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// `compact` or `clear` when a session start follows Claude Code compacting
+/// or clearing the conversation, which drops everything hooks delivered.
+#[must_use]
+pub fn conversation_restart(payload: &serde_json::Value) -> Option<&'static str> {
+    match payload.get("source").and_then(serde_json::Value::as_str) {
+        Some("compact") => Some("compact"),
+        Some("clear") => Some("clear"),
+        _ => None,
+    }
+}
+
+/// Let a compacted or cleared conversation receive its context again:
+/// delivery receipts keep their attribution IDs but no longer suppress an
+/// identical pack, and file briefs repeat. Subagent threads keep theirs,
+/// because compaction leaves their conversations alone.
+pub fn forget_deliveries(state_dir: &Path, session_id: &str) {
+    for (scope, _) in project_sessions(state_dir, session_id) {
+        if let Some(mut delivery) = context_delivery(state_dir, &scope) {
+            delivery.delivery_digest = None;
+            if let Ok(bytes) = serde_json::to_vec(&delivery) {
+                let _ = write_private_sidecar(
+                    &session_state_path(state_dir, &scope).with_extension("context-delivery"),
+                    &bytes,
+                );
+            }
+        }
+        let _ = std::fs::remove_file(session_files_path(state_dir, &scope));
+    }
 }
 
 /// Release a claimed action that could not be delivered, allowing a later retry.

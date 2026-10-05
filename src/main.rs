@@ -3058,7 +3058,25 @@ fn run_hook_payload(
         }
         "session-start" => {
             initialize_hook_usage_baseline(&state_dir, &session_id, payload);
-            if !engram::agenthooks::claim_once(&state_dir, &session_id, "brief") {
+            let now_ms = i64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_millis())
+                    .unwrap_or_default(),
+            )
+            .unwrap_or(i64::MAX);
+            // Compaction and `/clear` drop what hooks delivered: context and
+            // file briefs are delivered again, and the session is briefed
+            // again under a claim both hook levels share for that event.
+            let restart = engram::agenthooks::conversation_restart(payload);
+            let claim = restart.map_or_else(
+                || "brief".to_owned(),
+                |source| format!("brief-{source}-{}", now_ms / 60_000),
+            );
+            if restart.is_some() {
+                engram::agenthooks::forget_deliveries(&state_dir, &session_id);
+            }
+            if !engram::agenthooks::claim_once(&state_dir, &session_id, &claim) {
                 return Ok(true); // a concurrent hook (user + project level) already briefed
             }
             let lookup = match block_on(client.lookup_project(&cwd)) {
@@ -3095,22 +3113,21 @@ fn run_hook_payload(
             let Ok(brief) = block_on(client.tasks_brief(&project.id)) else {
                 return Ok(true);
             };
+            // After a restart this session's own episodes are not earlier ones.
+            let own = engram::agenthooks::project_sessions(&state_dir, &session_id)
+                .into_iter()
+                .map(|(_, session)| session.task_id.to_string())
+                .collect::<Vec<_>>();
             let open: Vec<(String, String, i64)> = brief
                 .open
                 .iter()
+                .filter(|task| !own.contains(&task.id))
                 .map(|task| (task.id.clone(), task.prompt.clone(), task.started_at_ms))
                 .collect();
             let last_completed = brief
                 .last_completed
                 .as_ref()
                 .map(|task| (task.status.as_str(), task.prompt.as_str()));
-            let now_ms = i64::try_from(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|duration| duration.as_millis())
-                    .unwrap_or_default(),
-            )
-            .unwrap_or(i64::MAX);
             if let Some(text) = engram::agenthooks::render_session_brief(
                 &project.name,
                 &open,
