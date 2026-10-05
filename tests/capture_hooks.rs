@@ -88,6 +88,64 @@ fn codex_installer_repairs_flat_hooks_preserves_foreign_handlers_and_rejects_inv
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
 }
 
+/// A cloned repository is untrusted: a committed `.claude` or
+/// `.claude/settings.json` symlink must not let a repo-scoped install read a
+/// file outside the checkout (the atomic replace would copy it, credentials
+/// included, into the working tree) or write into a directory outside it.
+#[cfg(unix)]
+#[test]
+fn repo_hook_install_refuses_symlinks_out_of_the_checkout() {
+    use std::os::unix::fs::symlink;
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let secrets = home.join(".codex");
+    std::fs::create_dir_all(&secrets).unwrap();
+    let secret = secrets.join("auth.json");
+    let token = r#"{"refresh_token":"fake-refresh-token"}"#;
+    std::fs::write(&secret, token).unwrap();
+    let install = |repo: &Path| {
+        Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+            .env("HOME", &home)
+            .args(["hooks", "install", repo.to_str().unwrap()])
+            .output()
+            .unwrap()
+    };
+
+    // Relative link text, exactly as `git clone` materializes a committed link.
+    let repo = temp.path().join("linked-file");
+    std::fs::create_dir_all(repo.join(".claude")).unwrap();
+    let link = repo.join(".claude/settings.json");
+    symlink("../../home/.codex/auth.json", &link).unwrap();
+    let output = install(&repo);
+    assert!(
+        !output.status.success(),
+        "a settings.json symlink was followed"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("symlink"));
+    assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+    assert_eq!(std::fs::read_to_string(&secret).unwrap(), token);
+
+    let repo = temp.path().join("linked-dir");
+    std::fs::create_dir_all(&repo).unwrap();
+    symlink("../home/.codex", repo.join(".claude")).unwrap();
+    let output = install(&repo);
+    assert!(!output.status.success(), "a .claude symlink was followed");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("symlink"));
+    let entries: Vec<_> = std::fs::read_dir(&secrets).unwrap().collect();
+    assert_eq!(entries.len(), 1, "install wrote into the link target");
+    assert_eq!(std::fs::read_to_string(&secret).unwrap(), token);
+
+    // Control: an ordinary checkout still installs, and re-installs in place.
+    let repo = temp.path().join("plain");
+    std::fs::create_dir_all(&repo).unwrap();
+    assert!(install(&repo).status.success());
+    assert!(install(&repo).status.success());
+    let settings: Value =
+        serde_json::from_str(&std::fs::read_to_string(repo.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert!(settings["hooks"]["SessionStart"].is_array());
+}
+
 #[test]
 fn claude_hook_upgrade_preserves_mixed_handlers_and_settings() {
     let original = json!({"permissions":{"allow":["Read"]},"hooks":{"PreToolUse":[
@@ -1815,6 +1873,14 @@ fn hook_context(output: &str) -> String {
         .to_owned()
 }
 
+/// Requests the test daemon has served for one endpoint group so far.
+fn served_requests(root: &Path, group: &str) -> u64 {
+    let metrics: Value = serde_json::from_str(&cli(root, &["metrics", "--json"], None)).unwrap();
+    metrics["metrics"]["requests_ms"][group]["count"]
+        .as_u64()
+        .unwrap()
+}
+
 #[test]
 fn pretool_file_briefs_carry_checked_spans_once_per_file() {
     let temp = TempDir::new().unwrap();
@@ -1961,5 +2027,114 @@ fn a_new_task_rebriefs_a_file_only_when_its_listed_sources_change() {
         "{rebrief}"
     );
     assert_eq!(brief(), None, "once per task");
+    cli(root, &["daemon", "stop"], None);
+}
+
+/// A file already considered for the task gets no brief whatever its shape,
+/// so the hook must not query the daemon for that shape again.
+#[test]
+fn pretool_skips_the_shape_query_for_a_file_briefed_for_the_task() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::write(repo.join("engine.rs"), "pub fn step() -> u32 {\n    1\n}\n").unwrap();
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let task = |prompt: &str| {
+        cli(
+            root,
+            &["hook", "prompt"],
+            Some(json!({"session_id":"settled","cwd":repo,"prompt":prompt})),
+        );
+    };
+    let read = json!({"session_id":"settled","cwd":repo,"tool_name":"Read",
+        "tool_input":{"file_path":repo.join("engine.rs")}});
+    // File shapes are the only `world` requests a pre-tool hook makes.
+    let pretool = || {
+        let before = served_requests(root, "world");
+        let context = hook_context(&cli(root, &["hook", "pretool"], Some(read.clone())));
+        (served_requests(root, "world") - before, context)
+    };
+
+    task("Make step return two");
+    let (queries, first) = pretool();
+    assert_eq!(queries, 1);
+    assert!(
+        first.contains("# Indexed reference data: engine.rs"),
+        "{first}"
+    );
+    let (queries, repeat) = pretool();
+    assert_eq!(queries, 0, "the file was briefed for this task");
+    assert!(!repeat.contains("# Indexed reference data"), "{repeat}");
+    // A new task considers the file again, which needs its shape.
+    task("Make step return three");
+    assert_eq!(pretool().0, 1);
+    assert_eq!(pretool().0, 0);
+    cli(root, &["daemon", "stop"], None);
+}
+
+/// Every path a tool call names inside one Git repository belongs to the
+/// project its first path resolves to, so the hook looks the project up once.
+#[test]
+fn pretool_looks_up_a_repository_once_for_all_its_paths() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(repo.join("src/nested")).unwrap();
+    let files = [
+        "lib.rs",
+        "src/a.rs",
+        "src/b.rs",
+        "src/nested/c.rs",
+        "src/nested/d.rs",
+    ];
+    for file in files {
+        std::fs::write(repo.join(file), "pub fn compute() -> u32 { 1 }\n").unwrap();
+    }
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "initial"]);
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    cli(
+        root,
+        &["hook", "prompt", "--codex"],
+        Some(json!({"session_id":"lookups","cwd":repo,"prompt":"Update compute everywhere"})),
+    );
+    let pretool = |id: &str, paths: &[&str]| {
+        let mut patch = String::from("*** Begin Patch\n");
+        for file in paths {
+            let file = repo.join(file);
+            writeln!(patch, "*** Update File: {}\n@@\n-old\n+new", file.display()).unwrap();
+        }
+        patch.push_str("*** End Patch");
+        cli(
+            root,
+            &["hook", "pretool", "--codex"],
+            Some(
+                json!({"session_id":"lookups","cwd":repo,"tool_name":"apply_patch",
+                "tool_use_id":id,"tool_input":{"command":patch}}),
+            ),
+        );
+    };
+    // The first call opens the episode, which records its checkouts.
+    pretool("patch-1", &files[..1]);
+    let before = served_requests(root, "projects");
+    let mut paths = files.to_vec();
+    paths.push("src/new/e.rs");
+    pretool("patch-2", &paths);
+    assert_eq!(
+        served_requests(root, "projects") - before,
+        2,
+        "one lookup and one resolve for the repository"
+    );
+    let sessions = engram::agenthooks::project_sessions(root, "lookups");
+    assert_eq!(sessions.len(), 1);
+    let mut recent = engram::agenthooks::recent_paths(root, &sessions[0].0);
+    recent.sort_unstable();
+    paths.sort_unstable();
+    assert_eq!(
+        recent, paths,
+        "every path keeps its repository-relative name"
+    );
     cli(root, &["daemon", "stop"], None);
 }

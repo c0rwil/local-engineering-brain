@@ -523,6 +523,37 @@ pub fn tool_path_directory(path: &Path) -> PathBuf {
     directory
 }
 
+/// Resolved tool paths grouped by the repository holding them, in first-seen
+/// order: the first member's directory, to look the project up from, and the
+/// members. The repository is the nearest ancestor with a `.git` entry (a
+/// directory, or a file in linked worktrees and submodules), found from file
+/// metadata alone, so one lookup serves every path in it. A path with no such
+/// ancestor, or inside a Git directory, is a group of its own.
+#[must_use]
+pub fn group_by_git_root(paths: &[PathBuf]) -> Vec<(PathBuf, Vec<&Path>)> {
+    let mut groups: Vec<(Option<PathBuf>, PathBuf, Vec<&Path>)> = Vec::new();
+    for path in paths {
+        let directory = tool_path_directory(path);
+        let root = directory
+            .ancestors()
+            // Git finds no work tree for a Git directory's own files.
+            .take_while(|ancestor| !ancestor.ends_with(".git"))
+            .find(|ancestor| ancestor.join(".git").exists())
+            .map(Path::to_path_buf);
+        match groups
+            .iter_mut()
+            .find(|(key, ..)| root.is_some() && *key == root)
+        {
+            Some((.., members)) => members.push(path),
+            None => groups.push((root, directory, vec![path])),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(_, directory, members)| (directory, members))
+        .collect()
+}
+
 /// Resolve explicit tool workdirs or the first file's containing directory.
 #[must_use]
 pub fn tool_directory(cwd: &Path, input: &serde_json::Value) -> PathBuf {
@@ -1082,6 +1113,22 @@ pub fn claim_file_brief(
         .ok()
         .is_some_and(|bytes| write_private_sidecar(&path, &bytes).is_ok());
     deliver && recorded
+}
+
+/// Whether [`claim_file_brief`] would skip `file_path` for `task_text`
+/// whatever its brief: the file was considered for this task already, or it
+/// is new and the records are full. Reads only, so a caller can skip building
+/// the brief.
+#[must_use]
+pub fn file_brief_settled(state_dir: &Path, scope: &str, file_path: &str, task_text: &str) -> bool {
+    // No task digest is empty, so a path from an older one-path-per-line list
+    // is never settled here: only a claim pins it to the current task.
+    let records = read_brief_records(&session_files_path(state_dir, scope), "");
+    let task = crate::experience::sha256(task_text.as_bytes());
+    match records.get(file_path) {
+        Some(record) => record.task == task,
+        None => records.len() >= MAX_BRIEFED_FILES,
+    }
 }
 
 fn read_brief_records(path: &Path, task: &str) -> BTreeMap<String, BriefRecord> {
@@ -3959,6 +4006,68 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tool_paths_group_by_their_nearest_git_root() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let repo = temp.path().join("repo");
+        let nested = repo.join("vendor/nested");
+        let worktree = temp.path().join("worktree");
+        for directory in [repo.join("src"), nested.clone(), worktree.clone()] {
+            std::fs::create_dir_all(directory).expect("directory");
+        }
+        std::fs::create_dir(repo.join(".git")).expect("git directory");
+        std::fs::create_dir(nested.join(".git")).expect("nested git directory");
+        // A linked worktree's `.git` is a file naming its Git directory.
+        std::fs::write(worktree.join(".git"), "gitdir: ../repo/.git/worktrees/w\n")
+            .expect("git file");
+        let paths = [
+            repo.join("src/a.rs"),
+            nested.join("b.rs"),
+            repo.join("README.md"),
+            worktree.join("c.rs"),
+            repo.join("src/new/d.rs"),
+        ];
+        let members = |indices: &[usize]| -> Vec<&Path> {
+            indices
+                .iter()
+                .map(|&index| paths[index].as_path())
+                .collect()
+        };
+        assert_eq!(
+            group_by_git_root(&paths),
+            [
+                (repo.join("src"), members(&[0, 2, 4])),
+                (nested, members(&[1])),
+                (worktree, members(&[3])),
+            ]
+        );
+    }
+
+    #[test]
+    fn tool_paths_outside_a_work_tree_are_grouped_one_by_one() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let plain = temp.path().join("plain");
+        let git_dir = temp.path().join("repo/.git");
+        std::fs::create_dir_all(&plain).expect("plain directory");
+        std::fs::create_dir_all(git_dir.join("info")).expect("git directory");
+        let paths = [
+            plain.join("a.rs"),
+            plain.join("b.rs"),
+            // A Git directory's own files belong to no work tree.
+            git_dir.join("config"),
+            git_dir.join("info/exclude"),
+        ];
+        assert_eq!(
+            group_by_git_root(&paths),
+            [
+                (plain.clone(), vec![paths[0].as_path()]),
+                (plain, vec![paths[1].as_path()]),
+                (git_dir.clone(), vec![paths[2].as_path()]),
+                (git_dir.join("info"), vec![paths[3].as_path()]),
+            ]
+        );
+    }
+
     fn brief_of<'a>(file_path: &'a str, symbols: &'a [BriefSymbol]) -> FileBrief<'a> {
         FileBrief {
             file_path,
@@ -4040,6 +4149,69 @@ mod tests {
             &brief_of("src/b.rs", &symbols),
             "next task"
         ));
+    }
+
+    #[test]
+    fn a_settled_file_brief_is_known_without_the_brief() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let symbols = [def("Function", "run", None)];
+        let brief = brief_of("src/a.rs", &symbols);
+        let settled = |file: &str, task: &str| file_brief_settled(temp.path(), "s", file, task);
+        // An absent file, with room in the records, is briefed.
+        assert!(!settled("src/a.rs", "task"));
+        assert!(claim_file_brief(temp.path(), "s", &brief, "task"));
+        // The same task: skipped whatever the brief would hold.
+        assert!(settled("src/a.rs", "task"));
+        assert!(!claim_file_brief(temp.path(), "s", &brief, "task"));
+        // A new task considers the file once more, which needs its brief.
+        assert!(!settled("src/a.rs", "next task"));
+        assert!(!settled("src/b.rs", "task"));
+    }
+
+    #[test]
+    fn a_full_brief_record_set_settles_only_files_it_lacks() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let task = crate::experience::sha256(b"task");
+        let records: BTreeMap<String, BriefRecord> = (0..MAX_BRIEFED_FILES)
+            .map(|n| {
+                let record = BriefRecord {
+                    task: task.clone(),
+                    sources: String::new(),
+                };
+                (format!("src/{n}.rs"), record)
+            })
+            .collect();
+        write_private_sidecar(
+            &session_files_path(temp.path(), "s"),
+            &serde_json::to_vec(&records).expect("records"),
+        )
+        .expect("full records");
+        let symbols = [def("Function", "run", None)];
+        let absent = brief_of("src/new.rs", &symbols);
+        let settled = |file: &str, task: &str| file_brief_settled(temp.path(), "s", file, task);
+        assert!(settled("src/new.rs", "task"));
+        assert!(settled("src/new.rs", "next task"));
+        assert!(!claim_file_brief(temp.path(), "s", &absent, "task"));
+        // A recorded file still needs its brief under a new task.
+        assert!(settled("src/0.rs", "task"));
+        assert!(!settled("src/0.rs", "next task"));
+    }
+
+    #[test]
+    fn an_older_brief_list_settles_a_file_only_after_a_claim() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let path = session_files_path(temp.path(), "s");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(&path, "src/a.rs\n").expect("legacy list");
+        let symbols = [def("Function", "alpha", None)];
+        let brief = brief_of("src/a.rs", &symbols);
+        let settled = |task: &str| file_brief_settled(temp.path(), "s", "src/a.rs", task);
+        // The claim pins the listed paths to the current task. Skipping it
+        // would leave them briefed for every later task too.
+        assert!(!settled("current task"));
+        assert!(!claim_file_brief(temp.path(), "s", &brief, "current task"));
+        assert!(settled("current task"));
+        assert!(!settled("next task"));
     }
 
     #[test]

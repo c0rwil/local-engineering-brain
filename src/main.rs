@@ -3248,6 +3248,19 @@ fn run_hook_payload(
                 let source_run = source_run
                     .or_else(|| engram::agenthooks::context_run_id(&state_dir, &delivery_scope));
                 for relative in observed_paths {
+                    // The shape query costs a daemon round trip and several
+                    // graph reads. Skip it when no brief could be delivered:
+                    // no output budget is left, or the outcome is settled.
+                    if byte_limit <= pretool_context.len()
+                        || engram::agenthooks::file_brief_settled(
+                            &state_dir,
+                            &delivery_scope,
+                            &relative,
+                            &prompt,
+                        )
+                    {
+                        continue;
+                    }
                     let Ok(shape) =
                         block_on(client.file_shape(&engram::daemon::FileShapeRequest {
                             project_id: project_id.clone(),
@@ -3660,6 +3673,8 @@ fn open_declared_task(
 }
 
 /// Route already resolved tool paths once and retain each repository's actual paths.
+/// The project is looked up once per Git repository, not once per path: each
+/// lookup costs the daemon a Git discovery.
 fn hook_tool_projects(
     client: &engram::daemon::DaemonClient,
     target_dir: &Path,
@@ -3667,14 +3682,11 @@ fn hook_tool_projects(
 ) -> Vec<(ProjectStatus, Vec<String>)> {
     let mut projects: Vec<(ProjectStatus, Vec<String>)> = Vec::new();
     let targets = if tool_paths.is_empty() {
-        vec![(target_dir.to_path_buf(), None)]
+        vec![(target_dir.to_path_buf(), Vec::new())]
     } else {
-        tool_paths
-            .iter()
-            .map(|path| (engram::agenthooks::tool_path_directory(path), Some(path)))
-            .collect()
+        engram::agenthooks::group_by_git_root(tool_paths)
     };
-    for (directory, path) in targets {
+    for (directory, members) in targets {
         let Ok(lookup) = block_on(client.lookup_project(&directory)) else {
             continue;
         };
@@ -3694,8 +3706,9 @@ fn hook_tool_projects(
             projects.len() - 1
         };
         let (resolved, paths) = &mut projects[index];
-        if let Some(relative) =
-            path.and_then(|path| path.strip_prefix(&resolved.resolved.root).ok())
+        for relative in members
+            .iter()
+            .filter_map(|path| path.strip_prefix(&resolved.resolved.root).ok())
         {
             let relative = relative.to_string_lossy().into_owned();
             if !paths.contains(&relative) {
@@ -4471,6 +4484,50 @@ fn install_codex_hooks() -> Result<()> {
     Ok(())
 }
 
+/// Resolve `settings.json` inside a repository's `.claude` directory without
+/// following symlinks. Repository content is untrusted: a committed link at
+/// either path would make the install read a file outside the checkout, and
+/// the atomic replace would then copy it (credentials included) into the
+/// working tree, or write into the directory the link names.
+fn repo_settings_path(settings_dir: &Path) -> Result<PathBuf> {
+    if entry_type_no_follow(settings_dir)?.is_none() {
+        std::fs::create_dir_all(settings_dir)
+            .map_err(|error| engram::Error::Config(format!("settings dir: {error}")))?;
+    }
+    if !entry_type_no_follow(settings_dir)?.is_some_and(|kind| kind.is_dir()) {
+        return Err(engram::Error::Config(format!(
+            "{} is not a directory",
+            settings_dir.display()
+        )));
+    }
+    let settings_path = settings_dir.join("settings.json");
+    if entry_type_no_follow(&settings_path)?.is_some_and(|kind| !kind.is_file()) {
+        return Err(engram::Error::Config(format!(
+            "{} is not a regular file",
+            settings_path.display()
+        )));
+    }
+    Ok(settings_path)
+}
+
+/// The type of the entry at `path` itself (`None` when absent). A symlink is
+/// an error, never followed.
+fn entry_type_no_follow(path: &Path) -> Result<Option<std::fs::FileType>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_symlink() => Err(engram::Error::Config(format!(
+            "{} is a symlink; refusing to follow it because repository content \
+             is untrusted (replace it with a regular file or directory)",
+            path.display()
+        ))),
+        Ok(metadata) => Ok(Some(metadata.file_type())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(engram::Error::Config(format!(
+            "{}: {error}",
+            path.display()
+        ))),
+    }
+}
+
 fn run_hooks_action(action: &HooksAction) -> Result<bool> {
     use std::io::Write as _;
     let binary = native_hook_command()?;
@@ -4480,14 +4537,17 @@ fn run_hooks_action(action: &HooksAction) -> Result<bool> {
             println!("{}", serde_json::to_string_pretty(&hooks)?);
         }
         HooksAction::Install { repo, global } => {
-            let settings_dir = if *global {
-                dirs_home().join(".claude")
+            let (settings_dir, settings_path) = if *global {
+                let dir = dirs_home().join(".claude");
+                std::fs::create_dir_all(&dir)
+                    .map_err(|error| engram::Error::Config(format!("settings dir: {error}")))?;
+                let path = dir.join("settings.json");
+                (dir, path)
             } else {
-                repo.join(".claude")
+                let dir = repo.join(".claude");
+                let path = repo_settings_path(&dir)?;
+                (dir, path)
             };
-            std::fs::create_dir_all(&settings_dir)
-                .map_err(|error| engram::Error::Config(format!("settings dir: {error}")))?;
-            let settings_path = settings_dir.join("settings.json");
             let settings = match std::fs::read_to_string(&settings_path) {
                 Ok(content) => serde_json::from_str(&content)?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),

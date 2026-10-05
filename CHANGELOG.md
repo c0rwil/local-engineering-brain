@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `engram hooks install <repo>` now refuses a symlinked `.claude` directory or
+  `.claude/settings.json` in the repository. A cloned repository could commit
+  such a link to a credential file outside the checkout (for example
+  `~/.codex/auth.json`); the install read it and the atomic replace copied it,
+  hooks appended, into the working tree, where a routine commit would publish
+  it. `--global` installs into `~/.claude` are unchanged.
 - The injection screen (rules `injection-screen-v3`) catches two evasions of
   its override rules. Every rule runs on the text and on a copy in which
   Cyrillic, Greek and Armenian letters that render as Latin are folded, so
