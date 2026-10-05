@@ -205,9 +205,30 @@ links, and dry-run scans of the four company repositories find no stale links.
 The next hook delivery in this session carried only the brief of the file being
 read.
 
-Next for context efficiency: hooks resend the whole pack whenever it changes,
-so items the session already holds are delivered again. In the one session
-with full attribution, 82% of delivered tokens repeated earlier deliveries,
-96% for linked lessons. Delivering each item once per session, and again after
-compaction, needs a paired run before it ships, because repetition may also
-act as a reminder.
+Effectiveness now reports which project supplied each project's selected
+context (`selected_by_origin`). Over the seven days before this pass, linked
+repositories supplied most of it: `platform` 84% (source pointers into the API
+service it calls), `mobile` 62%, `agents` 59%, the backend 40%.
+
+Next for context efficiency, each needing a measurement before it ships:
+
+- **Linked lessons.** A lesson travels to a linked repository's sessions when
+  any of its terms appears in the task text (claim coverage above 0). Five of
+  the backend's validated lessons, including the history of one merged pull
+  request, reached 60–90% of all `agents` and `mobile` runs. In the seeded
+  calibration tickets, relevant lessons cover 0.13–0.30 of their terms and
+  irrelevant ones up to 0.21, so no coverage threshold separates them. A floor
+  of 0.10 would remove about 60% of linked-lesson tokens but still pass
+  repository-internal history on generic words such as "PR" and "staging".
+  The retrieval probes disable linked projects, so none of these gates can be
+  checked today. First step: labeled cross-repo probes sampled from live
+  injections. Candidates to evaluate: marking lessons as cross-repo or
+  repository-internal at validation, a coverage floor, and requiring the
+  lesson to name the consuming repository or a shared interface.
+- **Repeated delivery.** Hooks resend the whole pack whenever it changes, so
+  items the session already holds are delivered again. In the one session with
+  full attribution, 82% of delivered tokens repeated earlier deliveries, 96%
+  for linked lessons. Delivering each item once per session needs a reset on
+  compaction, which hooks do not handle yet (`SessionStart` with source
+  `compact` is treated as a resume), and a paired run, because repetition may
+  also act as a reminder.
