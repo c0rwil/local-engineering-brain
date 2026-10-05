@@ -135,6 +135,19 @@ pub struct SourceDelivery {
     pub estimated_tokens: u64,
 }
 
+/// Selected items grouped by the project that supplied them.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct OriginDelivery {
+    /// None when the item's lesson, source node or evidence no longer exists.
+    pub project_id: Option<ProjectId>,
+    pub project_name: Option<String>,
+    /// The reported project itself rather than a linked repository.
+    pub own: bool,
+    pub items: u64,
+    pub runs: u64,
+    pub estimated_tokens: u64,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct ContextCoverage {
     pub runs: u64,
@@ -149,6 +162,49 @@ pub struct ContextCoverage {
     pub compiled_bytes: u64,
     /// Selected items only. Historical storage does not retain candidate kinds.
     pub selected_by_source: BTreeMap<String, SourceDelivery>,
+    /// Selected items by supplying project, most tokens first. Lessons and
+    /// source pointers from linked repositories appear under their project.
+    #[serde(default)]
+    pub selected_by_origin: Vec<OriginDelivery>,
+}
+
+impl ContextCoverage {
+    /// How much selected context came from linked repositories, naming the
+    /// largest suppliers. None when the project supplied all of it.
+    #[must_use]
+    pub fn origin_line(&self) -> Option<String> {
+        let total: u64 = self
+            .selected_by_origin
+            .iter()
+            .map(|origin| origin.estimated_tokens)
+            .sum();
+        let linked = self
+            .selected_by_origin
+            .iter()
+            .filter(|origin| !origin.own && origin.project_id.is_some())
+            .collect::<Vec<_>>();
+        let linked_tokens: u64 = linked.iter().map(|origin| origin.estimated_tokens).sum();
+        if total == 0 || linked_tokens == 0 {
+            return None;
+        }
+        let percent = |tokens: u64| (tokens.saturating_mul(100) + total / 2) / total;
+        let suppliers = linked
+            .iter()
+            .take(4)
+            .map(|origin| {
+                format!(
+                    "{} {}%",
+                    origin.project_name.as_deref().unwrap_or("unknown"),
+                    percent(origin.estimated_tokens)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!(
+            "  linked repositories supplied {}% of selected context tokens ({suppliers})",
+            percent(linked_tokens)
+        ))
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -539,6 +595,7 @@ fn project_report(
         .values()
         .map(|source| source.items)
         .sum();
+    contexts.selected_by_origin = selected_by_origin(connection, id, since, until)?;
     let memories = memory_coverage(connection, id)?;
     let usage = read_usage(connection, id, since, until, None)?;
     let mut groups_statement = connection.prepare("SELECT DISTINCT source, provider, model, mode FROM resource_usage WHERE project_id = ?1 AND observed_at_ms >= ?2 AND observed_at_ms < ?3 ORDER BY source, provider, model, mode")?;
@@ -594,6 +651,52 @@ fn project_report(
         context_use,
         verification_status: VerificationStatus::default(),
     })
+}
+
+/// Selected items in the window grouped by the project whose lesson, source
+/// node or evidence they came from, most tokens first.
+fn selected_by_origin(
+    connection: &Connection,
+    id: &ProjectId,
+    since: i64,
+    until: i64,
+) -> Result<Vec<OriginDelivery>> {
+    let mut statement = connection.prepare(
+        "SELECT coalesce(m.project_id, n.project_id, e.project_id) AS origin, p.name,
+                count(*), count(DISTINCT c.id), sum(i.tokens)
+         FROM context_items i JOIN context_runs c ON c.id = i.context_run_id
+         LEFT JOIN memories m ON m.id = i.source_id
+         LEFT JOIN nodes n ON n.id = i.source_id
+         LEFT JOIN evidence e ON e.id = i.source_id
+         LEFT JOIN projects p ON p.id = coalesce(m.project_id, n.project_id, e.project_id)
+         WHERE c.project_id = ?1 AND c.created_at_ms >= ?2 AND c.created_at_ms < ?3
+         GROUP BY origin ORDER BY sum(i.tokens) DESC, origin",
+    )?;
+    let origins = statement
+        .query_map(params![id.as_str(), since, until], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                read_count(row, 2)?,
+                read_count(row, 3)?,
+                read_count(row, 4)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    origins
+        .into_iter()
+        .map(|(origin, project_name, items, runs, estimated_tokens)| {
+            let project_id = origin.as_deref().map(ProjectId::parse).transpose()?;
+            Ok(OriginDelivery {
+                own: project_id.as_ref() == Some(id),
+                project_id,
+                project_name,
+                items,
+                runs,
+                estimated_tokens,
+            })
+        })
+        .collect()
 }
 
 fn memory_coverage(connection: &Connection, id: &ProjectId) -> Result<MemoryCoverage> {
@@ -861,6 +964,47 @@ mod tests {
             10
         );
         assert_eq!(project.contexts.candidate_count, 3);
+    }
+
+    #[test]
+    fn selected_context_is_attributed_to_the_project_that_supplied_it() {
+        let (_temp, database, project, _task, context) = fixture();
+        let linked = ProjectId::new();
+        database.write_immediate(|tx| {
+            tx.execute("INSERT INTO projects (id,name,created_at_ms) VALUES (?1,'service',100)", [linked.as_str()])?;
+            for (memory, owner) in [("mem_fixture", project.as_str()), ("mem_linked", linked.as_str())] {
+                tx.execute("INSERT INTO memories (id,project_id,scope_type,scope_id,kind,epistemic_state,status,claim,normalized_claim,rationale,confidence,importance,tags_json,token_estimate,known_from_ms,trust_source,updated_at_ms) VALUES (?1,?2,'project',?2,'rule','validated','active','claim',?1,'why',0.9,0.5,'[]',10,100,'test',100)", params![memory, owner])?;
+            }
+            tx.execute("INSERT INTO nodes (id,project_id,kind,stable_key,label,current_digest,source_kind,source_ref,extractor_version,observed_at_ms) VALUES ('nod_linked',?1,'function','service::handler','handler','digest','tree-sitter','src/lib.rs','v3',100)", [linked.as_str()])?;
+            tx.execute("INSERT INTO context_items (context_run_id,ordinal,source_type,source_id,score,tokens,why_json) VALUES (?1,1,'linked_memory','mem_linked',1.0,20,'{}')", [context.as_str()])?;
+            tx.execute("INSERT INTO context_items (context_run_id,ordinal,source_type,source_id,score,tokens,why_json) VALUES (?1,2,'code','nod_linked',1.0,10,'{}')", [context.as_str()])?;
+            tx.execute("INSERT INTO context_items (context_run_id,ordinal,source_type,source_id,score,tokens,why_json) VALUES (?1,3,'code','nod_deleted',1.0,5,'{}')", [context.as_str()])?;
+            Ok(())
+        }).expect("fixtures");
+        let report = EffectivenessStore::new(database)
+            .report(&period())
+            .expect("report");
+        let contexts = &report
+            .projects
+            .iter()
+            .find(|p| p.project_id == project)
+            .expect("project")
+            .contexts;
+        let origins = &contexts.selected_by_origin;
+        assert_eq!(origins.len(), 3, "{origins:?}");
+        assert_eq!(origins[0].project_id.as_ref(), Some(&linked));
+        assert!(!origins[0].own);
+        assert_eq!((origins[0].items, origins[0].estimated_tokens), (2, 30));
+        assert_eq!(origins[1].project_id.as_ref(), Some(&project));
+        assert!(origins[1].own);
+        assert_eq!(origins[1].estimated_tokens, 10);
+        assert_eq!(origins[2].project_id, None);
+        assert_eq!(origins[2].estimated_tokens, 5);
+        // 30 of 45 tokens came from the linked project.
+        assert_eq!(
+            contexts.origin_line().as_deref(),
+            Some("  linked repositories supplied 67% of selected context tokens (service 67%)")
+        );
     }
 
     #[test]

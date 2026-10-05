@@ -5278,6 +5278,9 @@ fn run_effectiveness(
                 project.memories.active_validated,
                 project.memories.pending_reviews
             );
+            if let Some(line) = project.contexts.origin_line() {
+                println!("{line}");
+            }
             for line in project.context_use.summary_lines() {
                 println!("{line}");
             }

@@ -73,6 +73,13 @@ not yet stable, and the schema version is 7.
 
 ### Added
 
+- Effectiveness attributes selected context to the project that supplied it
+  (`contexts.selected_by_origin`). Lessons, source pointers and evidence from
+  linked repositories count under their own project, so `engram
+  effectiveness` and the browser's Effectiveness page show what share of a
+  project's context its links supply, naming the largest suppliers. Before,
+  source pointers from linked repositories counted as the project's own code,
+  and a link that supplied most of a project's context went unnoticed.
 - Codex verification runs become evidence. Codex 0.155 sends hooks neither a
   shell command's exit status nor the directory it ran in (`exec_command`
   takes a `workdir`; the payload `cwd` is the session's). Its paginated
