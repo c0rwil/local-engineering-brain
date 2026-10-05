@@ -176,3 +176,13 @@ hooks that still await trust.
 | 3. Proof | Held-out collection runner, report and import; a login check before every attempt; inspected resume after infrastructure stops | The held-out collection stopped after one attempt because the Claude Code login had expired before the agent started. That attempt is kept as an infrastructure attempt |
 | 4. Safety | A loopback Host and Origin guard on `engram-proxy`; agent-written task prompts screened before the judge | No false positives on the backup's prompts |
 | Maintenance | Job-row retention; recurring vault exports; hidden projects skipped by automatic exports | 30 of 123 live job rows are past retention |
+
+### Fourth pass (2026-10-04, late)
+
+| Workstream | Added | Measured or found |
+|---|---|---|
+| 0. Capture | Codex verification results read from the calling thread's rollout transcript; the rollout's directory attributes Codex commands to the right project | Codex 0.155 sends no exit status to hooks. In local rollouts, 56% of Codex commands ran outside the session directory |
+| 1. Evidence and judge | `engram review reverify` (operator-run, disposable worktree, strict command screen); `engram review expire` and `reopen` with a terminal `expired` status; episodes record their checkouts, so one repository's run cannot void another's pass | Of the 135 pending reviews, only 27 have runnable recorded commands, and only 5 could become judge-eligible if those pass. Expiry would close 114 once they age past 14 days. A review of the new code found no correctness defects; two screen gaps (`make test deploy` and code-loading environment variables) are fixed |
+| 2. Context efficiency | File briefs refresh once per task when their sources change | About 1 KB per re-brief, at most one per file per task |
+
+The held-out benchmark (Claude arm) is prepared and checks the Claude Code login before every attempt. Collection resumes after the operator signs in again.
