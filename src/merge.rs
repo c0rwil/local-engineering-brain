@@ -171,6 +171,7 @@ pub const TABLE_ROLES: &[(&str, TableRole)] = &[
     ("usage_events", TableRole::FollowsParent),
     ("memory_compact_injections", TableRole::FollowsParent),
     ("lesson_judgments", TableRole::FollowsParent),
+    ("lesson_review_actions", TableRole::FollowsParent),
     ("task_signals", TableRole::FollowsParent),
     ("memory_expiry", TableRole::FollowsParent),
 ];

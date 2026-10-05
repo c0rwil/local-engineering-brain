@@ -180,17 +180,50 @@ pub(super) struct LiveSources {
     /// Recorded revisions (normalized) at which every touched file has exactly
     /// its live and indexed content, so a newer live HEAD is immaterial.
     pub unchanged_revisions: Vec<String>,
+    /// Recorded revisions (normalized) at which at least one touched file has
+    /// content that differs from its live content. A revision in neither list
+    /// is unknown: missing, ambiguous, unread or not compared.
+    pub changed_revisions: Vec<String>,
     /// Git did not answer within the review's budget; revisions are unknown.
     pub git_timed_out: bool,
 }
 
 impl LiveSources {
+    /// An episode over the touched-file limit: nothing is read.
+    fn too_many_files() -> Self {
+        Self {
+            indexed: Vec::new(),
+            live: json!({"too_many_files": true}),
+            issue: Some(TOO_MANY_FILES.to_owned()),
+            unanchored: Vec::new(),
+            unchanged_revisions: Vec::new(),
+            changed_revisions: Vec::new(),
+            git_timed_out: false,
+        }
+    }
+
     /// Whether a recorded revision differs from the live HEAD only in files the
     /// task did not touch.
     pub(super) fn revision_immaterial(&self, revision: &str) -> bool {
         normalized_revision(revision)
             .is_some_and(|revision| self.unchanged_revisions.contains(&revision))
     }
+
+    /// Whether a touched file's content at a recorded revision is known to
+    /// differ from its live content.
+    pub(super) fn revision_changed(&self, revision: &str) -> bool {
+        normalized_revision(revision)
+            .is_some_and(|revision| self.changed_revisions.contains(&revision))
+    }
+}
+
+/// Recorded revisions compared with the touched files' live content.
+#[derive(Default)]
+struct RevisionComparison {
+    /// Every touched file has exactly its live content.
+    unchanged: Vec<String>,
+    /// At least one touched file has other content.
+    changed: Vec<String>,
 }
 
 struct Checkout {
@@ -232,14 +265,7 @@ pub(super) fn live_sources(
     let deadline = Instant::now() + git.budget;
     let recorded = load(database, project_id, task_id)?;
     if recorded.touched.len() > MAX_TOUCHED_FILES {
-        return Ok(LiveSources {
-            indexed: Vec::new(),
-            live: json!({"too_many_files": true}),
-            issue: Some(TOO_MANY_FILES.to_owned()),
-            unanchored: Vec::new(),
-            unchanged_revisions: Vec::new(),
-            git_timed_out: false,
-        });
+        return Ok(LiveSources::too_many_files());
     }
     let (checkouts, access_denied) = checkouts(project_id, &recorded);
     // An alias the daemon may not read hides files rather than removing them.
@@ -293,17 +319,20 @@ pub(super) fn live_sources(
         anchors,
         &mut issues,
     );
-    let unchanged_revisions = match (task_checkout, head.as_deref(), &files.comparable) {
+    let RevisionComparison {
+        unchanged: unchanged_revisions,
+        changed: changed_revisions,
+    } = match (task_checkout, head.as_deref(), &files.comparable) {
         (Some(index), Some(current), Some(comparable)) => {
             let root = &checkouts[index].root;
             immaterial_revisions(git, root, deadline, current, &revisions, comparable)
                 .unwrap_or_else(|| {
                     git_timed_out = true;
                     issues.add(GIT_TIMEOUT);
-                    Vec::new()
+                    RevisionComparison::default()
                 })
         }
-        _ => Vec::new(),
+        _ => RevisionComparison::default(),
     };
     if head
         .as_deref()
@@ -330,6 +359,7 @@ pub(super) fn live_sources(
         issue: issues.first(),
         unanchored: files.unanchored,
         unchanged_revisions,
+        changed_revisions,
         git_timed_out,
     })
 }
@@ -535,10 +565,11 @@ fn normalized_revision(revision: &str) -> Option<String> {
         .then(|| revision.to_ascii_lowercase())
 }
 
-/// Recorded revisions behind the live HEAD that are immaterial: every touched
-/// file still has exactly the content it had at that revision. At most
-/// `MAX_REVISION_CHECKS` distinct revisions are compared, the task's own first.
-/// A task without touched files has nothing to compare and gets none.
+/// Compare the recorded revisions behind the live HEAD with the touched
+/// files. A revision is immaterial when every touched file still has exactly
+/// the content it had at that revision, and changed when one has other
+/// content. At most `MAX_REVISION_CHECKS` distinct revisions are compared, the
+/// task's own first. A task without touched files has nothing to compare.
 /// `None` when Git did not finish before `deadline`.
 fn immaterial_revisions(
     git: &GitRunner,
@@ -547,7 +578,7 @@ fn immaterial_revisions(
     head: &str,
     revisions: &[String],
     files: &[(String, String)],
-) -> Option<Vec<String>> {
+) -> Option<RevisionComparison> {
     let mut differing: Vec<String> = Vec::new();
     for revision in revisions {
         if same_revision(revision, head) {
@@ -560,38 +591,39 @@ fn immaterial_revisions(
         }
     }
     if differing.is_empty() || files.is_empty() {
-        return Some(Vec::new());
+        return Some(RevisionComparison::default());
     }
-    files_unchanged_since(git, root, deadline, differing, files.to_vec())
+    compare_revisions(git, root, deadline, differing, files.to_vec())
 }
 
-/// The recorded revisions at which every file has exactly its live content,
-/// read through one bounded `git cat-file --batch` process in `root`. A
-/// missing, ambiguous, non-blob or oversized object leaves that revision out.
+/// Compare each file's content at each revision with its live digest through
+/// one bounded `git cat-file --batch` process in `root`. A missing,
+/// ambiguous, non-blob or oversized object neither matches nor differs.
 /// `None` when Git did not finish before `deadline`.
-fn files_unchanged_since(
+fn compare_revisions(
     git: &GitRunner,
     root: &Path,
     deadline: Instant,
     revisions: Vec<String>,
     files: Vec<(String, String)>,
-) -> Option<Vec<String>> {
+) -> Option<RevisionComparison> {
     let Ok(child) = git
         .command(root, &["cat-file", "--batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
     else {
-        return Some(Vec::new());
+        return Some(RevisionComparison::default());
     };
     let compared = within_deadline(child, deadline, move |input, output| {
-        let mut unchanged = Vec::new();
+        let mut comparison = RevisionComparison::default();
         let (Some(mut input), Some(output)) = (input, output) else {
-            return unchanged;
+            return comparison;
         };
         let mut output = std::io::BufReader::new(output);
         let mut remaining = LIVE_READ_BUDGET;
         'revisions: for revision in revisions {
+            let mut all_match = true;
             for (path, live_digest) in &files {
                 if path.contains(['\n', '\r']) {
                     continue 'revisions;
@@ -600,19 +632,26 @@ fn files_unchanged_since(
                 match read_blob(&mut input, &mut output, &object, &mut remaining) {
                     Blob::Content(bytes)
                         if crate::experience::sha256(&bytes).eq_ignore_ascii_case(live_digest) => {}
-                    Blob::Content(_) | Blob::Absent => continue 'revisions,
+                    Blob::Content(_) => {
+                        comparison.changed.push(revision);
+                        continue 'revisions;
+                    }
+                    // Unknown at this revision; another file may still differ.
+                    Blob::Absent => all_match = false,
                     // The stream position or the read budget is lost: stop.
                     Blob::Unreadable => break 'revisions,
                 }
             }
-            unchanged.push(revision);
+            if all_match {
+                comparison.unchanged.push(revision);
+            }
         }
-        unchanged
+        comparison
     });
     match compared {
-        Waited::Done(unchanged, _) => Some(unchanged),
+        Waited::Done(comparison, _) => Some(comparison),
         Waited::TimedOut => None,
-        Waited::Failed => Some(Vec::new()),
+        Waited::Failed => Some(RevisionComparison::default()),
     }
 }
 

@@ -12,6 +12,7 @@ use crate::experience::{
     AttemptOutcome, EvidenceStrength, ExperienceStore, TaskOutcome, TaskRecord,
 };
 use crate::ids::{EvidenceId, MemoryId, ProjectId, TaskId};
+use crate::judge::GateClass;
 use crate::learning::{DistillationRequest, LearningStore};
 use crate::memory::{EpistemicState, MemoryDraft, MemoryStatus, MemoryStore};
 
@@ -83,7 +84,34 @@ pub struct LessonReview {
     /// Flagged proposals are never accepted automatically.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub security_flags: Vec<crate::security::InjectionFinding>,
+    /// For an expired review in the inbox listing: its latest expiry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expiry: Option<ReviewExpiry>,
 }
+/// Why and when an operator expired a review.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ReviewExpiry {
+    pub gate_class: GateClass,
+    /// The judge's gate when the review expired.
+    pub gate_reason: String,
+    pub expired_at_ms: i64,
+}
+/// One pending review to expire, as an expiry plan saw it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PlannedExpiry {
+    pub review_id: String,
+    /// The review expires only if it has not changed since the plan.
+    pub updated_at_ms: i64,
+    pub gate_class: GateClass,
+    pub gate_reason: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReopenRequest {
+    pub id: String,
+}
+/// Statuses a review can have.
+pub const REVIEW_STATUSES: [&str; 4] = ["pending", "accepted", "rejected", "expired"];
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RelatedMemory {
     pub id: MemoryId,
@@ -139,6 +167,8 @@ pub enum LessonMutation {
     Complete(Completion),
     Review(ReviewRequest),
     Signal(Signal),
+    /// Return an expired review to pending.
+    Reopen(ReopenRequest),
 }
 
 impl ProductStore {
@@ -153,6 +183,7 @@ impl ProductStore {
                 self.signal(r)?;
                 serde_json::json!({"recorded":true,"task_acceptance_changed":false})
             }
+            LessonMutation::Reopen(r) => serde_json::to_value(self.reopen(&r.id)?)?,
         })
     }
 
@@ -310,10 +341,27 @@ impl ProductStore {
     /// # Errors
     /// Returns storage or persisted-data errors.
     pub fn reviews(&self) -> Result<Vec<LessonReview>> {
+        self.reviews_with_status(None)
+    }
+
+    /// Read the bounded review inbox, pending first, optionally only one
+    /// status. Expired reviews carry their latest expiry.
+    /// # Errors
+    /// Returns an unknown status, storage or persisted-data errors.
+    pub fn reviews_with_status(&self, status: Option<&str>) -> Result<Vec<LessonReview>> {
+        if status.is_some_and(|status| !REVIEW_STATUSES.contains(&status)) {
+            return Err(invalid(
+                "review status must be pending, accepted, rejected or expired",
+            ));
+        }
         self.database.with_reader(|c| {
-            let mut s=c.prepare("SELECT id,task_id,project_id,claim,rationale,evidence_ids_json,status,memory_id,expires_at_ms,updated_at_ms FROM lesson_reviews ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,updated_at_ms DESC,id LIMIT 200")?;
-            let rows=s.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?,r.get::<_,String>(6)?,r.get::<_,Option<String>>(7)?,r.get::<_,Option<i64>>(8)?,r.get::<_,i64>(9)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
-            rows.into_iter().map(|row| {
+            let mut s=c.prepare("SELECT r.id,r.task_id,r.project_id,r.claim,r.rationale,r.evidence_ids_json,r.status,r.memory_id,r.expires_at_ms,r.updated_at_ms,a.gate_class,a.gate_reason,a.recorded_at_ms
+                FROM lesson_reviews r LEFT JOIN lesson_review_actions a ON r.status='expired' AND a.id=(
+                    SELECT id FROM lesson_review_actions WHERE review_id=r.id AND action='expired' ORDER BY recorded_at_ms DESC,id DESC LIMIT 1)
+                WHERE ?1 IS NULL OR r.status=?1
+                ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END,r.updated_at_ms DESC,r.id LIMIT 200")?;
+            let rows=s.query_map([status],|r|Ok(((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?,r.get::<_,String>(6)?,r.get::<_,Option<String>>(7)?,r.get::<_,Option<i64>>(8)?,r.get::<_,i64>(9)?),(r.get::<_,Option<String>>(10)?,r.get::<_,Option<String>>(11)?,r.get::<_,Option<i64>>(12)?))))?.collect::<std::result::Result<Vec<_>,_>>()?;
+            rows.into_iter().map(|(row,expiry)| {
                 let mut s=c.prepare("SELECT id,claim FROM memories WHERE project_id=?1 AND status IN ('active','suspect') ORDER BY updated_at_ms DESC LIMIT 500")?;
                 let candidates=s.query_map([&row.2],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?;
                 let mut related=Vec::new();
@@ -322,9 +370,96 @@ impl ProductStore {
                     if related.len()>=8 { break; }
                 }
                 let security_flags = screen_proposal(&row.3, &row.4);
-                Ok(LessonReview { id:row.0,task_id:TaskId::parse(&row.1)?,project_id:ProjectId::parse(&row.2)?,claim:row.3,rationale:row.4,evidence_ids:serde_json::from_str(&row.5)?,status:row.6,memory_id:row.7.as_deref().map(MemoryId::parse).transpose()?,expires_at_ms:row.8,updated_at_ms:row.9,related_memories:related,security_flags })
+                let expiry = match expiry {
+                    (Some(class), Some(gate_reason), Some(expired_at_ms)) => Some(ReviewExpiry {
+                        gate_class: GateClass::parse(&class)?,
+                        gate_reason,
+                        expired_at_ms,
+                    }),
+                    _ => None,
+                };
+                Ok(LessonReview { id:row.0,task_id:TaskId::parse(&row.1)?,project_id:ProjectId::parse(&row.2)?,claim:row.3,rationale:row.4,evidence_ids:serde_json::from_str(&row.5)?,status:row.6,memory_id:row.7.as_deref().map(MemoryId::parse).transpose()?,expires_at_ms:row.8,updated_at_ms:row.9,related_memories:related,security_flags,expiry })
             }).collect()
         })
+    }
+
+    /// Expire planned pending reviews and record each expiry with its gate.
+    /// A review that changed since the plan, or is no longer pending, stays
+    /// as it is. Judgment audit rows are kept. Returns the expired ids.
+    /// # Errors
+    /// Returns storage errors.
+    pub fn expire_reviews(
+        &self,
+        planned: &[PlannedExpiry],
+        older_than_ms: i64,
+    ) -> Result<Vec<String>> {
+        let now = now_ms();
+        self.database.write_immediate(|tx| {
+            let mut expired = Vec::new();
+            for review in planned {
+                let changed = tx.execute(
+                    "UPDATE lesson_reviews SET status='expired',updated_at_ms=MAX(updated_at_ms+1,?3)
+                     WHERE id=?1 AND status='pending' AND updated_at_ms=?2",
+                    params![review.review_id, review.updated_at_ms, now],
+                )?;
+                if changed == 1 {
+                    tx.execute(
+                        "INSERT INTO lesson_review_actions(id,review_id,action,gate_class,gate_reason,
+                             older_than_ms,recorded_at_ms)
+                         VALUES (?1,?2,'expired',?3,?4,?5,?6)",
+                        params![
+                            format!("rva_{}", Uuid::new_v4()),
+                            review.review_id,
+                            review.gate_class.as_str(),
+                            review.gate_reason,
+                            older_than_ms,
+                            now
+                        ],
+                    )?;
+                    expired.push(review.review_id.clone());
+                }
+            }
+            Ok(expired)
+        })
+    }
+
+    /// Return an expired review to pending; the judge and the inbox see it
+    /// again. Its audit rows, including the expiry, are kept.
+    /// # Errors
+    /// Returns a missing or non-expired review, or storage errors.
+    pub fn reopen(&self, review_id: &str) -> Result<LessonReview> {
+        let now = now_ms();
+        self.database.write_immediate(|tx| {
+            let status: Option<String> = tx
+                .query_row(
+                    "SELECT status FROM lesson_reviews WHERE id=?1",
+                    [review_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match status.as_deref() {
+                None => return Err(invalid("review not found")),
+                Some("expired") => {}
+                Some(other) => {
+                    return Err(invalid(&format!(
+                        "review is {other}; only an expired review can be reopened"
+                    )));
+                }
+            }
+            tx.execute(
+                "UPDATE lesson_reviews SET status='pending',updated_at_ms=MAX(updated_at_ms+1,?2)
+                 WHERE id=?1 AND status='expired'",
+                params![review_id, now],
+            )?;
+            tx.execute(
+                "INSERT INTO lesson_review_actions(id,review_id,action,recorded_at_ms)
+                 VALUES (?1,?2,'reopened',?3)",
+                params![format!("rva_{}", Uuid::new_v4()), review_id, now],
+            )?;
+            Ok(())
+        })?;
+        self.review_by_id(review_id)?
+            .ok_or_else(|| invalid("review not found"))
     }
 
     /// Read one proposal by identity, independently of the bounded UI inbox.

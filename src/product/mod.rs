@@ -270,11 +270,22 @@ pub enum Mutation {
 pub enum Query {
     Snapshot,
     Schema,
-    Reviews,
-    TaskSignals { task_id: crate::ids::TaskId },
+    Reviews {
+        /// Only reviews with this status (`pending`, `accepted`, `rejected`
+        /// or `expired`); every status, pending first, when absent.
+        #[serde(default)]
+        status: Option<String>,
+    },
+    TaskSignals {
+        task_id: crate::ids::TaskId,
+    },
     Guide,
-    Source { anchor: Anchor },
-    History { id: String },
+    Source {
+        anchor: Anchor,
+    },
+    History {
+        id: String,
+    },
     Bundle(BundleRequest),
     Impact(ImpactRequest),
 }
@@ -320,7 +331,9 @@ impl ProductStore {
                 self.database
                     .with_reader(|c| read_record(c, "workspace-guide"))?,
             )?,
-            Query::Reviews => serde_json::to_value(self.reviews()?)?,
+            Query::Reviews { status } => {
+                serde_json::to_value(self.reviews_with_status(status.as_deref())?)?
+            }
             Query::Snapshot => serde_json::to_value(self.snapshot()?)?,
             Query::History { id } => serde_json::to_value(self.history(id)?)?,
             Query::Bundle(request) => serde_json::to_value(self.bundle(request)?)?,

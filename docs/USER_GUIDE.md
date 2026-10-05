@@ -1149,6 +1149,62 @@ Commands run at the root of the disposable checkout, or at their own relative
 the [trust model](SECURITY.md#re-verification-runs-recorded-commands) before
 you run it.
 
+### Expire reviews that only new work can unblock
+
+Some deferrals never clear while the proposal stays as it is. The judge checks
+these reviews again on every pass, and they fill the Knowledge inbox.
+`engram review expire` closes them. It never runs on its own.
+
+```sh
+engram review expire                                   # report: unchanged 14 days or more
+engram review expire --older-than 30d --project .      # one project, a longer threshold
+engram review expire --reason-class revision_changed   # one gate class only
+engram review expire --yes                             # expire what the report lists
+engram review reopen REVIEW_ID                         # return one to pending
+```
+
+A review expires only when all of these hold:
+
+- it is pending and has not changed for `--older-than` (default `14d`; `36h`
+  and `90m` also work);
+- the judge's current gate is one that only new verification work clears:
+  - `no_verified_evidence`: no readable, independently verified evidence;
+  - `unanchored_files`: a touched file without an index anchor has no
+    hook-recorded digest, or changed after the verification that recorded
+    one;
+  - `revision_changed`: the task's or the evidence's revision differs from
+    the live checkout, and a touched file has different content at that
+    revision. An unknown revision (missing, ambiguous or unreadable) does not
+    qualify;
+- [re-verification](#re-verify-stalled-reviews) cannot clear the gate. A
+  runnable re-verification plan keeps a review pending, unless the judge's
+  preview shows that even a passing run would leave one of these gates.
+
+The decision uses the judge's gate and the re-verification plan. Like a
+re-verification plan, it reads the registered checkouts with local-only Git
+and runs nothing.
+
+Without `--yes` the command changes nothing. The report counts the reviews it
+would expire by gate class and by project, with up to five sample review ids
+per project. It also counts the judge's current gates and why the other
+reviews stay pending (`kept`). `--json` prints the report as JSON, without
+claim text. `--verbose` lists every review it would expire, with its gate and
+the start of its claim.
+
+With `--yes` each review becomes `expired`, unless it changed after the
+report. Expired is a final status, but it is not a rejection:
+
+- every judgment and audit row is kept, and the expiry is recorded with its
+  gate class and reason;
+- the judge, re-verification plans and the pending inbox skip the review;
+- the Knowledge inbox lists it under **Expired**, with the gate that held it
+  and a **Reopen** button. `engram product show --reviews --status expired`
+  lists the same reviews as JSON;
+- `engram review reopen REVIEW_ID` (or **Reopen**) returns it to pending.
+  The judge checks it again on its next pass, and the age threshold counts
+  from the reopening. A later completion of the same task with the same claim
+  does not reopen an expired review or attach its evidence; reopen it first.
+
 For an isolated daemon, `engramd --config /absolute/path/config.toml` replaces the
 user configuration. Give it separate database, socket, vault and web-port paths;
 this is useful for local evaluation without touching the main workspace.

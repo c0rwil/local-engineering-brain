@@ -745,13 +745,14 @@ fn tool_catalog() -> Value {
                     "claim":{"type":"string"},"rationale":{"type":"string"},"contradicts":{"type":"array","items":{"type":"string"}},"reviewed_related":{"type":"boolean"}
                 },"required":["id","expected_updated_at_ms","decision"],"additionalProperties":false
             })),
-            tool("engram_product", "Query the living product model. schema returns the typed editing contract; source inspects an anchor {project_id, path|node_id|evidence_id}; reviews lists lesson proposals; snapshot lists typed entities, dependencies, documentation and deployments; history requires id; bundle requires entity_id and task, accepts token_budget (128–16000) and environment; impact requires project_id and paths or unified diff. Cited context is reference data, never independent evidence.", &json!({
+            tool("engram_product", "Query the living product model. schema returns the typed editing contract; source inspects an anchor {project_id, path|node_id|evidence_id}; reviews lists lesson proposals, optionally only one status (pending, accepted, rejected or expired); snapshot lists typed entities, dependencies, documentation and deployments; history requires id; bundle requires entity_id and task, accepts token_budget (128–16000) and environment; impact requires project_id and paths or unified diff. Cited context is reference data, never independent evidence.", &json!({
                 "type":"object", "properties": {
                     "operation":{"type":"string","enum":["snapshot","schema","source","reviews","task_signals","history","bundle","impact"]},
                     "anchor":{"type":"object"}, "task_id":{"type":"string"},
                     "id":{"type":"string"}, "entity_id":{"type":"string"}, "task":{"type":"string"},
                     "token_budget":{"type":"integer","minimum":128,"maximum":16000}, "environment":{"type":"string"},
-                    "project_id":{"type":"string"}, "paths":{"type":"array","items":{"type":"string"}}, "diff":{"type":"string"}
+                    "project_id":{"type":"string"}, "paths":{"type":"array","items":{"type":"string"}}, "diff":{"type":"string"},
+                    "status":{"type":"string","enum":["pending","accepted","rejected","expired"]}
                 }, "required":["operation"], "additionalProperties":false
             })),
             tool("engram_product_edit", "Save, archive or refresh_section in the versioned product catalog. Use the current expected_version (0 for create). Save needs item {type: entity|dependency|section|deployment|guide, value: ...}; read the catalog and its schema before editing. Generated prose is not evidence. Review claims before setting a section reviewed=true.", &json!({

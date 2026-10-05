@@ -118,9 +118,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "unreported_verification_status",
         include_str!("migrations/0022_unreported_verification_status.sql"),
     ),
+    (
+        23,
+        "review_expiry",
+        include_str!("migrations/0023_review_expiry.sql"),
+    ),
 ];
 /// Newest canonical schema this binary can safely read and write.
-pub const LATEST_MIGRATION_VERSION: i64 = 22;
+pub const LATEST_MIGRATION_VERSION: i64 = 23;
 
 /// Reopenable handle to the canonical database.
 ///
@@ -908,6 +913,143 @@ mod tests {
             .execute("DELETE FROM nodes WHERE id='owner'", [])
             .unwrap();
         assert_eq!(count("label:Options"), 0);
+    }
+
+    /// Rebuilding `lesson_reviews` must not cascade into `lesson_judgments`:
+    /// dropping a referenced table deletes its rows first.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn migration_23_keeps_reviews_and_their_judgments_and_accepts_expired() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON")
+            .unwrap();
+        for (version, _, sql) in MIGRATIONS {
+            if *version < 23 {
+                connection.execute_batch(sql).unwrap();
+            }
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO projects(id,name,created_at_ms) VALUES ('prj_one','one',0);
+                 INSERT INTO tasks(id,project_id,prompt,prompt_digest,status,started_at_ms)
+                 VALUES ('tsk_one','prj_one','p','d','success',0);
+                 INSERT INTO lesson_reviews(id,task_id,project_id,claim,normalized_claim,
+                     rationale,evidence_ids_json,status,expires_at_ms,created_at_ms,updated_at_ms)
+                 VALUES ('review_a','tsk_one','prj_one','Claim A','claim a','why','[]',
+                         'pending',NULL,1,2),
+                        ('review_b','tsk_one','prj_one','Claim B','claim b','why','[\"evd_x\"]',
+                         'accepted',99,3,4);
+                 INSERT INTO lesson_judgments(id,review_id,packet_digest,attempt,model,outcome,
+                     reason,result_json,input_tokens,output_tokens,reported_cost_usd,duration_ms,
+                     recorded_at_ms,retry_after_ms)
+                 VALUES ('jdg_1','review_a','d1',1,'m','deferred','gate','{}',NULL,NULL,NULL,0,5,
+                         NULL),
+                        ('jdg_2','review_a','d1',2,'m','runtime_error','down','{\"e\":1}',10,2,
+                         0.5,7,6,9),
+                        ('jdg_3','review_b','d2',1,'m','accepted','ok','{}',1,1,NULL,3,8,NULL);",
+            )
+            .unwrap();
+        let rows = |connection: &Connection, sql: &str| -> Vec<String> {
+            connection
+                .prepare(sql)
+                .unwrap()
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap()
+        };
+        let reviews_sql = "SELECT json_array(id,task_id,project_id,claim,normalized_claim,
+            rationale,evidence_ids_json,status,memory_id,expires_at_ms,created_at_ms,updated_at_ms)
+            FROM lesson_reviews ORDER BY id";
+        let judgments_sql = "SELECT json_array(id,review_id,packet_digest,attempt,model,outcome,
+            reason,result_json,input_tokens,output_tokens,reported_cost_usd,duration_ms,
+            recorded_at_ms,retry_after_ms) FROM lesson_judgments ORDER BY id";
+        let reviews = rows(&connection, reviews_sql);
+        let judgments = rows(&connection, judgments_sql);
+        assert!(
+            connection
+                .execute(
+                    "UPDATE lesson_reviews SET status='expired' WHERE id='review_a'",
+                    []
+                )
+                .is_err(),
+            "expired is not a status before the migration"
+        );
+
+        connection.execute_batch(MIGRATIONS[22].2).unwrap();
+        assert_eq!(rows(&connection, reviews_sql), reviews);
+        assert_eq!(
+            rows(&connection, judgments_sql),
+            judgments,
+            "audit rows kept"
+        );
+        let violations: i64 = connection
+            .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(violations, 0);
+        let parent: String = connection
+            .query_row(
+                "SELECT \"table\" FROM pragma_foreign_key_list('lesson_judgments')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(parent, "lesson_reviews");
+        let indexes = rows(
+            &connection,
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='lesson_judgments'
+             AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        );
+        assert_eq!(
+            indexes,
+            ["lesson_judgments_review_packet", "lesson_judgments_time"]
+        );
+
+        connection
+            .execute(
+                "UPDATE lesson_reviews SET status='expired' WHERE id='review_a'",
+                [],
+            )
+            .unwrap();
+        assert!(
+            connection
+                .execute(
+                    "UPDATE lesson_reviews SET status='closed' WHERE id='review_a'",
+                    []
+                )
+                .is_err()
+        );
+        connection
+            .execute_batch(
+                "INSERT INTO lesson_review_actions(id,review_id,action,gate_class,gate_reason,
+                     older_than_ms,recorded_at_ms)
+                 VALUES ('rva_1','review_a','expired','no_verified_evidence','gate',0,10);
+                 INSERT INTO lesson_review_actions(id,review_id,action,recorded_at_ms)
+                 VALUES ('rva_2','review_a','reopened',11);",
+            )
+            .unwrap();
+        assert!(
+            connection
+                .execute(
+                    "INSERT INTO lesson_review_actions(id,review_id,action,recorded_at_ms)
+                     VALUES ('rva_3','review_a','expired',12)",
+                    []
+                )
+                .is_err(),
+            "an expiry records its gate"
+        );
+        connection
+            .execute("DELETE FROM lesson_reviews WHERE id='review_a'", [])
+            .unwrap();
+        assert_eq!(
+            rows(&connection, "SELECT id FROM lesson_judgments ORDER BY id"),
+            ["jdg_3"],
+            "judgments still follow their review"
+        );
+        assert!(rows(&connection, "SELECT id FROM lesson_review_actions").is_empty());
     }
 
     #[test]

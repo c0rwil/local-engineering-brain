@@ -19,6 +19,7 @@ pub mod error;
 pub mod evaluation;
 pub mod events;
 pub mod experience;
+pub mod expiry;
 pub mod export;
 pub mod gitref;
 pub mod ids;

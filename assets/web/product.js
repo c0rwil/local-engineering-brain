@@ -6,6 +6,7 @@ const repoSurface = document.getElementById("repository-surface");
 const catalog = { records: [], repositories: [] };
 let loaded = false, environment = "", capability = "", query = "";
 let effectivenessDays = 7, effectivenessGeneration = 0, effectivenessTimer = null;
+let inboxFilter = "pending";
 const h = esc;
 const get = id => catalog.records.find(r => r.id === id);
 const entity = id => get(id)?.item.value || catalog.repositories.find(r => r.id === id);
@@ -120,14 +121,29 @@ function changesPage() {
     });
   });
 }
+const gateClassLabel = c => ({no_verified_evidence:"No verified evidence",unanchored_files:"Unanchored files without matching digests",revision_changed:"Revision changed"}[c] || c);
+function expiredInbox(reviews) {
+  if(!reviews.length)return `<p class="p-empty">No expired reviews. <code>engram review expire</code> closes pending reviews that only new verification work can unblock.</p>`;
+  return `<p class="p-muted">Expired reviews leave the judge's queue and keep their review history. Reopen returns one to pending.</p>${reviews.map(r=>`<form class="p-card p-review" data-reopen="${h(r.id)}"><div class="p-flex"><span class="p-badge">Expired</span><span class="p-muted">${h(r.task_id)}</span></div><p>${h(r.claim)}</p>${r.expiry?`<p class="p-muted">Expired ${h(time(r.expiry.expired_at_ms))} · ${h(gateClassLabel(r.expiry.gate_class))}: ${h(r.expiry.gate_reason)}</p>`:""}<div class="p-actions"><button type="submit">Reopen</button><span class="p-error" role="status"></span></div></form>`).join("")}`;
+}
 async function knowledgePage() {
-  root.innerHTML=`<div class="eyebrow">Evidence into memory</div><h1>Keep the lessons worth carrying forward.</h1><p class="lede">Automatic review can validate supported lessons from their evidence. Human review remains available for pending proposals. Accepting a lesson does not record user acceptance of the task.</p><p id="p-knowledge-judge" class="p-notice" role="status">Checking automatic review…</p><div id="p-inbox"><p class="empty">Loading review inbox…</p></div>`;
+  root.innerHTML=`<div class="eyebrow">Evidence into memory</div><h1>Keep the lessons worth carrying forward.</h1><p class="lede">Automatic review can validate supported lessons from their evidence. Human review remains available for pending proposals. Accepting a lesson does not record user acceptance of the task.</p><p id="p-knowledge-judge" class="p-notice" role="status">Checking automatic review…</p><div class="p-inbox-filter" role="group" aria-label="Review status">${["pending","expired"].map(f=>`<button type="button" class="${inboxFilter===f?"":"quiet"}" data-inbox-filter="${f}" aria-pressed="${inboxFilter===f}">${f==="pending"?"Pending":"Expired"}</button>`).join("")}</div><div id="p-inbox"><p class="empty">Loading review inbox…</p></div>`;
   api("/api/judge").then(judge=>{
     const notice=document.getElementById("p-knowledge-judge");if(!notice)return;
     notice.innerHTML=`${judge.enabled?`Automatic review is enabled${judge.running?" and running":""}. Supported proposals can be accepted automatically; uncertain claims stay pending.`:"Automatic review is not enabled in this workspace. You can review proposals here or configure a local judge."} <a class="p-link" href="#effectiveness">View review status and decision history</a>.`;
   }).catch(()=>{const notice=document.getElementById("p-knowledge-judge");if(notice)notice.textContent="Automatic review status is unavailable. Manual review remains available.";});
+  document.querySelectorAll("[data-inbox-filter]").forEach(button=>button.addEventListener("click",()=>{inboxFilter=button.dataset.inboxFilter;knowledgePage();}));
   try {
-    const reviews=await queryApi({operation:"reviews"});
+    if(inboxFilter==="expired"){
+      const expired=await queryApi({operation:"reviews",status:"expired"});
+      const inbox=document.getElementById("p-inbox");if(!inbox)return;
+      inbox.innerHTML=expiredInbox(expired);
+      document.querySelectorAll("[data-reopen]").forEach(form=>form.addEventListener("submit",async e=>{
+        e.preventDefault();await submitting(form,async()=>{await api("/api/product/lessons",{operation:"reopen",id:form.dataset.reopen});await knowledgePage();});
+      }));
+      return;
+    }
+    const reviews=await queryApi({operation:"reviews",status:"pending"});
     if(!document.getElementById("p-inbox"))return;
     const pending=reviews.filter(r=>r.status==="pending");
     document.getElementById("p-inbox").innerHTML=pending.length?pending.map(r=>`<form class="p-card p-review" data-review="${h(r.id)}"><div class="p-flex"><span class="p-badge">Proposed lesson</span><span class="p-muted">${h(r.task_id)}</span><button type="button" class="quiet" data-signals="${h(r.task_id)}">Outcome signals</button></div>

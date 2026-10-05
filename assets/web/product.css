@@ -58,6 +58,7 @@
 .p-notice { border-left:3px solid var(--accent); background:var(--chip); padding:.8rem 1rem; font-size:.84rem; margin:1rem 0; }
 .p-error { color:var(--danger); white-space:pre-wrap; overflow-wrap:anywhere; font-size:.85rem; }
 .p-flex { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:.7rem; }
+.p-inbox-filter { display:flex; flex-wrap:wrap; gap:.5rem; margin:1rem 0; }
 .p-review { margin-bottom:1rem; }
 .p-review .p-field { margin:.8rem 0; }
 .p-breadcrumb { font-size:.78rem; margin:.5rem 0 1.4rem; }

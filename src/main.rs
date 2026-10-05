@@ -89,6 +89,44 @@ enum ReviewAction {
         #[arg(long)]
         json: bool,
     },
+    /// Close pending reviews unchanged for longer than --older-than that only
+    /// new verification work can unblock: no readable verified evidence,
+    /// unanchored files without matching hook digests, or a recorded revision
+    /// whose touched files changed, when no runnable re-verification would
+    /// clear the gate. Expired reviews keep their audit rows and can be
+    /// reopened. Without --yes this only reports.
+    Expire {
+        /// Only this project's reviews, by path or id.
+        #[arg(long, value_name = "PATH_OR_ID")]
+        project: Option<String>,
+        /// Minimum time since a review last changed: `14d`, `36h` or `90m`.
+        #[arg(long, default_value = "14d", value_name = "AGE",
+            value_parser = engram::expiry::parse_age)]
+        older_than: i64,
+        /// Only reviews that this gate class holds (repeatable):
+        /// `no_verified_evidence`, `unanchored_files` or `revision_changed`.
+        #[arg(long = "reason-class", value_name = "CLASS",
+            value_parser = engram::judge::GateClass::parse)]
+        reason_class: Vec<engram::judge::GateClass>,
+        /// Report and change nothing (also the behaviour without --yes).
+        #[arg(long, conflicts_with = "yes")]
+        dry_run: bool,
+        /// Expire the reported reviews.
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        json: bool,
+        /// List every expirable review with its gate and the start of its claim.
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Return an expired review to pending; the judge checks it again.
+    Reopen {
+        #[arg(value_name = "REVIEW_ID")]
+        review: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -497,6 +535,10 @@ enum ProductAction {
     Show {
         #[arg(long)]
         reviews: bool,
+        /// With --reviews: only reviews with this status (pending, accepted,
+        /// rejected or expired).
+        #[arg(long, requires = "reviews", value_name = "STATUS")]
+        status: Option<String>,
     },
     /// Apply a versioned catalog mutation from a JSON file.
     Apply { file: PathBuf },
@@ -4929,34 +4971,45 @@ fn run_review(
     socket: Option<&Path>,
     action: ReviewAction,
 ) -> Result<bool> {
-    let ReviewAction::Reverify {
-        reviews,
-        all,
-        project,
-        dry_run,
-        yes,
-        timeout_secs,
-        json,
-    } = action;
     let config = load_daemon_config(overrides, socket, None)?;
     let client = client(&config);
-    // A project id names the project directly; anything else is a path.
-    let project_id = match project {
-        None => None,
-        Some(value) => Some(if let Ok(id) = engram::ids::ProjectId::parse(&value) {
-            id
-        } else {
-            let path = Path::new(&value)
-                .canonicalize()
-                .map_err(|source| engram::error::io_error_for_cli(Path::new(&value), source))?;
-            block_on(client.lookup_project(&path))?
-                .project
-                .map(|project| project.id)
-                .ok_or_else(|| {
-                    engram::Error::Config(format!("`{value}` is not a tracked project"))
-                })?
-        }),
+    let (reviews, all, project, dry_run, yes, timeout_secs, json) = match action {
+        ReviewAction::Reverify {
+            reviews,
+            all,
+            project,
+            dry_run,
+            yes,
+            timeout_secs,
+            json,
+        } => (reviews, all, project, dry_run, yes, timeout_secs, json),
+        ReviewAction::Expire {
+            project,
+            older_than,
+            reason_class,
+            dry_run: _,
+            yes,
+            json,
+            verbose,
+        } => {
+            let request = engram::expiry::ExpiryRequest {
+                project_id: project
+                    .map(|value| review_project(&client, &value))
+                    .transpose()?,
+                older_than_ms: older_than,
+                classes: reason_class,
+                apply: yes,
+                verbose,
+            };
+            return run_review_expire(&client, &request, json);
+        }
+        ReviewAction::Reopen { review, json } => {
+            return run_review_reopen(&client, review, json);
+        }
     };
+    let project_id = project
+        .map(|value| review_project(&client, &value))
+        .transpose()?;
     let plan = block_on(client.reverify_plan(&engram::reverify::PlanRequest {
         review_ids: reviews,
         project_id,
@@ -5001,6 +5054,58 @@ fn run_review(
         }
     }
     Ok(true)
+}
+
+/// Report, and with `apply` expire, pending reviews that only new work can
+/// unblock. The daemon plans and applies.
+fn run_review_expire(
+    client: &DaemonClient,
+    request: &engram::expiry::ExpiryRequest,
+    json: bool,
+) -> Result<bool> {
+    let report = block_on(client.review_expire(request))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        for line in report.lines() {
+            println!("{line}");
+        }
+    }
+    Ok(true)
+}
+
+/// Return an expired review to pending.
+fn run_review_reopen(client: &DaemonClient, review: String, json: bool) -> Result<bool> {
+    let reopened = block_on(client.lesson_mutate(
+        &engram::product::lessons::LessonMutation::Reopen(
+            engram::product::lessons::ReopenRequest { id: review },
+        ),
+    ))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&reopened)?);
+    } else {
+        println!(
+            "Reopened {}: {}. The judge checks it on its next pass.",
+            reopened["id"].as_str().unwrap_or_default(),
+            reopened["status"].as_str().unwrap_or_default()
+        );
+    }
+    Ok(true)
+}
+
+/// The project a review command names: a project id directly, anything else
+/// as a path to a tracked checkout.
+fn review_project(client: &DaemonClient, value: &str) -> Result<engram::ids::ProjectId> {
+    if let Ok(id) = engram::ids::ProjectId::parse(value) {
+        return Ok(id);
+    }
+    let path = Path::new(value)
+        .canonicalize()
+        .map_err(|source| engram::error::io_error_for_cli(Path::new(value), source))?;
+    block_on(client.lookup_project(&path))?
+        .project
+        .map(|project| project.id)
+        .ok_or_else(|| engram::Error::Config(format!("`{value}` is not a tracked project")))
 }
 
 fn run_effectiveness(
@@ -5346,9 +5451,11 @@ fn run_product(
                 ProductAction::Signals { task_id } => Query::TaskSignals {
                     task_id: TaskId::parse(task_id)?,
                 },
-                ProductAction::Show { reviews } => {
+                ProductAction::Show { reviews, status } => {
                     if *reviews {
-                        Query::Reviews
+                        Query::Reviews {
+                            status: status.clone(),
+                        }
                     } else {
                         Query::Snapshot
                     }
