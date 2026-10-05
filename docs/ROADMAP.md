@@ -186,3 +186,28 @@ hooks that still await trust.
 | 2. Context efficiency | File briefs refresh once per task when their sources change | About 1 KB per re-brief, at most one per file per task |
 
 The held-out benchmark (Claude arm) is prepared and checks the Claude Code login before every attempt. Collection resumes after the operator signs in again.
+
+### Fifth pass (2026-10-04, night)
+
+This pass started from context this session received from its own hooks: rules
+and source pointers from three company services, while the task was Engram's
+own code.
+
+| Workstream | Added | Measured or found |
+|---|---|---|
+| 0. Capture | The operator merged the duplicate `engram` project into `brain` | `engram doctor` passes `project_identity`; only the untrusted Codex hooks warn |
+| 2. Context failure modes | Links applied under the pre-2026-09-16 hostname rule are retracted when no evidence outside documentation supports them; shell-mode turns and background-task notices no longer replace the task's request | In the seven days before, linked repositories supplied 92% of the context injected into Engram's own sessions (1.68M of 1.84M tokens). The three links rested on a handoff note and a deploy README. Links whose host still appears in configuration, such as an app build file, stay. A `claude auth login` turn and a test-run notice each became the task text, steering retrieval to API-key and `run_task` code in other repositories |
+| 4. Safety | Injection screen v2: Latin-lookalike folding and "ignore previous instructions" in nine languages | No new flags on 90,131 paragraphs from six repositories or on 989,453 localized macOS UI strings. Recall on real attacks is unmeasured |
+| 3. Proof | Held-out collection resumed after the operator signed in again | Running; results follow in the held-out findings |
+
+Build f27bb96a is installed. A re-index of Engram's checkout retracted its three
+links, and dry-run scans of the four company repositories find no stale links.
+The next hook delivery in this session carried only the brief of the file being
+read.
+
+Next for context efficiency: hooks resend the whole pack whenever it changes,
+so items the session already holds are delivered again. In the one session
+with full attribution, 82% of delivered tokens repeated earlier deliveries,
+96% for linked lessons. Delivering each item once per session, and again after
+compaction, needs a paired run before it ships, because repetition may also
+act as a reminder.
