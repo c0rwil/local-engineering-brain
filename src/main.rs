@@ -2397,9 +2397,21 @@ fn run_link(
             }))?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
-            } else if report.candidates.is_empty() && report.applied.is_empty() {
+            } else if report.candidates.is_empty()
+                && report.applied.is_empty()
+                && report.superseded.is_empty()
+            {
                 println!("No link candidates found in this repo's manifests.");
             } else {
+                for link in &report.superseded {
+                    let status = if *apply { "RETRACTED" } else { "superseded" };
+                    println!(
+                        "{status}  {}  ({})  — {}",
+                        link.name,
+                        link.relation,
+                        link.note.as_deref().unwrap_or_default()
+                    );
+                }
                 for link in &report.applied {
                     println!("LINKED  {}  ({})", link.name, link.relation);
                 }
@@ -2424,6 +2436,11 @@ fn run_link(
                         .any(|candidate| candidate.definitive)
                 {
                     println!("Run `engram link scan --apply` to create the definitive links.");
+                }
+                if !*apply && !report.superseded.is_empty() {
+                    println!(
+                        "Superseded links were applied on evidence that is no longer definitive. Run `engram link scan --apply` to retract them."
+                    );
                 }
             }
         }
@@ -2931,6 +2948,11 @@ fn run_hook_payload(
             .and_then(serde_json::Value::as_str)
             .unwrap_or("")
             .trim();
+        // A shell-mode turn or a background task's notice is not a request:
+        // the last request stays the task's intent and nothing is delivered.
+        if engram::agenthooks::is_host_record(prompt) {
+            return Ok(true);
+        }
         if !prompt.is_empty() {
             let Ok(redactor) =
                 engram::security::Redactor::new(&config.security.custom_redaction_patterns)

@@ -710,13 +710,16 @@ async function onScan(event) {
     const report = await api("/api/linkscan", { project_id: button.dataset.id, apply: true });
     const applied = report.applied.map(l =>
       `<li><span class="flash">Linked</span> ${esc(l.name)} <span class="rel">${esc(l.relation)}</span></li>`);
+    const retracted = (report.superseded || []).map(l =>
+      `<li><span class="flash">Retracted</span> ${esc(l.name)} <span class="rel">${esc(l.relation)}</span>
+       — its evidence is no longer definitive (${esc(l.note || "")}).</li>`);
     const proposals = report.candidates.filter(c => !c.definitive).map(c =>
       `<li>Proposal: ${esc(c.target_name)} <span class="rel">${esc(c.relation)}</span> — ${esc(c.evidence)}.
        Confirm with <code>engram link add</code>.</li>`);
-    results.innerHTML = applied.length + proposals.length
-      ? `<ul>${applied.join("")}${proposals.join("")}</ul>`
+    results.innerHTML = applied.length + retracted.length + proposals.length
+      ? `<ul>${retracted.join("")}${applied.join("")}${proposals.join("")}</ul>`
       : "No new link candidates in this repo's manifests or sources.";
-    if (applied.length) await refresh();
+    if (applied.length || retracted.length) await refresh();
   } catch (error) {
     results.innerHTML = `<span class="error">${esc(error.message)} — is the daemon running?</span>`;
   } finally {

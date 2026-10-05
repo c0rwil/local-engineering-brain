@@ -823,6 +823,56 @@ fn followup_intent_refreshes_context_and_reuses_the_project_episode() {
 }
 
 #[test]
+fn host_records_keep_the_request_and_deliver_nothing() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    for name in ["compute", "create_api_key"] {
+        std::fs::write(
+            repo.join(format!("{name}.rs")),
+            format!("pub fn {name}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    cli(root, &["index", repo.to_str().unwrap(), "--json"], None);
+    let prompt = |text: &str| json!({"session_id":"shell-mode", "cwd":repo, "prompt":text});
+    assert!(!cli(root, &["hook", "prompt"], Some(prompt("Inspect compute"))).is_empty());
+    // Claude Code submits a `!command` turn as these blocks.
+    let shell = "<bash-input>claude auth login</bash-input><bash-stdout>Opening browser \
+        scope=org:create_api_key\nLogin successful.</bash-stdout><bash-stderr></bash-stderr>";
+    assert!(cli(root, &["hook", "prompt"], Some(prompt(shell))).is_empty());
+    assert_eq!(
+        engram::agenthooks::pending_prompt(root, "shell-mode").as_deref(),
+        Some("Inspect compute")
+    );
+    // So does a background task's completion notice.
+    let notice = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n\
+        <summary>Background command \"create_api_key smoke\" completed (exit code 0)</summary>\n\
+        </task-notification>";
+    assert!(cli(root, &["hook", "prompt"], Some(prompt(notice))).is_empty());
+    assert_eq!(
+        engram::agenthooks::pending_prompt(root, "shell-mode").as_deref(),
+        Some("Inspect compute")
+    );
+    let read = json!({"session_id":"shell-mode", "cwd":repo, "tool_name":"Read",
+        "tool_input":{"file_path":"compute.rs"}});
+    let context = cli(root, &["hook", "pretool"], Some(read));
+    assert!(
+        !context.contains("create_api_key"),
+        "shell output must not steer retrieval: {context}"
+    );
+    // Text beyond the blocks is a request about the output.
+    let question = format!("{shell}\nWhy did create_api_key appear?");
+    cli(root, &["hook", "prompt"], Some(prompt(&question)));
+    assert!(
+        engram::agenthooks::pending_prompt(root, "shell-mode")
+            .is_some_and(|pending| pending.contains("Why did create_api_key appear?"))
+    );
+    cli(root, &["daemon", "stop"], None);
+}
+
+#[test]
 fn failed_and_empty_context_attempts_retry_and_keep_the_last_delivered_run() {
     let temp = TempDir::new().unwrap();
     let root = temp.path();

@@ -3609,24 +3609,29 @@ async fn index_project(
         .unwrap_or(false);
     // Auto-link discovery: definitive manifest signals (path deps,
     // submodules) auto-apply with evidence in the note; name matches are
-    // proposals only, surfaced by `engram link scan`. Shadow origin-views are
-    // documentation snapshots, not real projects — they never link or
-    // export a vault folder of their own.
+    // proposals only, surfaced by `engram link scan`. Automatic links whose
+    // evidence the current policy no longer applies are retracted. Shadow
+    // origin-views are documentation snapshots, not real projects — they
+    // never link or export a vault folder of their own.
     if state.config.links.auto_scan && !is_view_project {
         let database = state.database.clone();
         let project_id = resolved.project.id.clone();
         let root = resolved.root.clone();
-        if let Ok(candidates) = run_blocking(&state, move || {
-            crate::linkscan::scan(&database, &project_id, &root)
+        if let Ok((candidates, superseded)) = run_blocking(&state, move || {
+            Ok((
+                crate::linkscan::scan(&database, &project_id, &root)?,
+                crate::linkscan::superseded_auto_links(&database, &project_id)?,
+            ))
         })
         .await
-            && candidates.iter().any(|candidate| candidate.definitive)
+            && (!superseded.is_empty() || candidates.iter().any(|candidate| candidate.definitive))
         {
             let database = state.database.clone();
             let project_id = resolved.project.id.clone();
             let _ = state
                 .scheduler
                 .submit(MutationPriority::BackgroundLearning, move || {
+                    crate::linkscan::retract_superseded(&database, &project_id)?;
                     crate::linkscan::apply_definitive(&database, &project_id, &candidates)
                 });
         }
@@ -4664,27 +4669,33 @@ async fn scan_links(
     let database = state.database.clone();
     let project_id = resolved.project.id.clone();
     let root = resolved.root.clone();
-    let candidates = run_blocking(&state, move || {
-        crate::linkscan::scan(&database, &project_id, &root)
+    let (candidates, superseded) = run_blocking(&state, move || {
+        Ok((
+            crate::linkscan::scan(&database, &project_id, &root)?,
+            crate::linkscan::superseded_auto_links(&database, &project_id)?,
+        ))
     })
     .await?;
-    let applied = if request.apply {
+    let (applied, superseded) = if request.apply {
         let database = state.database.clone();
         let project_id = resolved.project.id.clone();
         let to_apply = candidates.clone();
         let handle = state
             .scheduler
             .submit(MutationPriority::Interactive, move || {
-                crate::linkscan::apply_definitive(&database, &project_id, &to_apply)
+                let retracted = crate::linkscan::retract_superseded(&database, &project_id)?;
+                let applied = crate::linkscan::apply_definitive(&database, &project_id, &to_apply)?;
+                Ok((applied, retracted))
             })
             .map_err(|error| ApiError::from_core(&error))?;
         wait_for_mutation(&state, handle).await?
     } else {
-        Vec::new()
+        (Vec::new(), superseded)
     };
     Ok(Json(crate::linkscan::LinkScanReport {
         candidates,
         applied,
+        superseded,
     }))
 }
 

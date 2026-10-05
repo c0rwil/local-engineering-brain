@@ -302,6 +302,49 @@ pub fn save_pending_prompt(
 pub fn pending_prompt(state_dir: &Path, session_id: &str) -> Option<String> {
     std::fs::read_to_string(session_state_path(state_dir, session_id).with_extension("pending"))
         .ok()
+        // Earlier builds stored host records as prompts.
+        .filter(|prompt| !is_host_record(prompt))
+}
+
+/// Blocks Claude Code submits as a prompt for a shell-mode turn
+/// (`!command`), for the output of a local slash command, and for a
+/// background task's completion notice.
+const HOST_RECORD_TAGS: [&str; 7] = [
+    "bash-input",
+    "bash-stdout",
+    "bash-stderr",
+    "local-command-stdout",
+    "local-command-stderr",
+    "local-command-caveat",
+    "task-notification",
+];
+
+/// A prompt made only of host record blocks reports a command the user ran,
+/// its output, or a finished background task. It is not a task request:
+/// retrieval keyed on it fetches whatever the record happens to mention, and
+/// command output can hold secrets. Any other text makes it an ordinary
+/// prompt.
+#[must_use]
+pub fn is_host_record(prompt: &str) -> bool {
+    let mut rest = prompt.trim_start();
+    if rest.is_empty() {
+        return false;
+    }
+    while !rest.is_empty() {
+        let Some(tag) = HOST_RECORD_TAGS.iter().find(|tag| {
+            rest.strip_prefix('<')
+                .and_then(|after| after.strip_prefix(**tag))
+                .is_some_and(|after| after.starts_with('>'))
+        }) else {
+            return false;
+        };
+        let close = format!("</{tag}>");
+        let Some(end) = rest.find(&close) else {
+            return false;
+        };
+        rest = rest[end + close.len()..].trim_start();
+    }
+    true
 }
 
 /// Read shell text from a tool input: `command` (Claude Code, Cursor, and
@@ -4039,6 +4082,46 @@ mod tests {
         assert!(
             claim_once(temp.path(), "s1", "prompt"),
             "cleared at session end"
+        );
+    }
+
+    #[test]
+    fn host_records_are_not_requests() {
+        for record in [
+            "<bash-input>claude auth login</bash-input>",
+            "<bash-input>cargo test</bash-input><bash-stdout>ok</bash-stdout><bash-stderr></bash-stderr>",
+            "  <bash-input>ls</bash-input>\n<bash-stdout>a\nb</bash-stdout>\n",
+            "<local-command-caveat>Caveat</local-command-caveat>\n<local-command-stdout>Total cost: $1</local-command-stdout>",
+            "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command \"Run the full test suite\" completed (exit code 0)</summary>\n</task-notification>",
+        ] {
+            assert!(is_host_record(record), "{record}");
+        }
+        for prompt in [
+            "",
+            "Fix the login",
+            "<bash-input>cargo test</bash-input><bash-stdout>FAILED</bash-stdout>\nwhy did this fail?",
+            "Look at this: <bash-stdout>FAILED</bash-stdout>",
+            "<bash-input>cargo test",
+            "<bash-inputs>x</bash-inputs>",
+            "<command-name>/review</command-name><command-args>the auth module</command-args>",
+        ] {
+            assert!(!is_host_record(prompt), "{prompt}");
+        }
+
+        let temp = tempfile::TempDir::new().expect("temp");
+        let redactor = crate::security::Redactor::new(&[]).expect("redactor");
+        save_pending_prompt(
+            temp.path(),
+            "older-build",
+            "<bash-input>claude auth login</bash-input><bash-stdout>Login successful.</bash-stdout>",
+            &redactor,
+        )
+        .expect("save");
+        assert_eq!(pending_prompt(temp.path(), "older-build"), None);
+        save_pending_prompt(temp.path(), "older-build", "Fix the login", &redactor).expect("save");
+        assert_eq!(
+            pending_prompt(temp.path(), "older-build").as_deref(),
+            Some("Fix the login")
         );
     }
 

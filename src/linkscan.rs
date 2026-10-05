@@ -10,6 +10,12 @@
 //! human to confirm; they are never auto-applied. Scanning is bounded, reads
 //! only well-known manifest files at the repo root, and never touches the
 //! network.
+//!
+//! Automatic links stay accountable to the current policy: one whose note
+//! records evidence that is no longer definitive (until 2026-09-16 a
+//! referenced hostname counted) is SUPERSEDED and is retracted, because a
+//! link makes every linked repository's lessons part of this project's
+//! context.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,6 +31,15 @@ use crate::storage::Database;
 const MAX_MANIFEST_BYTES: u64 = 1_048_576;
 /// Dependencies examined per manifest.
 const MAX_DEPENDENCIES: usize = 500;
+/// Note prefix that marks a link as applied by the scanner.
+const AUTO_NOTE_PREFIX: &str = "auto: ";
+/// Evidence of every signal that `apply_definitive` applies today.
+const DEFINITIVE_EVIDENCE: [&str; 4] = [
+    "Cargo path dependency `",
+    "npm file dependency `",
+    "git submodule `",
+    "pip editable install `",
+];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct LinkCandidate {
@@ -42,6 +57,10 @@ pub struct LinkCandidate {
 pub struct LinkScanReport {
     pub candidates: Vec<LinkCandidate>,
     pub applied: Vec<LinkedProject>,
+    /// Automatic links whose recorded evidence the current policy does not
+    /// apply. They are retracted when the scan applies its results.
+    #[serde(default)]
+    pub superseded: Vec<LinkedProject>,
 }
 
 struct KnownProject {
@@ -56,7 +75,8 @@ struct KnownProject {
 }
 
 /// Scan one repository's manifests for links to other registered projects.
-/// Already-linked targets are excluded from the result.
+/// Already-linked targets are excluded from the result, except targets of
+/// superseded automatic links, which are proposed again on current evidence.
 ///
 /// # Errors
 ///
@@ -72,6 +92,7 @@ pub fn scan(
     let existing = registry
         .links(project_id)?
         .into_iter()
+        .filter(|link| !is_superseded(link))
         .map(|link| link.project_id)
         .collect::<Vec<_>>();
     let mut candidates = Vec::new();
@@ -116,10 +137,60 @@ pub fn apply_definitive(
             project_id,
             &candidate.target_project_id,
             &candidate.relation,
-            Some(&format!("auto: {}", candidate.evidence)),
+            Some(&format!("{AUTO_NOTE_PREFIX}{}", candidate.evidence)),
         )?);
     }
     Ok(applied)
+}
+
+/// A link the scanner applied on evidence it no longer treats as
+/// definitive. Links a person added or edited carry no scanner note and are
+/// never superseded.
+fn is_superseded(link: &LinkedProject) -> bool {
+    link.note
+        .as_deref()
+        .and_then(|note| note.strip_prefix(AUTO_NOTE_PREFIX))
+        .is_some_and(|evidence| {
+            !DEFINITIVE_EVIDENCE
+                .iter()
+                .any(|prefix| evidence.starts_with(prefix))
+        })
+}
+
+/// The project's superseded automatic links, read from current storage.
+///
+/// # Errors
+///
+/// Returns storage errors.
+pub fn superseded_auto_links(
+    database: &Database,
+    project_id: &ProjectId,
+) -> Result<Vec<LinkedProject>> {
+    Ok(ProjectRegistry::new(database.clone())
+        .links(project_id)?
+        .into_iter()
+        .filter(is_superseded)
+        .collect())
+}
+
+/// Retract the project's superseded automatic links. Run it on the writer:
+/// it rereads the links, so a link a person edited in the meantime stays.
+///
+/// # Errors
+///
+/// Returns storage errors.
+pub fn retract_superseded(
+    database: &Database,
+    project_id: &ProjectId,
+) -> Result<Vec<LinkedProject>> {
+    let registry = ProjectRegistry::new(database.clone());
+    let mut retracted = Vec::new();
+    for link in superseded_auto_links(database, project_id)? {
+        if registry.unlink(project_id, &link.project_id)? {
+            retracted.push(link);
+        }
+    }
+    Ok(retracted)
 }
 
 fn known_projects(
@@ -708,6 +779,131 @@ mod tests {
                 .expect("apply")
                 .is_empty(),
             "proposals must never auto-apply"
+        );
+    }
+
+    #[test]
+    fn hostname_links_from_the_old_policy_are_retracted_and_proposed_again() {
+        let temp = TempDir::new().expect("temp");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("db");
+        let registry = ProjectRegistry::new(database.clone());
+        let root_client = temp.path().join("tooling");
+        let root_backend = temp.path().join("backend");
+        let client = register(&registry, &root_client);
+        let backend = register(&registry, &root_backend);
+        registry
+            .set_fact(&backend, "hosting.base_url", "api.example.tech", None)
+            .expect("fact");
+        fs::create_dir_all(root_client.join("docs")).expect("docs");
+        fs::write(
+            root_client.join("docs/handoff.md"),
+            "The backend serves api.example.tech.\n",
+        )
+        .expect("doc");
+        // Before 2026-09-16 a referenced hostname was applied automatically.
+        registry
+            .link(
+                &client,
+                &backend,
+                "calls-api-of",
+                Some(
+                    "auto: references host `api.example.tech` in 1 file(s), e.g. `docs/handoff.md`",
+                ),
+            )
+            .expect("old auto link");
+
+        let superseded = superseded_auto_links(&database, &client).expect("superseded");
+        assert_eq!(superseded.len(), 1, "{superseded:?}");
+        assert_eq!(superseded[0].project_id, backend);
+        // The target is proposed again on current evidence, as a hint.
+        let candidates = scan(&database, &client, &root_client).expect("scan");
+        assert_eq!(candidates.len(), 1, "{candidates:?}");
+        assert_eq!(candidates[0].target_project_id, backend);
+        assert!(!candidates[0].definitive);
+
+        let retracted = retract_superseded(&database, &client).expect("retract");
+        assert_eq!(retracted.len(), 1);
+        assert!(registry.links(&client).expect("links").is_empty());
+        assert!(
+            apply_definitive(&database, &client, &candidates)
+                .expect("apply")
+                .is_empty(),
+            "a hostname hint is never applied again"
+        );
+        assert!(
+            retract_superseded(&database, &client)
+                .expect("again")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn manual_and_definitive_links_are_never_superseded() {
+        let temp = TempDir::new().expect("temp");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("db");
+        let registry = ProjectRegistry::new(database.clone());
+        let consumer = register(&registry, &temp.path().join("consumer"));
+        let notes = [
+            None,
+            Some("confirmed by hand: calls api.example.tech"),
+            Some("auto: Cargo path dependency `../provider`"),
+            Some("auto: npm file dependency `../web`"),
+            Some("auto: git submodule `git@example.com:org/lib.git`"),
+            Some("auto: pip editable install `../agents` (requirements.txt)"),
+        ];
+        for (index, note) in notes.into_iter().enumerate() {
+            let target = register(&registry, &temp.path().join(format!("target-{index}")));
+            registry
+                .link(&consumer, &target, "uses", note)
+                .expect("link");
+        }
+
+        assert!(
+            superseded_auto_links(&database, &consumer)
+                .expect("superseded")
+                .is_empty()
+        );
+        assert!(
+            retract_superseded(&database, &consumer)
+                .expect("retract")
+                .is_empty()
+        );
+        assert_eq!(registry.links(&consumer).expect("links").len(), 6);
+    }
+
+    #[test]
+    fn definitive_evidence_prefixes_match_what_scans_record() {
+        let temp = TempDir::new().expect("temp");
+        let database = Database::open(temp.path().join("brain.sqlite")).expect("db");
+        let registry = ProjectRegistry::new(database.clone());
+        let root_a = temp.path().join("consumer");
+        let a = register(&registry, &root_a);
+        for name in ["provider", "web", "agents"] {
+            register(&registry, &temp.path().join(name));
+        }
+        fs::write(
+            root_a.join("Cargo.toml"),
+            "[dependencies]\nprovider = { path = \"../provider\" }\n",
+        )
+        .expect("cargo manifest");
+        fs::write(
+            root_a.join("package.json"),
+            "{\"dependencies\": {\"web\": \"file:../web\"}}",
+        )
+        .expect("npm manifest");
+        fs::write(root_a.join("requirements.txt"), "-e ../agents\n").expect("pip manifest");
+        let candidates = scan(&database, &a, &root_a).expect("scan");
+        assert_eq!(candidates.len(), 3, "{candidates:?}");
+        apply_definitive(&database, &a, &candidates).expect("apply");
+        let links = registry.links(&a).expect("links");
+        assert_eq!(links.len(), 3);
+        for link in &links {
+            assert!(!is_superseded(link), "{:?}", link.note);
+        }
+        assert!(
+            retract_superseded(&database, &a)
+                .expect("retract")
+                .is_empty()
         );
     }
 }

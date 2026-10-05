@@ -242,6 +242,27 @@ not yet stable, and the schema version is 7.
 
 ### Fixed
 
+- Automatic repository links that the current policy would not create are
+  retracted. Until 2026-09-16 a hostname mentioned anywhere in a repository
+  linked it to the service that declares that host, and those links stayed
+  after the rule became a proposal. One handoff document that named three
+  service hosts linked Engram's own repository to those three services, so
+  their rules and source maps were injected into every Engram session.
+  `engram index` now retracts automatic links whose recorded evidence is not
+  a Cargo path dependency, an npm `file:` dependency, a git submodule or an
+  editable pip install. `engram link scan` lists them as superseded and
+  retracts them with `--apply`, and the browser's scan does the same. Links a
+  person added or edited are never retracted.
+- A shell-mode turn in Claude Code (`!command`) or a background task's
+  completion notice no longer replaces the task's request. Claude Code
+  submits both as prompts that hold only the command and its output, or the
+  notice. Engram used that text as the task, so a `claude auth login` turn
+  steered retrieval toward API-key code in other repositories, a finished
+  test run steered it toward unrelated `run_task` functions, and command
+  output that could hold secrets was kept as the prompt. Prompts made only
+  of `<bash-…>`, `<local-command-…>` and `<task-notification>` blocks now
+  keep the previous request and deliver nothing. Records stored by earlier
+  builds are ignored when read.
 - In a session that works in several repositories, a verification in one
   repository no longer leaves another repository's earlier pass unknown, which
   kept that episode from closing as success. An episode recorded its checkout
