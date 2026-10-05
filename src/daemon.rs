@@ -3941,7 +3941,9 @@ async fn rebuild_semantic_index(
 }
 
 fn scoped_config(state: &DaemonState, root: &Path) -> Result<Config> {
-    Config::load_for(
+    // The daemon's own user layer, never whatever HOME says at request time.
+    Config::load_for_home(
+        state.config.config_home.as_deref(),
         Some(root),
         &ConfigOverrides {
             workspace: Some(state.config.workspace.clone()),

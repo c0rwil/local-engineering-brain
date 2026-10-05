@@ -326,7 +326,8 @@ fn resolve_token_budget(
 ) -> std::result::Result<u32, ProxyError> {
     let default_token_budget = root
         .map(|root| {
-            Config::load_for(
+            Config::load_for_home(
+                state.config.config_home.as_deref(),
                 Some(root),
                 &ConfigOverrides {
                     workspace: Some(state.config.workspace.clone()),

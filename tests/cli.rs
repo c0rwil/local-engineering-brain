@@ -15,6 +15,7 @@ fn doctor_json_reports_healthy_database() {
     let db = temp.path().join("brain.sqlite");
     let mut command = AssertCommand::cargo_bin("engram").expect("engram binary");
     command
+        .env("HOME", temp.path())
         .env("CODEX_HOME", temp.path().join("codex"))
         .args(["--db", db.to_str().unwrap(), "doctor", "--json"])
         .assert()
@@ -41,6 +42,7 @@ fn doctor_warns_when_codex_has_not_trusted_engram_hooks() {
     .expect("hooks.json");
     let output = AssertCommand::cargo_bin("engram")
         .expect("engram binary")
+        .env("HOME", temp.path())
         .env("CODEX_HOME", &codex)
         .args(["--db", db.to_str().unwrap(), "doctor", "--json"])
         .output()
@@ -71,6 +73,7 @@ fn daemon_restart_replaces_the_daemon_from_this_process() {
     let socket = temp.path().join("engramd.sock");
     let engram = |args: &[&str]| {
         let output = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+            .env("HOME", temp.path())
             .args([
                 "--db",
                 db.to_str().unwrap(),
@@ -127,6 +130,7 @@ fn status_registers_plain_project_and_is_stable() {
     let db = temp.path().join("brain.sqlite");
     let socket = temp.path().join("engramd.sock");
     let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("engramd"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -150,6 +154,7 @@ fn status_registers_plain_project_and_is_stable() {
     }
 
     let first = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -167,6 +172,7 @@ fn status_registers_plain_project_and_is_stable() {
         String::from_utf8_lossy(&first.stderr)
     );
     let second = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -190,6 +196,7 @@ fn status_registers_plain_project_and_is_stable() {
     assert_eq!(second_json["project_event_count"], 2);
 
     let stopped = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -217,6 +224,7 @@ fn metrics_and_dashboard_render_from_a_running_daemon() {
     let db = temp.path().join("brain.sqlite");
     let socket = temp.path().join("engramd.sock");
     let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("engramd"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -241,6 +249,7 @@ fn metrics_and_dashboard_render_from_a_running_daemon() {
 
     let engram = |args: &[&str]| {
         let mut command = Command::new(assert_cmd::cargo::cargo_bin!("engram"));
+        command.env("HOME", temp.path());
         command.args([
             "--db",
             db.to_str().unwrap(),
@@ -303,6 +312,7 @@ fn status_autostarts_daemon_without_direct_writes() {
     let socket = temp.path().join("missing.sock");
     let mut command = AssertCommand::cargo_bin("engram").expect("engram binary");
     command
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -319,6 +329,7 @@ fn status_autostarts_daemon_without_direct_writes() {
 
     AssertCommand::cargo_bin("engram")
         .expect("engram binary")
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -346,6 +357,7 @@ fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
     let db = temp.path().join("brain.sqlite");
     let socket = temp.path().join("engramd.sock");
     let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("engramd"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -369,6 +381,7 @@ fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
     }
 
     let enqueued = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -391,6 +404,7 @@ fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
     // Job types outside the allowlist never reach the daemon.
     AssertCommand::cargo_bin("engram")
         .expect("engram binary")
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -405,6 +419,7 @@ fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
         .stderr(predicate::str::contains("unsupported job type"));
 
     let listed = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -421,6 +436,7 @@ fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
     assert!(stdout.contains("fts_integrity"), "{stdout}");
 
     let shown = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -436,6 +452,7 @@ fn jobs_cli_enqueues_and_lists_durable_background_jobs() {
     assert!(String::from_utf8_lossy(&shown.stdout).contains(&job_id));
 
     let stopped = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -457,6 +474,7 @@ fn process_kill_rolls_back_event_and_projection_together() {
     let db = temp.path().join("brain.sqlite");
     let ready = temp.path().join("ready");
     let mut child = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -504,6 +522,7 @@ fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
     let db = temp.path().join("brain.sqlite");
     let socket = temp.path().join("engramd.sock");
     let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("engramd"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),
@@ -535,6 +554,7 @@ fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
         ];
         full.extend_from_slice(args);
         let output = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+            .env("HOME", temp.path())
             .args(&full)
             .output()
             .expect("run engram");
@@ -612,6 +632,7 @@ fn synthesize_cli_creates_a_procedure_from_three_matching_episodes() {
     assert_eq!(procedures[0]["reused_existing"], serde_json::json!(false));
 
     let stopped = Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+        .env("HOME", temp.path())
         .args([
             "--db",
             db.to_str().unwrap(),

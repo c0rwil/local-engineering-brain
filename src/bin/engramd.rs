@@ -56,6 +56,9 @@ fn run(cli: Cli) -> engram::Result<()> {
     if let Some(socket) = cli.socket {
         config.daemon.socket_path = socket;
     }
+    // Per-repository settings merge the user layer of the home this daemon
+    // started in; a resolved snapshot or explicit `--config` does not record it.
+    config.config_home = std::env::var_os("HOME").map(PathBuf::from);
     config.validate()?;
 
     // One daemon per database, for the whole life of this process: taken

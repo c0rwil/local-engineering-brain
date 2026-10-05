@@ -34,6 +34,13 @@ pub struct Config {
     pub watch: WatchConfig,
     pub sync: SyncConfig,
     pub judge: crate::judge::JudgeConfig,
+    /// Home directory whose user layer (`~/.config/engram/config.toml` and
+    /// workspace profiles) this process merges, or `None` for none. Loads
+    /// for a single repository reuse it instead of reading `HOME` again, so
+    /// a daemon or proxy merges only the user layer of the home it started
+    /// with, and one built from defaults (as tests do) never reads one.
+    #[serde(skip)]
+    pub config_home: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -62,6 +69,7 @@ impl Default for Config {
             watch: WatchConfig::default(),
             sync: SyncConfig::default(),
             judge: crate::judge::JudgeConfig::default(),
+            config_home: None,
         }
     }
 }
@@ -665,7 +673,22 @@ impl Config {
         if let Some(home) = home.as_deref() {
             migrate_legacy_state(home);
         }
-        let user_config = home.as_ref().map(|home| {
+        Self::load_for_home(home.as_deref(), project_root, overrides)
+    }
+
+    /// Load like [`Config::load_for`] with the user layer taken from `home`
+    /// rather than `HOME`; `None` merges no user layer. Long-running
+    /// processes pass their own [`Config::config_home`] here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unreadable/malformed layer or an invalid merged configuration.
+    pub fn load_for_home(
+        home: Option<&Path>,
+        project_root: Option<&Path>,
+        overrides: &ConfigOverrides,
+    ) -> Result<Self> {
+        let user_config = home.map(|home| {
             let current = home.join(".config/engram/config.toml");
             let legacy = home.join(".config/leb/config.toml");
             if !current.exists() && legacy.exists() {
@@ -683,13 +706,15 @@ impl Config {
                 current
             }
         });
-        Self::load_layers_inner(
+        let mut config = Self::load_layers_inner(
             user_config.as_deref(),
             project_config.as_deref(),
             overrides,
-            home.as_deref(),
+            home,
             true,
-        )
+        )?;
+        config.config_home = home.map(Path::to_path_buf);
+        Ok(config)
     }
 
     /// Load explicitly supplied layers. This is public to keep configuration tests deterministic.
@@ -1284,6 +1309,36 @@ fn socket_for_database(database: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn repository_loads_merge_the_recorded_home_not_the_environment() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(home.join(".config/engram")).expect("user config dir");
+        std::fs::write(
+            home.join(".config/engram/config.toml"),
+            "[context]\nmax_injected_tokens = 4200\n",
+        )
+        .expect("user config");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).expect("project");
+        let overrides = super::ConfigOverrides {
+            db_path: Some(temp.path().join("brain.sqlite")),
+            ..super::ConfigOverrides::default()
+        };
+
+        let with_home =
+            super::Config::load_for_home(Some(&home), Some(&project), &overrides).expect("load");
+        assert_eq!(with_home.context.max_injected_tokens, 4200);
+        assert_eq!(with_home.config_home.as_deref(), Some(home.as_path()));
+
+        // No recorded home merges no user layer, whatever HOME holds.
+        let without_home =
+            super::Config::load_for_home(None, Some(&project), &overrides).expect("load");
+        assert_ne!(without_home.context.max_injected_tokens, 4200);
+        assert_eq!(without_home.config_home, None);
+        assert_eq!(super::Config::default().config_home, None);
+    }
+
     #[test]
     fn legacy_state_migration_moves_dirs_and_rewrites_config_paths() {
         let temp = tempfile::TempDir::new().expect("temp");

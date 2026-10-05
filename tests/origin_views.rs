@@ -32,6 +32,7 @@ impl Fixture {
         )
         .unwrap();
         let mut daemon = Command::new(assert_cmd::cargo::cargo_bin!("engramd"))
+            .env("HOME", temp.path())
             .arg("--config")
             .arg(config)
             .current_dir(temp.path())
@@ -52,6 +53,7 @@ impl Fixture {
     }
     fn cli(&self, args: &[&str]) -> Output {
         Command::new(assert_cmd::cargo::cargo_bin!("engram"))
+            .env("HOME", self.root())
             .current_dir(self.root().join("repo"))
             .arg("--db")
             .arg(self.root().join("brain.sqlite"))

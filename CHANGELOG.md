@@ -273,6 +273,15 @@ not yet stable, and the schema version is 7.
 
 ### Fixed
 
+- The test suite no longer reads the developer's
+  `~/.config/engram/config.toml`. A section the branch did not know (one
+  written by a newer installed build) failed 27 tests, because in-process
+  test daemons re-read `HOME` for every per-repository settings load and
+  CLI tests passed the developer's `HOME` to the processes they started. The
+  daemon and proxy now merge the user layer of the home they started with
+  (`Config::config_home`, captured once at startup) instead of re-reading
+  `HOME` per request, so a daemon built from defaults reads none; CLI tests
+  give each process its test directory as `HOME`.
 - After Claude Code compacts or clears a conversation, Engram delivers its
   context again. Hooks treated the `SessionStart` that follows (source
   `compact` or `clear`) like a resume: the session brief was claimed once per
