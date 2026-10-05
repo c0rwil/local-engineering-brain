@@ -146,6 +146,9 @@ pub enum RefusalKind {
     StatusHidden,
     /// A step that is neither a verification nor a supported setup step.
     UnsupportedStep,
+    /// An environment or `make` variable that makes the command load or run
+    /// other code (`LD_PRELOAD`, `RUSTC_WRAPPER`, `BASH_ENV`, `PATH`, ...).
+    Environment,
 }
 
 impl RefusalKind {
@@ -165,6 +168,7 @@ impl RefusalKind {
             Self::NotVerification => "not_verification",
             Self::StatusHidden => "status_hidden",
             Self::UnsupportedStep => "unsupported_step",
+            Self::Environment => "environment",
         }
     }
 }
@@ -290,13 +294,20 @@ fn hidden_cause(reason: StatusHidden) -> &'static str {
 /// The words of one step after environment assignments and status-preserving
 /// wrappers: the program and its arguments.
 fn program_words(text: &str) -> Vec<&str> {
+    split_program(text).0
+}
+
+/// A step's program words, and the `NAME=value` assignments that precede the
+/// program (before it and after `env` and the other wrappers).
+fn split_program(text: &str) -> (Vec<&str>, Vec<&str>) {
     let mut words: Vec<&str> = text.split_whitespace().collect();
+    let mut assigned = Vec::new();
     loop {
         let assignments = words
             .iter()
             .take_while(|word| word.contains('=') && !word.starts_with(['-', '/']))
             .count();
-        words.drain(..assignments);
+        assigned.extend(words.drain(..assignments));
         let wrapper = match words.as_slice() {
             ["time", "-p", ..]
             | ["uv" | "poetry" | "pdm" | "pipenv", "run", ..]
@@ -310,14 +321,75 @@ fn program_words(text: &str) -> Vec<&str> {
             _ => 0,
         };
         if wrapper == 0 && assignments == 0 {
-            return words;
+            return (words, assigned);
         }
         words.drain(..wrapper.min(words.len()));
     }
 }
 
+/// Variables that make a program load a library, run a different program or
+/// source a script. Refused whatever their value: the value alone cannot show
+/// whether it names code the repository supplies.
+const CODE_LOADING_VARIABLES: &[&str] = &[
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "RUSTC",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "RUSTDOC",
+    "CARGO",
+    "CARGO_BUILD_RUSTC_WRAPPER",
+    "BASH_ENV",
+    "ENV",
+    "PATH",
+    "SHELL",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_PAGER",
+    "PAGER",
+    "EDITOR",
+    "NODE_OPTIONS",
+    "PYTHONSTARTUP",
+    "PERL5OPT",
+    "RUBYOPT",
+];
+
+fn loads_code(name: &str) -> bool {
+    CODE_LOADING_VARIABLES.contains(&name)
+        || name.starts_with("DYLD_")
+        || (name.starts_with("CARGO_TARGET_") && name.ends_with("_RUNNER"))
+}
+
+/// Refuse a step whose environment assignments, or `make` command-line
+/// variables, make the command load or run other code.
+fn screen_environment(text: &str) -> std::result::Result<(), Refusal> {
+    let (words, assigned) = split_program(text);
+    let make = words
+        .first()
+        .is_some_and(|program| program.rsplit('/').next() == Some("make"));
+    let make_variables = words
+        .iter()
+        .skip(1)
+        .filter(|word| make && !word.starts_with('-') && word.contains('='));
+    let name = assigned
+        .iter()
+        .chain(make_variables)
+        .filter_map(|word| word.split_once('=').map(|(name, _)| name))
+        .map(|name| name.trim_matches(['\'', '"']))
+        .find(|name| loads_code(name));
+    match name {
+        Some(name) => Err(refuse(
+            RefusalKind::Environment,
+            format!("sets `{name}`, which makes the command load or run other code"),
+        )),
+        None => Ok(()),
+    }
+}
+
 /// Refuse network, package-install, destructive and privileged programs.
 fn screen_program(text: &str) -> std::result::Result<(), Refusal> {
+    screen_environment(text)?;
     let words = program_words(text);
     let Some(&program) = words.first() else {
         return Ok(());
@@ -1859,6 +1931,7 @@ mod tests {
             ("cargo test > /dev/null 2>&1", "test_result"),
             ("cargo test && echo done", "test_result"),
             ("cargo test && cargo build", "build_result"),
+            ("make test CC=clang", "test_result"),
             (
                 "DATABASE_URL=postgresql://ci@localhost:5432/ci pytest -q",
                 "test_result",
@@ -1871,8 +1944,8 @@ mod tests {
     #[test]
     fn anything_else_is_refused_with_a_reason() {
         use RefusalKind::{
-            Destructive, Expansion, InjectionFlagged, Network, NotVerification, OutsidePath,
-            Redacted, Redirection, StatusHidden, TooLong, Unreadable, UnsupportedStep,
+            Destructive, Environment, Expansion, InjectionFlagged, Network, NotVerification,
+            OutsidePath, Redacted, Redirection, StatusHidden, TooLong, Unreadable, UnsupportedStep,
         };
         let long = format!("cargo test {}", "x".repeat(MAX_COMMAND_BYTES));
         for (command, kind) in [
@@ -1917,6 +1990,19 @@ mod tests {
                 UnsupportedStep,
             ),
             ("cargo test && make tf-validate", UnsupportedStep),
+            // Every `make` target runs, so a verification target cannot carry others.
+            ("make test deploy", NotVerification),
+            // Code-loading variables are refused whatever their value.
+            ("LD_PRELOAD=evil.so cargo test", Environment),
+            ("RUSTC_WRAPPER=evil cargo test", Environment),
+            ("env BASH_ENV=evil cargo test", Environment),
+            ("DYLD_INSERT_LIBRARIES=x.dylib pytest -q", Environment),
+            ("PATH=bin cargo test", Environment),
+            (
+                "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=x cargo test",
+                Environment,
+            ),
+            ("make test SHELL=evil", Environment),
         ] {
             let refusal = screen_command(command).expect_err(command);
             assert_eq!(refusal.kind, kind, "{command}: {}", refusal.detail);

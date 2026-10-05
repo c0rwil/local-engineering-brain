@@ -1276,6 +1276,63 @@ fn write_private_sidecar(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// The evidence kind of a `make` run, from its first target, when every target
+/// it names is a verification target (`test`, `lint`, `check`, `build`).
+/// Options that take a separate value (`-j 4`, `-f file`) skip that value, and
+/// `NAME=value` overrides are not targets.
+fn make_verification_kind(arguments: &[&str]) -> Option<&'static str> {
+    const VALUE_OPTIONS: &[&str] = &[
+        "-j",
+        "-l",
+        "-f",
+        "-C",
+        "-I",
+        "-o",
+        "-W",
+        "--jobs",
+        "--load-average",
+        "--file",
+        "--makefile",
+        "--directory",
+        "--include-dir",
+        "--old-file",
+        "--assume-old",
+        "--new-file",
+        "--assume-new",
+        "--what-if",
+    ];
+    let mut targets = Vec::new();
+    let mut skip_next = false;
+    for argument in arguments {
+        if std::mem::take(&mut skip_next) {
+            continue;
+        }
+        if matches!(*argument, "|" | "||" | "&&" | ";" | "&") {
+            break;
+        }
+        let redirection = argument.trim_start_matches(|c: char| c.is_ascii_digit());
+        if redirection.starts_with(['<', '>']) {
+            // A bare operator (`>`, `2>`, `>>`) names its target in the next word.
+            skip_next = redirection.chars().all(|c| matches!(c, '<' | '>'));
+        } else if VALUE_OPTIONS.contains(argument) {
+            skip_next = true;
+        } else if !argument.starts_with('-') && !argument.contains('=') {
+            targets.push(*argument);
+        }
+    }
+    let kinds = targets
+        .iter()
+        .map(|target| match *target {
+            "test" => Some("test_result"),
+            "lint" => Some("lint_result"),
+            "check" => Some("typecheck_result"),
+            "build" => Some("build_result"),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    kinds.first().copied()
+}
+
 /// Classify a shell command as a verification run. Returns the evidence
 /// kind (`test_result` | `lint_result` | `build_result` |
 /// `typecheck_result`) or `None` for ordinary commands.
@@ -1285,8 +1342,9 @@ fn write_private_sidecar(path: &Path, bytes: &[u8]) -> Result<()> {
 /// `pipenv run`, `npx`, `bunx`, `uvx`, `pnpm exec`) are skipped. Help, version
 /// and listing invocations run nothing and are not verification. Formatters
 /// count only in check mode, and `--fix` runs rewrite files instead of
-/// verifying them; neither is verification. A bare `make` (or any target
-/// other than `test`, `lint`, `check` or `build`) is not either.
+/// verifying them; neither is verification. `make` is verification only when
+/// every target it is given is `test`, `lint`, `check` or `build`: a bare
+/// `make` builds the default target, and `make test deploy` also deploys.
 #[must_use]
 pub fn detect_verification(command: &str) -> Option<&'static str> {
     let tokens = verification_tokens(command);
@@ -1304,6 +1362,9 @@ pub fn detect_verification(command: &str) -> Option<&'static str> {
         || (formatter && !has("--check") && !has("-check"))
     {
         return None;
+    }
+    if tokens.first() == Some(&"make") {
+        return make_verification_kind(&tokens[1..]);
     }
     let normalized = tokens.join(" ");
     let matches_start = |needles: &[&str]| {
@@ -1329,7 +1390,6 @@ pub fn detect_verification(command: &str) -> Option<&'static str> {
         "gradle test",
         "swift test",
         "mvn test",
-        "make test",
     ]) {
         // `--no-run` compiles the tests without executing any of them.
         return Some(if tokens.contains(&"--no-run") {
@@ -1351,7 +1411,6 @@ pub fn detect_verification(command: &str) -> Option<&'static str> {
         "golangci-lint",
         "actionlint",
         "terraform fmt",
-        "make lint",
         "npm run lint",
         "pnpm lint",
         "pnpm run lint",
@@ -1366,7 +1425,6 @@ pub fn detect_verification(command: &str) -> Option<&'static str> {
         "pyright",
         "terraform validate",
         "cargo check",
-        "make check",
     ]) {
         return Some("typecheck_result");
     }
@@ -1377,7 +1435,6 @@ pub fn detect_verification(command: &str) -> Option<&'static str> {
         "pnpm run build",
         "yarn build",
         "go build",
-        "make build",
         "./gradlew build",
         "swift build",
     ]) {
@@ -3461,6 +3518,10 @@ mod tests {
             "make",
             "make install",
             "make deploy",
+            // Every target runs: a verification target does not cover the rest.
+            "make test deploy",
+            "make build release",
+            "make -j 4",
         ] {
             assert_eq!(detect_verification(command), None, "{command}");
         }
@@ -3471,6 +3532,11 @@ mod tests {
             ("ruff format --check .", "lint_result"),
             ("make build", "build_result"),
             ("make test", "test_result"),
+            ("make lint test", "lint_result"),
+            ("make -j 4 test", "test_result"),
+            ("make test CC=clang", "test_result"),
+            ("make test 2>&1", "test_result"),
+            ("make test > /dev/null", "test_result"),
         ] {
             assert_eq!(detect_verification(command), Some(kind), "{command}");
         }

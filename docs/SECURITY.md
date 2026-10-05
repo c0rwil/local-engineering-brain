@@ -166,8 +166,13 @@ The trust model:
   steps. The injection screen, redacted text, expansions (`$`, backquotes,
   `<(`), network tools and non-loopback URLs, remote Git, package installs,
   destructive or privileged programs, file redirections and paths outside the
-  disposable checkout are refused. The plan lists each refusal with its
-  reason, and the CLI screens each command again right before it runs.
+  disposable checkout are refused. `make` counts only when every target it
+  names is `test`, `lint`, `check` or `build`, because each named target runs
+  (`make test deploy` is refused). Environment and `make` variables that make a
+  command load or run other code (`LD_PRELOAD`, `DYLD_*`, `RUSTC_WRAPPER`,
+  `CARGO_TARGET_*_RUNNER`, `BASH_ENV`, `PATH`, `SHELL`, `NODE_OPTIONS` and
+  similar) are refused whatever their value. The plan lists each refusal with
+  its reason, and the CLI screens each command again right before it runs.
 - **Isolation is limited.** Commands run in a disposable worktree of the
   primary checkout at HEAD, never in your checkout, and the worktree is removed
   afterwards. Repository hooks and LFS downloads are off while it is created.

@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `engram review reverify` refuses environment and `make` variables that make
+  a command load or run other code (`LD_PRELOAD`, `DYLD_*`, `RUSTC_WRAPPER`,
+  `CARGO_TARGET_*_RUNNER`, `BASH_ENV`, `PATH`, `SHELL`, `NODE_OPTIONS` and
+  similar), whatever their value. Verification detection, shared by hooks and
+  re-verification, accepts `make` only when every target it names is `test`,
+  `lint`, `check` or `build`: `make test deploy` also deploys.
 - Prompt-injection screen for lesson proposals and stored memories. Flagged
   proposals are held for human review and never sent to the judge model;
   accepting flagged text needs an explicit human acknowledgment, which MCP
