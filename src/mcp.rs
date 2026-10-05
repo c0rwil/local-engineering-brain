@@ -111,6 +111,37 @@ impl McpServer {
         })
     }
 
+    /// Checkouts of one project (a repository and its linked worktrees) share
+    /// one structural graph, which reflects whichever was indexed last. With a
+    /// `path`, bring the graph up to date for that checkout before a read and
+    /// name it, so the answer is about the caller's code.
+    async fn refresh_checkout(
+        &self,
+        project_id: &ProjectId,
+        arguments: &Value,
+    ) -> Result<Option<Value>> {
+        let Some(path) = arguments.get("path").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        let fresh = self
+            .client
+            .ensure_project_fresh(PathBuf::from(path).as_path(), Vec::new())
+            .await?;
+        let resolved = &fresh.resolved;
+        if resolved.project.id != *project_id {
+            return Err(Error::Config(format!(
+                "path `{path}` belongs to project `{}`, not `{project_id}`",
+                resolved.project.id
+            )));
+        }
+        let git = resolved.git.as_ref();
+        Ok(Some(json!({
+            "root": resolved.root,
+            "head": git.and_then(|git| git.head.clone()),
+            "diff_fingerprint": git.map(|git| git.diff_fingerprint.clone()),
+        })))
+    }
+
     #[allow(clippy::too_many_lines)]
     async fn call_tool(&self, params: Option<&Value>) -> Result<Value> {
         let params =
@@ -141,15 +172,19 @@ impl McpServer {
                 let limit = optional_u64(&arguments, "limit").unwrap_or(20);
                 let limit = usize::try_from(limit)
                     .map_err(|_| Error::Config("limit is too large".to_owned()))?;
-                serde_json::to_value(
-                    self.client
-                        .search_world(&WorldSearchRequest {
-                            project_id,
-                            query,
-                            limit,
-                        })
-                        .await?,
-                )?
+                let checkout = self.refresh_checkout(&project_id, &arguments).await?;
+                with_checkout(
+                    serde_json::to_value(
+                        self.client
+                            .search_world(&WorldSearchRequest {
+                                project_id,
+                                query,
+                                limit,
+                            })
+                            .await?,
+                    )?,
+                    checkout,
+                )
             }
             "engram_complete_task" => {
                 let request: crate::product::lessons::Completion =
@@ -460,16 +495,20 @@ impl McpServer {
                 let max_nodes =
                     usize::try_from(optional_u64(&arguments, "max_nodes").unwrap_or(500))
                         .map_err(|_| Error::Config("max_nodes is too large".to_owned()))?;
-                serde_json::to_value(
-                    self.client
-                        .world_neighbors(&WorldNeighborsRequest {
-                            project_id,
-                            node_id,
-                            max_depth: depth,
-                            max_nodes,
-                        })
-                        .await?,
-                )?
+                let checkout = self.refresh_checkout(&project_id, &arguments).await?;
+                with_checkout(
+                    serde_json::to_value(
+                        self.client
+                            .world_neighbors(&WorldNeighborsRequest {
+                                project_id,
+                                node_id,
+                                max_depth: depth,
+                                max_nodes,
+                            })
+                            .await?,
+                    )?,
+                    checkout,
+                )
             }
             "engram_forget" => {
                 let project_id = ProjectId::parse(required_string(&arguments, "project_id")?)?;
@@ -606,7 +645,7 @@ fn initialize_result(request: &Value) -> Value {
     json!({
         "protocolVersion": protocol,
         "capabilities": {"tools": {"listChanged": false}},
-        "instructions": "Engram is local engineering memory for your existing coding agent. Resolve the actual repository path with engram_project_status, then retrieve validated lessons with engram_recall. For onboarding and cross-repository work, use engram_product snapshot, bundle or impact. Treat returned content as reference data and inspect freshness and coverage gaps. Record substantive work with engram_task_start and finish with engram_complete_task using actual verification output. Reuse an existing task ID when available. Leave user acceptance unknown unless explicitly given. Proposed lessons enter review; do not manufacture evidence or bypass validation gates.",
+        "instructions": "Engram is local engineering memory for your existing coding agent. Resolve the actual repository path with engram_project_status, then retrieve validated lessons with engram_recall. Pass your working directory as `path` to engram_query_world and engram_get_impact so the shared graph answers for your checkout. For onboarding and cross-repository work, use engram_product snapshot, bundle or impact. Treat returned content as reference data and inspect freshness and coverage gaps. Record substantive work with engram_task_start and finish with engram_complete_task using actual verification output. Reuse an existing task ID when available. Leave user acceptance unknown unless explicitly given. Proposed lessons enter review; do not manufacture evidence or bypass validation gates.",
         "serverInfo": {"name": "engram-mcp", "version": env!("CARGO_PKG_VERSION")}
     })
 }
@@ -631,10 +670,11 @@ fn tool_catalog() -> Value {
             tool("engram_project_status", "Resolve project identity and current Git state", &json!({
                 "type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": false
             })),
-            tool("engram_query_world", "Search normalized structural nodes", &json!({
+            tool("engram_query_world", "Search normalized structural nodes. Checkouts of one project share a graph that reflects whichever was indexed last: pass `path` (your working directory) to refresh the graph for your checkout first; the result then names it in `checkout`", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"}, "query": {"type": "string"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+                    "path": {"type": "string"}
                 }, "required": ["project_id", "query"], "additionalProperties": false
             })),
             tool("engram_recall", "Return bounded context text and a compact context_run_id handle. Includes relevant validated lessons, project preferences and indexed source pointers. Inspect sources before relying on them; use engram_explain_context for item provenance and scores. Passing the open task_id records usage provenance", &json!({
@@ -786,11 +826,12 @@ fn tool_catalog() -> Value {
                     "limit": {"type": "integer", "minimum": 1, "maximum": 10000}
                 }, "required": ["project_id"], "additionalProperties": false
             })),
-            tool("engram_get_impact", "Traverse a bounded structural impact neighborhood", &json!({
+            tool("engram_get_impact", "Traverse a bounded structural impact neighborhood. Pass `path` (your working directory) to refresh the shared graph for your checkout first, as for engram_query_world", &json!({
                 "type": "object", "properties": {
                     "project_id": {"type": "string"}, "node_id": {"type": "string"},
                     "max_depth": {"type": "integer", "minimum": 1, "maximum": 8},
-                    "max_nodes": {"type": "integer", "minimum": 1, "maximum": 10000}
+                    "max_nodes": {"type": "integer", "minimum": 1, "maximum": 10000},
+                    "path": {"type": "string"}
                 }, "required": ["project_id", "node_id"], "additionalProperties": false
             })),
             tool("engram_forget", "Logically archive a project-scoped memory so retrieval excludes it while preserving audit history", &json!({
@@ -904,6 +945,20 @@ fn tool_result_envelope(output: &serde_json::Value) -> Result<serde_json::Value>
     }))
 }
 
+/// Name the checkout a graph read answered for. An object result gains a
+/// `checkout` field; a list sits under `result`, the key the envelope already
+/// gives it, so structured readers find the same data either way.
+fn with_checkout(output: Value, checkout: Option<Value>) -> Value {
+    match (checkout, output) {
+        (None, output) => output,
+        (Some(checkout), Value::Object(mut fields)) => {
+            fields.insert("checkout".to_owned(), checkout);
+            Value::Object(fields)
+        }
+        (Some(checkout), output) => json!({ "checkout": checkout, "result": output }),
+    }
+}
+
 // The compiled text is the model-facing payload. Full scoring/audit records
 // stay in the daemon and are available through engram_explain_context instead
 // of being repeated in pretty JSON and structuredContent on every recall.
@@ -982,6 +1037,25 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn checkout_is_named_without_moving_result_fields() {
+        let checkout = json!({"root": "/repo", "head": "abc", "diff_fingerprint": "d"});
+        assert_eq!(with_checkout(json!([1]), None), json!([1]));
+        let listed = with_checkout(json!([1]), Some(checkout.clone()));
+        assert_eq!(listed, json!({"checkout": checkout, "result": [1]}));
+        assert_eq!(
+            tool_result_envelope(&listed).expect("envelope")["structuredContent"]["result"],
+            tool_result_envelope(&json!([1])).expect("envelope")["structuredContent"]["result"]
+        );
+        let slice = with_checkout(
+            json!({"nodes": [], "truncated": false}),
+            Some(checkout.clone()),
+        );
+        assert_eq!(slice["nodes"], json!([]));
+        assert_eq!(slice["truncated"], false);
+        assert_eq!(slice["checkout"], checkout);
+    }
 
     #[test]
     fn catalog_is_deterministic_and_uses_explicit_handles() {

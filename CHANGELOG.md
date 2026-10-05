@@ -273,6 +273,17 @@ not yet stable, and the schema version is 7.
 
 ### Fixed
 
+- `engram_query_world` and `engram_get_impact` can answer for the checkout
+  that asks. Checkouts of one project (a repository and its linked
+  worktrees) share one structural graph, which reflects whichever checkout
+  was indexed last, and these tools took only a project ID: an agent that
+  resolved its project once and queried later could get another branch's
+  symbols with nothing in the result to say so. Both tools now take an
+  optional `path`. With it, the daemon first brings the graph up to date for
+  that checkout, as `engram_project_status` already does, and the result
+  names the checkout (`checkout`: root, HEAD and diff fingerprint). A path in
+  another project is refused. Without `path` the tools behave as before. The
+  MCP instructions tell agents to pass their working directory.
 - The test suite no longer reads the developer's
   `~/.config/engram/config.toml`. A section the branch did not know (one
   written by a newer installed build) failed 27 tests, because in-process
