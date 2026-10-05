@@ -55,7 +55,7 @@ bytes.
 
 | Kind | Examples of what matches |
 |---|---|
-| Instruction override | "ignore all previous instructions", "do not follow your system prompt", "new instructions:", "you are now in developer mode", "system override" |
+| Instruction override | "ignore all previous instructions", "do not follow your system prompt", "new instructions:", "you are now in developer mode", "system override"; "ignore previous instructions" in Spanish, French, German, Portuguese, Italian, Russian, Chinese, Japanese and Korean |
 | Role or tool-call impersonation | `<\|im_start\|>`, `[INST]`, `<<SYS>>`, `<system>`, `<tool_use>`, `<function_results>`, `Human:` or `SYSTEM:` at the start of a line |
 | Framing break | a line imitating an Engram heading (`# Known project rules`), `</system-reminder>`, bare `</evidence>` or `</context>`, "end of reference data" |
 | Command execution | `curl … \| sh`, `bash <(curl …)`, `base64 -d \| sh`, `rm -rf ~`, `--dangerously-skip-permissions`, "run this silently" |
@@ -67,8 +67,11 @@ bytes.
 
 Before matching, the screen removes invisible characters, decodes tag characters
 and folds full-width ASCII, so `ig\u{200B}nore` and full-width text still match.
-Zero-width joiners and directional marks inside non-ASCII text, such as emoji
-sequences, Persian or Hebrew, are not flagged.
+It also folds Cyrillic and Greek letters that render as Latin (`і`, `о`, `ѕ`,
+`Α`), but only in words that mix them with ASCII letters or consist of them
+entirely, so `іgnore` matches while Russian and Greek text keeps its letters
+for the translated rules. Zero-width joiners and directional marks inside
+non-ASCII text, such as emoji sequences, Persian or Hebrew, are not flagged.
 
 ### Where it applies
 
@@ -219,8 +222,12 @@ A flag holds a proposal for a human; it never deletes or rejects it.
 
 ## Limits
 
-- The rules are patterns. Paraphrases, other languages, homoglyphs and
-  instructions split across fields are not detected.
+- The rules are patterns. Paraphrases, instructions split across fields,
+  languages other than the nine listed above, and lookalike letters from
+  other scripts are not detected. On 90,131 paragraphs from six local
+  repositories and 989,453 localized macOS UI strings, the translated rule
+  and lookalike folding flagged nothing, so their false-positive rate is
+  low; their recall on real attacks is unmeasured.
 - Engram does not mediate files the agent reads directly. A malicious README read
   by the agent reaches it without passing through Engram.
 - Anything running as your user can call the CLI with `--human-override` or send

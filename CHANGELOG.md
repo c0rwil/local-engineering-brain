@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The injection screen (rules `injection-screen-v2`) catches two evasions of
+  its override rules. Matching folds Cyrillic and Greek letters that render
+  as Latin, so `іgnore previous instructions` with a Cyrillic `і` is flagged.
+  Folding applies only to words that mix them with ASCII letters or consist
+  of them entirely, so Russian and Greek text keeps its letters. A new rule
+  flags "ignore previous instructions" in Spanish, French, German,
+  Portuguese, Italian, Russian, Chinese, Japanese and Korean. On 90,131
+  paragraphs from six local repositories and 989,453 localized macOS UI
+  strings in those languages, the additions flag nothing. Paraphrases still
+  pass. Held proposals with findings are judged again under the new version.
 - `engram review reverify` refuses environment and `make` variables that make
   a command load or run other code (`LD_PRELOAD`, `DYLD_*`, `RUSTC_WRAPPER`,
   `CARGO_TARGET_*_RUNNER`, `BASH_ENV`, `PATH`, `SHELL`, `NODE_OPTIONS` and
