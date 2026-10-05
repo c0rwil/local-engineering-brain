@@ -710,9 +710,9 @@ async function onScan(event) {
     const report = await api("/api/linkscan", { project_id: button.dataset.id, apply: true });
     const applied = report.applied.map(l =>
       `<li><span class="flash">Linked</span> ${esc(l.name)} <span class="rel">${esc(l.relation)}</span></li>`);
-    const retracted = (report.superseded || []).map(l =>
+    const retracted = (report.stale || []).map(l =>
       `<li><span class="flash">Retracted</span> ${esc(l.name)} <span class="rel">${esc(l.relation)}</span>
-       — its evidence is no longer definitive (${esc(l.note || "")}).</li>`);
+       — no evidence outside documentation supports it (${esc(l.note || "")}).</li>`);
     const proposals = report.candidates.filter(c => !c.definitive).map(c =>
       `<li>Proposal: ${esc(c.target_name)} <span class="rel">${esc(c.relation)}</span> — ${esc(c.evidence)}.
        Confirm with <code>engram link add</code>.</li>`);

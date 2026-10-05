@@ -11,18 +11,18 @@
 //! only well-known manifest files at the repo root, and never touches the
 //! network.
 //!
-//! Automatic links stay accountable to the current policy: one whose note
-//! records evidence that is no longer definitive (until 2026-09-16 a
-//! referenced hostname counted) is SUPERSEDED and is retracted, because a
-//! link makes every linked repository's lessons part of this project's
-//! context.
+//! A link makes every linked repository's lessons part of this project's
+//! context, so automatic links stay accountable to evidence. Until 2026-09-16
+//! a referenced hostname was applied as definitive. Such a link is STALE once
+//! a scan finds no evidence for it outside documentation, and it is
+//! retracted; one that source or configuration still supports stays.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ids::ProjectId;
 use crate::projects::{LinkedProject, ProjectRegistry};
 use crate::storage::Database;
@@ -40,6 +40,11 @@ const DEFINITIVE_EVIDENCE: [&str; 4] = [
     "git submodule `",
     "pip editable install `",
 ];
+/// Prose files. They name services a repository does not call, for example
+/// in handoff notes, so they cannot support a link on their own.
+const DOCUMENTATION_EXTENSIONS: [&str; 8] = [
+    "md", "mdx", "markdown", "rst", "txt", "adoc", "asciidoc", "org",
+];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct LinkCandidate {
@@ -51,16 +56,21 @@ pub struct LinkCandidate {
     /// Definitive candidates come from the repo's own declaration of the
     /// dependency and are safe to auto-apply; the rest are name matches.
     pub definitive: bool,
+    /// Every match is in documentation, which can name services the
+    /// repository does not call.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub documentation_only: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct LinkScanReport {
     pub candidates: Vec<LinkCandidate>,
     pub applied: Vec<LinkedProject>,
-    /// Automatic links whose recorded evidence the current policy does not
-    /// apply. They are retracted when the scan applies its results.
+    /// Automatic links applied under an earlier policy whose evidence is gone
+    /// or only in documentation. They are retracted when the scan applies its
+    /// results.
     #[serde(default)]
-    pub superseded: Vec<LinkedProject>,
+    pub stale: Vec<LinkedProject>,
 }
 
 struct KnownProject {
@@ -76,23 +86,31 @@ struct KnownProject {
 
 /// Scan one repository's manifests for links to other registered projects.
 /// Already-linked targets are excluded from the result, except targets of
-/// superseded automatic links, which are proposed again on current evidence.
+/// links applied under an earlier policy, whose current evidence decides
+/// whether they are stale.
 ///
 /// # Errors
 ///
-/// Returns an error for storage failures; unreadable or oversized manifests
-/// are skipped, not fatal.
+/// Returns an error for storage failures and for a checkout that cannot be
+/// listed, which would otherwise look like a repository without evidence.
+/// Unreadable or oversized manifests are skipped, not fatal.
 pub fn scan(
     database: &Database,
     project_id: &ProjectId,
     root: &Path,
 ) -> Result<Vec<LinkCandidate>> {
+    fs::read_dir(root).map_err(|error| {
+        Error::Config(format!(
+            "cannot read checkout `{}` to scan links: {error}",
+            root.display()
+        ))
+    })?;
     let registry = ProjectRegistry::new(database.clone());
     let known = known_projects(database, &registry, project_id)?;
     let existing = registry
         .links(project_id)?
         .into_iter()
-        .filter(|link| !is_superseded(link))
+        .filter(|link| !applied_under_old_policy(link))
         .map(|link| link.project_id)
         .collect::<Vec<_>>();
     let mut candidates = Vec::new();
@@ -103,12 +121,14 @@ pub fn scan(
     scan_hostnames(root, &known, &mut candidates);
     scan_route_overlap(root, &known, &mut candidates);
     candidates.retain(|candidate| !existing.contains(&candidate.target_project_id));
-    // One candidate per target: keep the strongest (definitive first).
+    // One candidate per target: keep the strongest (definitive first, then
+    // evidence outside documentation).
     candidates.sort_by(|a, b| {
         a.target_project_id
             .as_str()
             .cmp(b.target_project_id.as_str())
             .then(b.definitive.cmp(&a.definitive))
+            .then(a.documentation_only.cmp(&b.documentation_only))
     });
     candidates.dedup_by(|a, b| a.target_project_id == b.target_project_id);
     candidates.sort_by(|a, b| {
@@ -143,10 +163,9 @@ pub fn apply_definitive(
     Ok(applied)
 }
 
-/// A link the scanner applied on evidence it no longer treats as
-/// definitive. Links a person added or edited carry no scanner note and are
-/// never superseded.
-fn is_superseded(link: &LinkedProject) -> bool {
+/// A link the scanner applied on evidence it no longer applies by itself.
+/// Links a person added or edited carry no scanner note.
+fn applied_under_old_policy(link: &LinkedProject) -> bool {
     link.note
         .as_deref()
         .and_then(|note| note.strip_prefix(AUTO_NOTE_PREFIX))
@@ -157,35 +176,44 @@ fn is_superseded(link: &LinkedProject) -> bool {
         })
 }
 
-/// The project's superseded automatic links, read from current storage.
+/// Automatic links applied under an earlier policy that `candidates`, a
+/// [`scan`] of the project's checkout, no longer supports outside
+/// documentation.
 ///
 /// # Errors
 ///
 /// Returns storage errors.
-pub fn superseded_auto_links(
+pub fn stale_auto_links(
     database: &Database,
     project_id: &ProjectId,
+    candidates: &[LinkCandidate],
 ) -> Result<Vec<LinkedProject>> {
     Ok(ProjectRegistry::new(database.clone())
         .links(project_id)?
         .into_iter()
-        .filter(is_superseded)
+        .filter(|link| {
+            applied_under_old_policy(link)
+                && !candidates.iter().any(|candidate| {
+                    candidate.target_project_id == link.project_id && !candidate.documentation_only
+                })
+        })
         .collect())
 }
 
-/// Retract the project's superseded automatic links. Run it on the writer:
-/// it rereads the links, so a link a person edited in the meantime stays.
+/// Retract stale automatic links. Run it on the writer: it rereads the
+/// links, so a link a person edited in the meantime stays.
 ///
 /// # Errors
 ///
 /// Returns storage errors.
-pub fn retract_superseded(
+pub fn retract_stale(
     database: &Database,
     project_id: &ProjectId,
+    candidates: &[LinkCandidate],
 ) -> Result<Vec<LinkedProject>> {
     let registry = ProjectRegistry::new(database.clone());
     let mut retracted = Vec::new();
-    for link in superseded_auto_links(database, project_id)? {
+    for link in stale_auto_links(database, project_id, candidates)? {
         if registry.unlink(project_id, &link.project_id)? {
             retracted.push(link);
         }
@@ -301,6 +329,7 @@ fn push_path_candidate(
             relation: "depends-on".to_owned(),
             evidence,
             definitive: true,
+            documentation_only: false,
         });
     }
 }
@@ -318,6 +347,7 @@ fn push_name_candidate(
             relation: "uses".to_owned(),
             evidence,
             definitive: false,
+            documentation_only: false,
         });
     }
 }
@@ -430,6 +460,7 @@ fn scan_gitmodules(root: &Path, known: &[KnownProject], candidates: &mut Vec<Lin
                 relation: "submodule".to_owned(),
                 evidence: format!("git submodule `{}`", value.trim()),
                 definitive: true,
+                documentation_only: false,
             });
         }
     }
@@ -477,12 +508,27 @@ fn normalize_host(value: &str) -> Option<String> {
         .then(|| host.to_owned())
 }
 
+fn is_documentation(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            DOCUMENTATION_EXTENSIONS
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        })
+}
+
 /// Search the repo's tracked-looking text files for other services'
 /// declared hostnames. A source literal naming another service's domain is
 /// only a discovery hint: documentation and examples can contain the same host.
 fn scan_hostnames(root: &Path, known: &[KnownProject], candidates: &mut Vec<LinkCandidate>) {
     const MAX_FILES: usize = 3_000;
     const MAX_FILE_BYTES: u64 = 262_144;
+    struct Hits {
+        files: usize,
+        /// First matching file outside documentation, else the first match.
+        example: Option<(bool, String)>,
+    }
     let hosted = known
         .iter()
         .filter(|project| !project.hosts.is_empty())
@@ -490,12 +536,19 @@ fn scan_hostnames(root: &Path, known: &[KnownProject], candidates: &mut Vec<Link
     if hosted.is_empty() {
         return;
     }
-    let mut hits: Vec<(usize, usize, String)> =
-        hosted.iter().map(|_| (0, 0, String::new())).collect();
+    let mut hits = hosted
+        .iter()
+        .map(|_| Hits {
+            files: 0,
+            example: None,
+        })
+        .collect::<Vec<_>>();
     let mut scanned = 0_usize;
+    // Sorted, so the evidence and the file cap do not vary between scans.
     let walker = ignore::WalkBuilder::new(root)
         .hidden(true)
         .follow_links(false)
+        .sort_by_file_name(std::cmp::Ord::cmp)
         .build();
     for entry in walker {
         let Ok(entry) = entry else { continue };
@@ -517,35 +570,48 @@ fn scan_hostnames(root: &Path, known: &[KnownProject], candidates: &mut Vec<Link
             continue;
         };
         let content = content.to_ascii_lowercase();
+        let documentation = is_documentation(entry.path());
         for (index, project) in hosted.iter().enumerate() {
             if project.hosts.iter().any(|host| content.contains(host)) {
-                hits[index].0 += 1;
-                if hits[index].2.is_empty() {
-                    hits[index].1 = 0;
-                    hits[index].2 = entry
+                let hit = &mut hits[index];
+                hit.files += 1;
+                if hit
+                    .example
+                    .as_ref()
+                    .is_none_or(|(example_is_doc, _)| *example_is_doc && !documentation)
+                {
+                    let relative = entry
                         .path()
                         .strip_prefix(root)
                         .unwrap_or(entry.path())
                         .display()
                         .to_string();
+                    hit.example = Some((documentation, relative));
                 }
             }
         }
     }
     for (index, project) in hosted.iter().enumerate() {
-        let (count, _, example) = &hits[index];
-        if *count > 0 {
-            candidates.push(LinkCandidate {
-                target_project_id: project.id.clone(),
-                target_name: project.name.clone(),
-                relation: "calls-api-of".to_owned(),
-                evidence: format!(
-                    "references host `{}` in {count} file(s), e.g. `{example}`",
-                    project.hosts.join("`/`")
-                ),
-                definitive: false,
-            });
-        }
+        let Some((documentation_only, example)) = &hits[index].example else {
+            continue;
+        };
+        let count = hits[index].files;
+        candidates.push(LinkCandidate {
+            target_project_id: project.id.clone(),
+            target_name: project.name.clone(),
+            relation: "calls-api-of".to_owned(),
+            evidence: format!(
+                "references host `{}` in {count} file(s), e.g. `{example}`{}",
+                project.hosts.join("`/`"),
+                if *documentation_only {
+                    " (documentation only)"
+                } else {
+                    ""
+                }
+            ),
+            definitive: false,
+            documentation_only: *documentation_only,
+        });
     }
 }
 
@@ -581,6 +647,7 @@ fn scan_route_overlap(root: &Path, known: &[KnownProject], candidates: &mut Vec<
                     shared[0]
                 ),
                 definitive: false,
+                documentation_only: false,
             });
         }
     }
@@ -782,25 +849,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn hostname_links_from_the_old_policy_are_retracted_and_proposed_again() {
-        let temp = TempDir::new().expect("temp");
+    /// Register a backend that declares `api.example.tech`, and a client
+    /// linked to it the way scans did before 2026-09-16.
+    fn old_policy_hostname_link(
+        temp: &TempDir,
+    ) -> (Database, ProjectRegistry, PathBuf, ProjectId, ProjectId) {
         let database = Database::open(temp.path().join("brain.sqlite")).expect("db");
         let registry = ProjectRegistry::new(database.clone());
         let root_client = temp.path().join("tooling");
-        let root_backend = temp.path().join("backend");
         let client = register(&registry, &root_client);
-        let backend = register(&registry, &root_backend);
+        let backend = register(&registry, &temp.path().join("backend"));
         registry
             .set_fact(&backend, "hosting.base_url", "api.example.tech", None)
             .expect("fact");
-        fs::create_dir_all(root_client.join("docs")).expect("docs");
-        fs::write(
-            root_client.join("docs/handoff.md"),
-            "The backend serves api.example.tech.\n",
-        )
-        .expect("doc");
-        // Before 2026-09-16 a referenced hostname was applied automatically.
         registry
             .link(
                 &client,
@@ -811,17 +872,31 @@ mod tests {
                 ),
             )
             .expect("old auto link");
+        (database, registry, root_client, client, backend)
+    }
 
-        let superseded = superseded_auto_links(&database, &client).expect("superseded");
-        assert_eq!(superseded.len(), 1, "{superseded:?}");
-        assert_eq!(superseded[0].project_id, backend);
+    #[test]
+    fn old_hostname_links_backed_only_by_documentation_are_retracted() {
+        let temp = TempDir::new().expect("temp");
+        let (database, registry, root, client, backend) = old_policy_hostname_link(&temp);
+        fs::create_dir_all(root.join("docs")).expect("docs");
+        fs::write(
+            root.join("docs/handoff.md"),
+            "The backend serves api.example.tech.\n",
+        )
+        .expect("doc");
+
         // The target is proposed again on current evidence, as a hint.
-        let candidates = scan(&database, &client, &root_client).expect("scan");
+        let candidates = scan(&database, &client, &root).expect("scan");
         assert_eq!(candidates.len(), 1, "{candidates:?}");
         assert_eq!(candidates[0].target_project_id, backend);
         assert!(!candidates[0].definitive);
+        assert!(candidates[0].documentation_only);
+        assert!(candidates[0].evidence.ends_with("(documentation only)"));
+        let stale = stale_auto_links(&database, &client, &candidates).expect("stale");
+        assert_eq!(stale.len(), 1, "{stale:?}");
 
-        let retracted = retract_superseded(&database, &client).expect("retract");
+        let retracted = retract_stale(&database, &client, &candidates).expect("retract");
         assert_eq!(retracted.len(), 1);
         assert!(registry.links(&client).expect("links").is_empty());
         assert!(
@@ -830,15 +905,70 @@ mod tests {
                 .is_empty(),
             "a hostname hint is never applied again"
         );
-        assert!(
-            retract_superseded(&database, &client)
-                .expect("again")
-                .is_empty()
-        );
     }
 
     #[test]
-    fn manual_and_definitive_links_are_never_superseded() {
+    fn old_hostname_links_whose_evidence_is_gone_are_retracted() {
+        let temp = TempDir::new().expect("temp");
+        let (database, registry, root, client, _backend) = old_policy_hostname_link(&temp);
+        let candidates = scan(&database, &client, &root).expect("scan");
+        assert!(candidates.is_empty(), "{candidates:?}");
+        assert_eq!(
+            retract_stale(&database, &client, &candidates)
+                .expect("retract")
+                .len(),
+            1
+        );
+        assert!(registry.links(&client).expect("links").is_empty());
+    }
+
+    #[test]
+    fn old_hostname_links_that_configuration_still_supports_are_kept() {
+        let temp = TempDir::new().expect("temp");
+        let (database, registry, root, client, backend) = old_policy_hostname_link(&temp);
+        // Sorted first, so the example must switch to the configuration file.
+        fs::write(root.join("README.md"), "See api.example.tech.\n").expect("doc");
+        fs::create_dir_all(root.join("config")).expect("config");
+        fs::write(
+            root.join("config/env.ts"),
+            "export const API = \"https://api.example.tech\";\n",
+        )
+        .expect("config");
+
+        let candidates = scan(&database, &client, &root).expect("scan");
+        assert_eq!(candidates.len(), 1, "{candidates:?}");
+        assert!(!candidates[0].documentation_only);
+        assert!(
+            candidates[0].evidence.contains("config/env.ts"),
+            "evidence outside documentation is the example: {}",
+            candidates[0].evidence
+        );
+        assert!(
+            stale_auto_links(&database, &client, &candidates)
+                .expect("stale")
+                .is_empty()
+        );
+        assert!(
+            retract_stale(&database, &client, &candidates)
+                .expect("retract")
+                .is_empty()
+        );
+        let links = registry.links(&client).expect("links");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].project_id, backend);
+    }
+
+    #[test]
+    fn an_unreadable_checkout_is_an_error_not_missing_evidence() {
+        let temp = TempDir::new().expect("temp");
+        let (database, registry, root, client, _backend) = old_policy_hostname_link(&temp);
+        fs::remove_dir_all(&root).expect("remove checkout");
+        assert!(scan(&database, &client, &root).is_err());
+        assert_eq!(registry.links(&client).expect("links").len(), 1);
+    }
+
+    #[test]
+    fn manual_and_definitive_links_are_never_stale() {
         let temp = TempDir::new().expect("temp");
         let database = Database::open(temp.path().join("brain.sqlite")).expect("db");
         let registry = ProjectRegistry::new(database.clone());
@@ -858,13 +988,15 @@ mod tests {
                 .expect("link");
         }
 
+        // Even with no evidence at all, only scanner links from the earlier
+        // policy can be stale.
         assert!(
-            superseded_auto_links(&database, &consumer)
-                .expect("superseded")
+            stale_auto_links(&database, &consumer, &[])
+                .expect("stale")
                 .is_empty()
         );
         assert!(
-            retract_superseded(&database, &consumer)
+            retract_stale(&database, &consumer, &[])
                 .expect("retract")
                 .is_empty()
         );
@@ -898,10 +1030,10 @@ mod tests {
         let links = registry.links(&a).expect("links");
         assert_eq!(links.len(), 3);
         for link in &links {
-            assert!(!is_superseded(link), "{:?}", link.note);
+            assert!(!applied_under_old_policy(link), "{:?}", link.note);
         }
         assert!(
-            retract_superseded(&database, &a)
+            retract_stale(&database, &a, &[])
                 .expect("retract")
                 .is_empty()
         );

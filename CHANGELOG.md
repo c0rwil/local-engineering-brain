@@ -252,17 +252,23 @@ not yet stable, and the schema version is 7.
 
 ### Fixed
 
-- Automatic repository links that the current policy would not create are
-  retracted. Until 2026-09-16 a hostname mentioned anywhere in a repository
-  linked it to the service that declares that host, and those links stayed
-  after the rule became a proposal. One handoff document that named three
-  service hosts linked Engram's own repository to those three services, so
-  their rules and source maps were injected into every Engram session.
-  `engram index` now retracts automatic links whose recorded evidence is not
-  a Cargo path dependency, an npm `file:` dependency, a git submodule or an
-  editable pip install. `engram link scan` lists them as superseded and
-  retracts them with `--apply`, and the browser's scan does the same. Links a
-  person added or edited are never retracted.
+- Automatic repository links from an earlier policy are retracted when no
+  evidence outside documentation supports them. Until 2026-09-16 a hostname
+  mentioned anywhere in a repository linked it to the service declaring that
+  host, and those links stayed after the rule became a proposal. Engram's own
+  repository was linked to three company services because a handoff note
+  and a deploy README named their hosts. In the seven days before this fix,
+  linked repositories supplied 92% of the context injected into Engram's
+  own sessions: 923K tokens of their lessons and 760K of their source
+  pointers, out of 1.84M. `engram index` now rescans and retracts such a
+  link when its host appears only in Markdown or other prose, or nowhere.
+  Links whose host still appears in source or configuration, such as an app
+  build file, stay. `engram link scan` lists stale links and retracts them
+  with `--apply`, as does the browser's scan. Hostname proposals found only
+  in documentation are marked `(documentation only)`. The scan now walks
+  files in sorted order, so its evidence is stable, and refuses a checkout it
+  cannot list instead of treating it as one without evidence. Links a person
+  added or edited, and links from manifest dependencies, are never retracted.
 - A shell-mode turn in Claude Code (`!command`) or a background task's
   completion notice no longer replaces the task's request. Claude Code
   submits both as prompts that hold only the command and its output, or the

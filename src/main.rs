@@ -2399,12 +2399,12 @@ fn run_link(
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else if report.candidates.is_empty()
                 && report.applied.is_empty()
-                && report.superseded.is_empty()
+                && report.stale.is_empty()
             {
                 println!("No link candidates found in this repo's manifests.");
             } else {
-                for link in &report.superseded {
-                    let status = if *apply { "RETRACTED" } else { "superseded" };
+                for link in &report.stale {
+                    let status = if *apply { "RETRACTED" } else { "stale" };
                     println!(
                         "{status}  {}  ({})  — {}",
                         link.name,
@@ -2437,9 +2437,9 @@ fn run_link(
                 {
                     println!("Run `engram link scan --apply` to create the definitive links.");
                 }
-                if !*apply && !report.superseded.is_empty() {
+                if !*apply && !report.stale.is_empty() {
                     println!(
-                        "Superseded links were applied on evidence that is no longer definitive. Run `engram link scan --apply` to retract them."
+                        "Stale links were applied under an earlier policy, and no evidence outside documentation supports them now. Run `engram link scan --apply` to retract them."
                     );
                 }
             }
